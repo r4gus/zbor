@@ -10,9 +10,13 @@ const CborError = error{
     OutOfMemory,
 };
 
-const Content = union(enum) {
+const ContentTag = enum { int, bytes };
+
+const Content = union(ContentTag) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
     int: i128,
+    /// Major type 2: A byte string.
+    bytes: std.ArrayList(u8),
 };
 
 const DataItem = struct {
@@ -28,10 +32,24 @@ const DataItem = struct {
     }
 
     fn deinit(self: *@This()) void {
-        // TODO: DataItem's can be nested so keep in mind to free everything!
+        switch (self.content) {
+            .int => |_| {},
+            .bytes => |list| list.deinit(),
+        }
 
         if (self.allocator != null) {
             self.allocator.?.destroy(self);
+        }
+    }
+
+    fn equal(self: *const @This(), other: *const @This()) bool {
+        if (@as(ContentTag, self.content) != @as(ContentTag, other.content)) {
+            return false;
+        }
+
+        switch (self.content) {
+            .int => |value| return value == other.content.int,
+            .bytes => |list| return std.mem.eql(u8, list.items, other.content.bytes.items),
         }
     }
 };
@@ -95,10 +113,14 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
             // The value of the item is -1 minus the argument.
             item = try DataItem.init(allocator, Content{ .int = -1 - @as(i128, val) });
         },
-        // MT2: Byte String, MT3: Text string.
-        2, 3 => {},
+        // MT2: Byte String.
+        // The number of bytes in the string is equal to the argument (val).
+        2 => {
+            item = try DataItem.init(allocator, Content{ .bytes = std.ArrayList(u8).init(allocator) });
+            try item.?.content.bytes.appendSlice(data[index.* .. index.* + @as(usize, val)]);
+        },
         else => {
-            unreachable;
+            //unreachable;
         },
     }
 
@@ -115,17 +137,74 @@ fn test_data_item(data: []const u8, expected: DataItem) TestError!void {
     try std.testing.expectEqual(expected.content, dip.*.content);
 }
 
+test "DataItem.equal test" {
+    const di1 = DataItem{ .content = Content{ .int = 10 } };
+    const di2 = DataItem{ .content = Content{ .int = 23 } };
+    const di3 = DataItem{ .content = Content{ .int = 23 } };
+    const di4 = DataItem{ .content = Content{ .int = -9988776655 } };
+
+    try std.testing.expect(!di1.equal(&di2));
+    try std.testing.expect(di2.equal(&di3));
+    try std.testing.expect(!di1.equal(&di4));
+    try std.testing.expect(!di2.equal(&di4));
+    try std.testing.expect(!di3.equal(&di4));
+
+    var allocator = std.testing.allocator;
+
+    var list = std.ArrayList(u8).init(allocator);
+    try list.append(10);
+    var di5 = DataItem{ .content = Content{ .bytes = list } };
+    defer di5.deinit();
+
+    try std.testing.expect(!di5.equal(&di1));
+    try std.testing.expect(!di1.equal(&di5));
+    try std.testing.expect(di5.equal(&di5));
+
+    var list2 = std.ArrayList(u8).init(allocator);
+    try list2.append(10);
+    var di6 = DataItem{ .content = Content{ .bytes = list2 } };
+    defer di6.deinit();
+
+    try std.testing.expect(di5.equal(&di6));
+    try di6.content.bytes.append(123);
+    try std.testing.expect(!di5.equal(&di6));
+}
+
 test "MT0: decode cbor unsigned integer value" {
     try test_data_item(&.{0x00}, DataItem{ .content = Content{ .int = 0 } });
+    try test_data_item(&.{0x01}, DataItem{ .content = Content{ .int = 1 } });
+    try test_data_item(&.{0x0a}, DataItem{ .content = Content{ .int = 10 } });
+    try test_data_item(&.{0x17}, DataItem{ .content = Content{ .int = 23 } });
+    try test_data_item(&.{ 0x18, 0x18 }, DataItem{ .content = Content{ .int = 24 } });
+    try test_data_item(&.{ 0x18, 0x19 }, DataItem{ .content = Content{ .int = 25 } });
+    try test_data_item(&.{ 0x18, 0x64 }, DataItem{ .content = Content{ .int = 100 } });
     try test_data_item(&.{ 0x18, 0x7b }, DataItem{ .content = Content{ .int = 123 } });
+    try test_data_item(&.{ 0x19, 0x03, 0xe8 }, DataItem{ .content = Content{ .int = 1000 } });
     try test_data_item(&.{ 0x19, 0x04, 0xd2 }, DataItem{ .content = Content{ .int = 1234 } });
     try test_data_item(&.{ 0x1a, 0x00, 0x01, 0xe2, 0x40 }, DataItem{ .content = Content{ .int = 123456 } });
+    try test_data_item(&.{ 0x1a, 0x00, 0x0f, 0x42, 0x40 }, DataItem{ .content = Content{ .int = 1000000 } });
     try test_data_item(&.{ 0x1b, 0x00, 0x00, 0x00, 0x02, 0xdf, 0xdc, 0x1c, 0x34 }, DataItem{ .content = Content{ .int = 12345678900 } });
+    try test_data_item(&.{ 0x1b, 0x00, 0x00, 0x00, 0xe8, 0xd4, 0xa5, 0x10, 0x00 }, DataItem{ .content = Content{ .int = 1000000000000 } });
+    try test_data_item(&.{ 0x1b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }, DataItem{ .content = Content{ .int = 18446744073709551615 } });
 }
 
 test "MT1: decode cbor signed integer value" {
+    try test_data_item(&.{0x20}, DataItem{ .content = Content{ .int = -1 } });
     try test_data_item(&.{0x22}, DataItem{ .content = Content{ .int = -3 } });
+    try test_data_item(&.{ 0x38, 0x63 }, DataItem{ .content = Content{ .int = -100 } });
     try test_data_item(&.{ 0x39, 0x01, 0xf3 }, DataItem{ .content = Content{ .int = -500 } });
+    try test_data_item(&.{ 0x39, 0x03, 0xe7 }, DataItem{ .content = Content{ .int = -1000 } });
     try test_data_item(&.{ 0x3a, 0x00, 0x0f, 0x3d, 0xdc }, DataItem{ .content = Content{ .int = -998877 } });
     try test_data_item(&.{ 0x3b, 0x00, 0x00, 0x00, 0x02, 0x53, 0x60, 0xa2, 0xce }, DataItem{ .content = Content{ .int = -9988776655 } });
+    try test_data_item(&.{ 0x3b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }, DataItem{ .content = Content{ .int = -18446744073709551616 } });
+}
+
+test "MT2: decode cbor byte string" {
+    const allocator = std.testing.allocator;
+
+    try test_data_item(&.{0b01000000}, DataItem{ .content = Content{ .bytes = std.ArrayList(u8).init(allocator) } });
+
+    //var list = std.ArrayList(u8).init(allocator);
+    //try list.append(10);
+    //try test_data_item_mem_eql(&.{ 0b01000001, 0x0a }, DataItem{ .content = Content{ .bytes = list } });
 }
