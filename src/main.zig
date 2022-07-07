@@ -10,9 +10,30 @@ const CborError = error{
     OutOfMemory,
 };
 
-const DataItem = union(enum) {
+const Content = union(enum) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
     int: i128,
+};
+
+const DataItem = struct {
+    allocator: ?Allocator = null,
+    content: Content,
+
+    fn init(allocator: Allocator, content: Content) error{OutOfMemory}!*@This() {
+        var item = try allocator.create(DataItem);
+        item.*.allocator = allocator;
+        item.*.content = content;
+
+        return item;
+    }
+
+    fn deinit(self: *@This()) void {
+        // TODO: DataItem's can be nested so keep in mind to free everything!
+
+        if (self.allocator != null) {
+            self.allocator.?.destroy(self);
+        }
+    }
 };
 
 // calling function is responsible for deallocating memory.
@@ -67,14 +88,12 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
     switch (mt) {
         // MT0: Unsigned int.
         0 => {
-            item = try allocator.create(DataItem);
-            item.?.* = DataItem{ .int = @as(i128, val) };
+            item = try DataItem.init(allocator, Content{ .int = @as(i128, val) });
         },
         // MT1: Signed int.
         1 => {
-            item = try allocator.create(DataItem);
             // The value of the item is -1 minus the argument.
-            item.?.* = DataItem{ .int = -1 - @as(i128, val) };
+            item = try DataItem.init(allocator, Content{ .int = -1 - @as(i128, val) });
         },
         // MT2: Byte String, MT3: Text string.
         2, 3 => {},
@@ -92,26 +111,21 @@ fn test_data_item(data: []const u8, expected: DataItem) TestError!void {
     const allocator = std.testing.allocator;
     var index: usize = 0;
     const dip = try decode_(data, &index, allocator, false);
-    defer allocator.destroy(dip);
-    try std.testing.expectEqual(expected, dip.*);
+    defer dip.deinit();
+    try std.testing.expectEqual(expected.content, dip.*.content);
 }
 
-test "0: decode cbor unsigned integer value" {
-    try test_data_item(&.{0x00}, DataItem{ .int = 0 });
-    try test_data_item(&.{ 0x18, 0x7b }, DataItem{ .int = 123 });
-    try test_data_item(&.{ 0x19, 0x04, 0xd2 }, DataItem{ .int = 1234 });
-    try test_data_item(&.{ 0x1a, 0x00, 0x01, 0xe2, 0x40 }, DataItem{ .int = 123456 });
-    try test_data_item(&.{ 0x1b, 0x00, 0x00, 0x00, 0x02, 0xdf, 0xdc, 0x1c, 0x34 }, DataItem{ .int = 12345678900 });
+test "MT0: decode cbor unsigned integer value" {
+    try test_data_item(&.{0x00}, DataItem{ .content = Content{ .int = 0 } });
+    try test_data_item(&.{ 0x18, 0x7b }, DataItem{ .content = Content{ .int = 123 } });
+    try test_data_item(&.{ 0x19, 0x04, 0xd2 }, DataItem{ .content = Content{ .int = 1234 } });
+    try test_data_item(&.{ 0x1a, 0x00, 0x01, 0xe2, 0x40 }, DataItem{ .content = Content{ .int = 123456 } });
+    try test_data_item(&.{ 0x1b, 0x00, 0x00, 0x00, 0x02, 0xdf, 0xdc, 0x1c, 0x34 }, DataItem{ .content = Content{ .int = 12345678900 } });
 }
 
-test "1: decode cbor signed integer value" {
-    try test_data_item(&.{ 0x39, 0x01, 0xf3 }, DataItem{ .int = -500 });
-}
-
-export fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
-
-test "basic add functionality" {
-    try testing.expect(add(3, 7) == 10);
+test "MT1: decode cbor signed integer value" {
+    try test_data_item(&.{0x22}, DataItem{ .content = Content{ .int = -3 } });
+    try test_data_item(&.{ 0x39, 0x01, 0xf3 }, DataItem{ .content = Content{ .int = -500 } });
+    try test_data_item(&.{ 0x3a, 0x00, 0x0f, 0x3d, 0xdc }, DataItem{ .content = Content{ .int = -998877 } });
+    try test_data_item(&.{ 0x3b, 0x00, 0x00, 0x00, 0x02, 0x53, 0x60, 0xa2, 0xce }, DataItem{ .content = Content{ .int = -9988776655 } });
 }
