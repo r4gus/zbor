@@ -10,7 +10,7 @@ const CborError = error{
     OutOfMemory,
 };
 
-const DataItemTag = enum { int, bytes, text };
+const DataItemTag = enum { int, bytes, text, array };
 
 const DataItem = union(DataItemTag) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
@@ -19,12 +19,22 @@ const DataItem = union(DataItemTag) {
     bytes: std.ArrayList(u8),
     /// Major type 3: A text string encoded as utf-8.
     text: std.ArrayList(u8),
+    /// Major type 4: An array of DataItem's.
+    array: std.ArrayList(DataItem),
 
     fn deinit(self: @This()) void {
         switch (self) {
             .int => |_| {},
             .bytes => |list| list.deinit(),
             .text => |list| list.deinit(),
+            .array => |arr| {
+                // We must deinitialize each item of the given array...
+                for (arr.items) |item| {
+                    item.deinit();
+                }
+                // ...before deinitializing the ArrayList itself.
+                arr.deinit();
+            },
         }
     }
 
@@ -38,6 +48,20 @@ const DataItem = union(DataItemTag) {
             .int => |value| return value == other.int,
             .bytes => |list| return std.mem.eql(u8, list.items, other.bytes.items),
             .text => |list| return std.mem.eql(u8, list.items, other.bytes.items),
+            .array => |arr| {
+                if (arr.items.len != other.array.items.len) {
+                    return false;
+                }
+
+                var i: usize = 0;
+                while (i < arr.items.len) : (i += 1) {
+                    if (!arr.items[i].equal(other.array.items[i])) {
+                        return false;
+                    }
+                }
+
+                return true;
+            },
         }
     }
 };
@@ -113,6 +137,16 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
             var item = DataItem{ .text = std.ArrayList(u8).init(allocator) };
             try item.text.appendSlice(data[index.* .. index.* + @as(usize, val)]);
             index.* += @as(usize, val);
+            return item;
+        },
+        // MT4: DataItem array.
+        4 => {
+            var item = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
+            var i: usize = 0;
+            while (i < val) : (i += 1) {
+                // The index will be incremented by the recursive call to decode_.
+                try item.array.append(try decode_(data, index, allocator, false));
+            }
             return item;
         },
         else => {
@@ -252,4 +286,15 @@ test "MT3: decode cbor text string" {
     try std.testing.expectEqualSlices(u8, list3.items, di3.text.items);
 
     // TODO: test unicode https://www.rfc-editor.org/rfc/rfc8949.html#name-examples-of-encoded-cbor-da
+}
+
+test "MT4: decode cbor array" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var list = std.ArrayList(DataItem).init(allocator);
+    defer list.deinit();
+    const di = try decode_(&.{0x80}, &index, allocator, false);
+    defer di.deinit();
+    try std.testing.expectEqualSlices(DataItem, list.items, di.array.items);
 }
