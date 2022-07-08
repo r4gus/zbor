@@ -10,18 +10,21 @@ const CborError = error{
     OutOfMemory,
 };
 
-const DataItemTag = enum { int, bytes };
+const DataItemTag = enum { int, bytes, text };
 
 const DataItem = union(DataItemTag) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
     int: i128,
     /// Major type 2: A byte string.
     bytes: std.ArrayList(u8),
+    /// Major type 3: A text string encoded as utf-8.
+    text: std.ArrayList(u8),
 
     fn deinit(self: @This()) void {
         switch (self) {
             .int => |_| {},
             .bytes => |list| list.deinit(),
+            .text => |list| list.deinit(),
         }
     }
 
@@ -34,6 +37,7 @@ const DataItem = union(DataItemTag) {
         switch (self) {
             .int => |value| return value == other.int,
             .bytes => |list| return std.mem.eql(u8, list.items, other.bytes.items),
+            .text => |list| return std.mem.eql(u8, list.items, other.bytes.items),
         }
     }
 };
@@ -96,11 +100,19 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
             // The value of the item is -1 minus the argument.
             return DataItem{ .int = -1 - @as(i128, val) };
         },
-        // MT2: Byte String.
+        // MT2: Byte string.
         // The number of bytes in the string is equal to the argument (val).
         2 => {
             var item = DataItem{ .bytes = std.ArrayList(u8).init(allocator) };
             try item.bytes.appendSlice(data[index.* .. index.* + @as(usize, val)]);
+            index.* += @as(usize, val);
+            return item;
+        },
+        // MT3: UTF-8 text string.
+        3 => {
+            var item = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+            try item.text.appendSlice(data[index.* .. index.* + @as(usize, val)]);
+            index.* += @as(usize, val);
             return item;
         },
         else => {
@@ -208,4 +220,36 @@ test "MT2: decode cbor byte string" {
     try list2.append(13);
     try list2.append(14);
     try test_data_item_eql(&.{ 0b01000101, 0x0a, 0xb, 0xc, 0xd, 0xe }, &DataItem{ .bytes = list2 });
+}
+
+test "MT3: decode cbor text string" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    try test_data_item(&.{0x60}, DataItem{ .text = std.ArrayList(u8).init(allocator) });
+
+    var list = std.ArrayList(u8).init(allocator);
+    defer list.deinit();
+    try list.appendSlice("a");
+    const di = try decode_(&.{ 0x61, 0x61 }, &index, allocator, false);
+    defer di.deinit();
+    try std.testing.expectEqualSlices(u8, list.items, di.text.items);
+
+    index = 0;
+    var list2 = std.ArrayList(u8).init(allocator);
+    defer list2.deinit();
+    try list2.appendSlice("IETF");
+    const di2 = try decode_(&.{ 0x64, 0x49, 0x45, 0x54, 0x46 }, &index, allocator, false);
+    defer di2.deinit();
+    try std.testing.expectEqualSlices(u8, list2.items, di2.text.items);
+
+    index = 0;
+    var list3 = std.ArrayList(u8).init(allocator);
+    defer list3.deinit();
+    try list3.appendSlice("\"\\");
+    const di3 = try decode_(&.{ 0x62, 0x22, 0x5c }, &index, allocator, false);
+    defer di3.deinit();
+    try std.testing.expectEqualSlices(u8, list3.items, di3.text.items);
+
+    // TODO: test unicode https://www.rfc-editor.org/rfc/rfc8949.html#name-examples-of-encoded-cbor-da
 }
