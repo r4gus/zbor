@@ -127,7 +127,7 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
     return item orelse CborError.Default;
 }
 
-const TestError = CborError || error{TestExpectedEqual};
+const TestError = CborError || error{ TestExpectedEqual, TestUnexpectedResult };
 
 fn test_data_item(data: []const u8, expected: DataItem) TestError!void {
     const allocator = std.testing.allocator;
@@ -135,6 +135,15 @@ fn test_data_item(data: []const u8, expected: DataItem) TestError!void {
     const dip = try decode_(data, &index, allocator, false);
     defer dip.deinit();
     try std.testing.expectEqual(expected.content, dip.*.content);
+}
+
+fn test_data_item_eql(data: []const u8, expected: *DataItem) TestError!void {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+    const dip = try decode_(data, &index, allocator, false);
+    defer dip.deinit();
+    defer expected.*.deinit();
+    try std.testing.expect(expected.*.equal(dip));
 }
 
 test "DataItem.equal test" {
@@ -204,7 +213,7 @@ test "MT2: decode cbor byte string" {
 
     try test_data_item(&.{0b01000000}, DataItem{ .content = Content{ .bytes = std.ArrayList(u8).init(allocator) } });
 
-    //var list = std.ArrayList(u8).init(allocator);
-    //try list.append(10);
-    //try test_data_item_mem_eql(&.{ 0b01000001, 0x0a }, DataItem{ .content = Content{ .bytes = list } });
+    var list = std.ArrayList(u8).init(allocator);
+    try list.append(10);
+    try test_data_item_eql(&.{ 0b01000001, 0x0a }, &DataItem{ .content = Content{ .bytes = list } });
 }
