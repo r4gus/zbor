@@ -38,24 +38,24 @@ const DataItem = union(DataItemTag) {
         }
     }
 
-    fn equal(self: @This(), other: @This()) bool {
+    fn equal(self: *const @This(), other: *const @This()) bool {
         // self and other hold different types, i.e. can't be equal.
-        if (@as(DataItemTag, self) != @as(DataItemTag, other)) {
+        if (@as(DataItemTag, self.*) != @as(DataItemTag, other.*)) {
             return false;
         }
 
-        switch (self) {
-            .int => |value| return value == other.int,
-            .bytes => |list| return std.mem.eql(u8, list.items, other.bytes.items),
-            .text => |list| return std.mem.eql(u8, list.items, other.bytes.items),
+        switch (self.*) {
+            .int => |value| return value == other.*.int,
+            .bytes => |list| return std.mem.eql(u8, list.items, other.*.bytes.items),
+            .text => |list| return std.mem.eql(u8, list.items, other.*.bytes.items),
             .array => |arr| {
-                if (arr.items.len != other.array.items.len) {
+                if (arr.items.len != other.*.array.items.len) {
                     return false;
                 }
 
                 var i: usize = 0;
                 while (i < arr.items.len) : (i += 1) {
-                    if (!arr.items[i].equal(other.array.items[i])) {
+                    if (!arr.items[i].equal(&other.*.array.items[i])) {
                         return false;
                     }
                 }
@@ -150,7 +150,7 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
             return item;
         },
         else => {
-            //unreachable;
+            unreachable;
         },
     }
 
@@ -173,7 +173,7 @@ fn test_data_item_eql(data: []const u8, expected: *DataItem) TestError!void {
     const dip = try decode_(data, &index, allocator, false);
     defer dip.deinit();
     defer expected.*.deinit();
-    try std.testing.expect(expected.*.equal(dip));
+    try std.testing.expect(expected.*.equal(&dip));
 }
 
 test "DataItem.equal test" {
@@ -182,11 +182,11 @@ test "DataItem.equal test" {
     const di3 = DataItem{ .int = 23 };
     const di4 = DataItem{ .int = -9988776655 };
 
-    try std.testing.expect(!di1.equal(di2));
-    try std.testing.expect(di2.equal(di3));
-    try std.testing.expect(!di1.equal(di4));
-    try std.testing.expect(!di2.equal(di4));
-    try std.testing.expect(!di3.equal(di4));
+    try std.testing.expect(!di1.equal(&di2));
+    try std.testing.expect(di2.equal(&di3));
+    try std.testing.expect(!di1.equal(&di4));
+    try std.testing.expect(!di2.equal(&di4));
+    try std.testing.expect(!di3.equal(&di4));
 
     var allocator = std.testing.allocator;
 
@@ -195,18 +195,18 @@ test "DataItem.equal test" {
     var di5 = DataItem{ .bytes = list };
     defer di5.deinit();
 
-    try std.testing.expect(!di5.equal(di1));
-    try std.testing.expect(!di1.equal(di5));
-    try std.testing.expect(di5.equal(di5));
+    try std.testing.expect(!di5.equal(&di1));
+    try std.testing.expect(!di1.equal(&di5));
+    try std.testing.expect(di5.equal(&di5));
 
     var list2 = std.ArrayList(u8).init(allocator);
     try list2.append(10);
     var di6 = DataItem{ .bytes = list2 };
     defer di6.deinit();
 
-    try std.testing.expect(di5.equal(di6));
+    try std.testing.expect(di5.equal(&di6));
     try di6.bytes.append(123);
-    try std.testing.expect(!di5.equal(di6));
+    try std.testing.expect(!di5.equal(&di6));
 }
 
 test "MT0: decode cbor unsigned integer value" {
@@ -297,4 +297,44 @@ test "MT4: decode cbor array" {
     const di = try decode_(&.{0x80}, &index, allocator, false);
     defer di.deinit();
     try std.testing.expectEqualSlices(DataItem, list.items, di.array.items);
+
+    index = 0;
+    var list2 = std.ArrayList(DataItem).init(allocator);
+    defer list2.deinit();
+    try list2.append(DataItem{ .int = 1 });
+    try list2.append(DataItem{ .int = 2 });
+    try list2.append(DataItem{ .int = 3 });
+    const di2 = try decode_(&.{ 0x83, 0x01, 0x02, 0x03 }, &index, allocator, false);
+    defer di2.deinit();
+    try std.testing.expectEqualSlices(DataItem, list2.items, di2.array.items);
+
+    index = 0;
+    var list3 = std.ArrayList(DataItem).init(allocator);
+    defer list3.deinit();
+    var list3_1 = std.ArrayList(DataItem).init(allocator);
+    defer list3_1.deinit();
+    var list3_2 = std.ArrayList(DataItem).init(allocator);
+    defer list3_2.deinit();
+    try list3_1.append(DataItem{ .int = 2 });
+    try list3_1.append(DataItem{ .int = 3 });
+    try list3_2.append(DataItem{ .int = 4 });
+    try list3_2.append(DataItem{ .int = 5 });
+    try list3.append(DataItem{ .int = 1 });
+    try list3.append(DataItem{ .array = list3_1 });
+    try list3.append(DataItem{ .array = list3_2 });
+    const expected3 = DataItem{ .array = list3 };
+    const di3 = try decode_(&.{ 0x83, 0x01, 0x82, 0x02, 0x03, 0x82, 0x04, 0x05 }, &index, allocator, false);
+    defer di3.deinit();
+    try std.testing.expect(di3.equal(&expected3));
+
+    index = 0;
+    var list4 = std.ArrayList(DataItem).init(allocator);
+    defer list4.deinit();
+    var i: i128 = 1;
+    while (i <= 25) : (i += 1) {
+        try list4.append(DataItem{ .int = i });
+    }
+    const di4 = try decode_(&.{ 0x98, 0x19, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x18, 0x18, 0x19 }, &index, allocator, false);
+    defer di4.deinit();
+    try std.testing.expectEqualSlices(DataItem, list4.items, di4.array.items);
 }
