@@ -10,7 +10,9 @@ const CborError = error{
     OutOfMemory,
 };
 
-const DataItemTag = enum { int, bytes, text, array };
+const Pair = struct { key: DataItem, value: DataItem };
+
+const DataItemTag = enum { int, bytes, text, array, map };
 
 const DataItem = union(DataItemTag) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
@@ -19,8 +21,10 @@ const DataItem = union(DataItemTag) {
     bytes: std.ArrayList(u8),
     /// Major type 3: A text string encoded as utf-8.
     text: std.ArrayList(u8),
-    /// Major type 4: An array of DataItem's.
+    /// Major type 4: An array of data items.
     array: std.ArrayList(DataItem),
+    /// Major type 5: A map of pairs of data items.
+    map: std.ArrayList(Pair),
 
     fn deinit(self: @This()) void {
         switch (self) {
@@ -34,6 +38,13 @@ const DataItem = union(DataItemTag) {
                 }
                 // ...before deinitializing the ArrayList itself.
                 arr.deinit();
+            },
+            .map => |m| {
+                for (m.items) |item| {
+                    item.key.deinit();
+                    item.value.deinit();
+                }
+                m.deinit();
             },
         }
     }
@@ -56,6 +67,22 @@ const DataItem = union(DataItemTag) {
                 var i: usize = 0;
                 while (i < arr.items.len) : (i += 1) {
                     if (!arr.items[i].equal(&other.*.array.items[i])) {
+                        return false;
+                    }
+                }
+
+                return true;
+            },
+            .map => |m| {
+                if (m.items.len != other.*.map.items.len) {
+                    return false;
+                }
+
+                var i: usize = 0;
+                while (i < m.items.len) : (i += 1) {
+                    if (!m.items[i].key.equal(&other.*.map.items[i].key) or
+                        !m.items[i].value.equal(&other.*.map.items[i].value))
+                    {
                         return false;
                     }
                 }
@@ -115,11 +142,11 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
 
     // Process content.
     switch (mt) {
-        // MT0: Unsigned int.
+        // MT0: Unsigned int, e.g. 1, 10, 23, 25.
         0 => {
             return DataItem{ .int = @as(i128, val) };
         },
-        // MT1: Signed int.
+        // MT1: Signed int, e.g. -1, -10, -12345.
         1 => {
             // The value of the item is -1 minus the argument.
             return DataItem{ .int = -1 - @as(i128, val) };
@@ -132,20 +159,32 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
             index.* += @as(usize, val);
             return item;
         },
-        // MT3: UTF-8 text string.
+        // MT3: UTF-8 text string, e.g. "a", "IETF".
         3 => {
             var item = DataItem{ .text = std.ArrayList(u8).init(allocator) };
             try item.text.appendSlice(data[index.* .. index.* + @as(usize, val)]);
             index.* += @as(usize, val);
             return item;
         },
-        // MT4: DataItem array.
+        // MT4: DataItem array, e.g. [], [1, 2, 3], [1, [2, 3], [4, 5]].
         4 => {
             var item = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
             var i: usize = 0;
             while (i < val) : (i += 1) {
                 // The index will be incremented by the recursive call to decode_.
                 try item.array.append(try decode_(data, index, allocator, false));
+            }
+            return item;
+        },
+        // MT5: Map of pairs of DataItem, e.g. {1:2, 3:4}.
+        5 => {
+            var item = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
+            var i: usize = 0;
+            while (i < val) : (i += 1) {
+                // The index will be incremented by the recursive call to decode_.
+                const k = try decode_(data, index, allocator, false);
+                const v = try decode_(data, index, allocator, false);
+                try item.map.append(Pair{ .key = k, .value = v });
             }
             return item;
         },
