@@ -377,3 +377,18 @@ test "MT4: decode cbor array" {
     defer di4.deinit();
     try std.testing.expectEqualSlices(DataItem, list4.items, di4.array.items);
 }
+
+test "MT5: decode empty cbor map" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
+    defer expected.map.deinit();
+    const di = try decode_(&.{0xa0}, &index, allocator, false);
+    defer di.deinit();
+
+    try std.testing.expect(di.equal(&expected));
+
+    try expected.map.append(Pair{ .key = DataItem{ .int = 1 }, .value = DataItem{ .int = 2 } });
+    try std.testing.expect(!di.equal(&expected));
+}
