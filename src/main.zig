@@ -393,7 +393,7 @@ test "MT5: decode empty cbor map" {
     try std.testing.expect(!di.equal(&expected));
 }
 
-test "MT5: decode cbor map of int:int pairs" {
+test "MT5: decode cbor map {1:2,3:4}" {
     const allocator = std.testing.allocator;
     var index: usize = 0;
 
@@ -414,7 +414,7 @@ test "MT5: decode cbor map of int:int pairs" {
     try std.testing.expect(!di.equal(&not_expected));
 }
 
-test "MT5: decode cbor map of string:int/ text:array pairs" {
+test "MT5: decode cbor map {\"a\":1,\"b\":[2,3]}" {
     const allocator = std.testing.allocator;
     var index: usize = 0;
 
@@ -432,6 +432,73 @@ test "MT5: decode cbor map of string:int/ text:array pairs" {
     try expected.map.append(Pair{ .key = s2, .value = arr });
 
     const di = try decode_(&.{ 0xa2, 0x61, 0x61, 0x01, 0x61, 0x62, 0x82, 0x02, 0x03 }, &index, allocator, false);
+    defer di.deinit();
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT5: decode cbor map within array" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    // ["a",{"b":"c"}]
+    var expected = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
+    defer expected.deinit();
+
+    var s1 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s1.text.appendSlice("a");
+    try expected.array.append(s1);
+
+    var map = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
+    var s2 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s2.text.appendSlice("b");
+    var s3 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s3.text.appendSlice("c");
+    try map.map.append(Pair{ .key = s2, .value = s3 });
+    try expected.array.append(map);
+
+    const di = try decode_(&.{ 0x82, 0x61, 0x61, 0xa1, 0x61, 0x62, 0x61, 0x63 }, &index, allocator, false);
+    defer di.deinit();
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT5: decode cbor map of text pairs" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    // ["a",{"b":"c"}]
+    var expected = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
+    defer expected.deinit();
+
+    var s1 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s1.text.appendSlice("a");
+    var s2 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s2.text.appendSlice("A");
+    var s3 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s3.text.appendSlice("b");
+    var s4 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s4.text.appendSlice("B");
+    var s5 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s5.text.appendSlice("c");
+    var s6 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s6.text.appendSlice("C");
+    var s7 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s7.text.appendSlice("d");
+    var s8 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s8.text.appendSlice("D");
+    var s9 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s9.text.appendSlice("e");
+    var s10 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s10.text.appendSlice("E");
+
+    try expected.map.append(Pair{ .key = s1, .value = s2 });
+    try expected.map.append(Pair{ .key = s3, .value = s4 });
+    try expected.map.append(Pair{ .key = s5, .value = s6 });
+    try expected.map.append(Pair{ .key = s7, .value = s8 });
+    try expected.map.append(Pair{ .key = s9, .value = s10 });
+
+    const di = try decode_(&.{ 0xa5, 0x61, 0x61, 0x61, 0x41, 0x61, 0x62, 0x61, 0x42, 0x61, 0x63, 0x61, 0x43, 0x61, 0x64, 0x61, 0x44, 0x61, 0x65, 0x61, 0x45 }, &index, allocator, false);
     defer di.deinit();
 
     try std.testing.expect(di.equal(&expected));
