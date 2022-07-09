@@ -58,7 +58,7 @@ const DataItem = union(DataItemTag) {
         switch (self.*) {
             .int => |value| return value == other.*.int,
             .bytes => |list| return std.mem.eql(u8, list.items, other.*.bytes.items),
-            .text => |list| return std.mem.eql(u8, list.items, other.*.bytes.items),
+            .text => |list| return std.mem.eql(u8, list.items, other.*.text.items),
             .array => |arr| {
                 if (arr.items.len != other.*.array.items.len) {
                     return false;
@@ -391,4 +391,48 @@ test "MT5: decode empty cbor map" {
 
     try expected.map.append(Pair{ .key = DataItem{ .int = 1 }, .value = DataItem{ .int = 2 } });
     try std.testing.expect(!di.equal(&expected));
+}
+
+test "MT5: decode cbor map of int:int pairs" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
+    defer expected.deinit();
+    try expected.map.append(Pair{ .key = DataItem{ .int = 1 }, .value = DataItem{ .int = 2 } });
+    try expected.map.append(Pair{ .key = DataItem{ .int = 3 }, .value = DataItem{ .int = 4 } });
+
+    var not_expected = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
+    defer not_expected.map.deinit();
+    try not_expected.map.append(Pair{ .key = DataItem{ .int = 1 }, .value = DataItem{ .int = 2 } });
+    try not_expected.map.append(Pair{ .key = DataItem{ .int = 5 }, .value = DataItem{ .int = 4 } });
+
+    const di = try decode_(&.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, &index, allocator, false);
+    defer di.deinit();
+
+    try std.testing.expect(di.equal(&expected));
+    try std.testing.expect(!di.equal(&not_expected));
+}
+
+test "MT5: decode cbor map of string:int/ text:array pairs" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    // {"a":1,"b":[2,3]}
+    var expected = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
+    defer expected.deinit();
+    var s1 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s1.text.appendSlice("a");
+    try expected.map.append(Pair{ .key = s1, .value = DataItem{ .int = 1 } });
+    var s2 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try s2.text.appendSlice("b");
+    var arr = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
+    try arr.array.append(DataItem{ .int = 2 });
+    try arr.array.append(DataItem{ .int = 3 });
+    try expected.map.append(Pair{ .key = s2, .value = arr });
+
+    const di = try decode_(&.{ 0xa2, 0x61, 0x61, 0x01, 0x61, 0x62, 0x82, 0x02, 0x03 }, &index, allocator, false);
+    defer di.deinit();
+
+    try std.testing.expect(di.equal(&expected));
 }
