@@ -11,14 +11,14 @@ and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 
 ## Supported types
 
-[ x ] Unsigned integers in the range $$[0, 2^{64}-1]$$ (major type 0).
-[ x ] Negative integers in the range $$[-2^{64}, -1]$$ (major type 1).
-[ x ] Byte strings (major type 2).
-[ x ] Text strings (major type 3).
-[ x ] Array of data items (major type 4).
-[ x ] Map of pairs of data items (major type 5).
-[ ] Tagged data item whose tag number is in the range $$[0, 2^{64}-1]$$ (major type 6).
-[ ] Floating-point numbers and simple values, as well as the "break" stop code (major type 7).
+- [x] Unsigned integers in the range $[0, 2^{64}-1]$ (major type 0).
+- [x] Negative integers in the range $[-2^{64}, -1]$ (major type 1).
+- [x] Byte strings (major type 2).
+- [x] Text strings (major type 3).
+- [x] Array of data items (major type 4).
+- [x] Map of pairs of data items (major type 5).
+- [ ] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
+- [ ] Floating-point numbers and simple values, as well as the "break" stop code (major type 7).
 
 ## Project Status
 
