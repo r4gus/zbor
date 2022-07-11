@@ -14,7 +14,18 @@ const Pair = struct { key: DataItem, value: DataItem };
 
 const Tag = struct { number: u64, content: *DataItem, allocator: Allocator };
 
-const DataItemTag = enum { int, bytes, text, array, map, tag };
+const FloatTag = enum { float16, float32, float64 };
+
+const Float = union(FloatTag) {
+    /// IEEE 754 Half-Precision Float (16 bits follow)
+    float16: f16,
+    /// IEEE 754 Single-Precision Float (32 bits follow)
+    float32: f32,
+    /// IEEE 754 Double-Precision Float (64 bits follow)
+    float64: f64,
+};
+
+const DataItemTag = enum { int, bytes, text, array, map, tag, float };
 
 const DataItem = union(DataItemTag) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
@@ -29,6 +40,8 @@ const DataItem = union(DataItemTag) {
     map: std.ArrayList(Pair),
     /// Major type 6: A tagged data item.
     tag: Tag,
+    /// IEEE 754 Half-, Single-, or Double-Precision float.
+    float: Float,
 
     fn deinit(self: @This()) void {
         switch (self) {
@@ -56,6 +69,7 @@ const DataItem = union(DataItemTag) {
                 // ...then free the memory of the content.
                 t.allocator.destroy(t.content);
             },
+            .float => |_| {},
         }
     }
 
@@ -102,6 +116,17 @@ const DataItem = union(DataItemTag) {
             .tag => |t| {
                 return t.number == other.tag.number and
                     t.content.*.equal(other.tag.content);
+            },
+            .float => |f| {
+                if (@as(FloatTag, f) != @as(FloatTag, other.float)) {
+                    return false;
+                }
+
+                switch (f) {
+                    .float16 => |fv| return fv == other.float.float16,
+                    .float32 => |fv| return fv == other.float.float32,
+                    .float64 => |fv| return fv == other.float.float64,
+                }
             },
         }
     }
@@ -210,6 +235,16 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
             item.* = try decode_(data, index, allocator, false);
 
             return DataItem{ .tag = Tag{ .number = val, .content = item, .allocator = allocator } };
+        },
+        7 => {
+            switch (ai) {
+                // The following narrowing conversions are fine because the
+                // number of parsed bytes always matches the size of the float.
+                25 => return DataItem{ .float = Float{ .float16 = @bitCast(f16, @intCast(u16, val)) } },
+                26 => return DataItem{ .float = Float{ .float32 = @bitCast(f32, @intCast(u32, val)) } },
+                27 => return DataItem{ .float = Float{ .float64 = @bitCast(f64, val) } },
+                else => {},
+            }
         },
         else => {
             unreachable;
@@ -555,6 +590,65 @@ test "MT6: decode cbor tagged data item 32(\"http://www.example.com\")" {
 
     const di = try decode_(&.{ 0xd8, 0x20, 0x76, 0x68, 0x74, 0x74, 0x70, 0x3a, 0x2f, 0x2f, 0x77, 0x77, 0x77, 0x2e, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d }, &index, allocator, false);
     defer di.deinit();
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f16 0.0" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .float = Float{ .float16 = 0.0 } };
+    var ne1 = DataItem{ .float = Float{ .float16 = 0.1 } };
+    var ne2 = DataItem{ .float = Float{ .float16 = -0.1 } };
+    var ne3 = DataItem{ .float = Float{ .float32 = 0.0 } };
+    var ne4 = DataItem{ .float = Float{ .float64 = 0.0 } };
+    var di = try decode_(&.{ 0xf9, 0x00, 0x00 }, &index, allocator, false);
+
+    try std.testing.expect(di.equal(&expected));
+    try std.testing.expect(!di.equal(&ne1));
+    try std.testing.expect(!di.equal(&ne2));
+    try std.testing.expect(!di.equal(&ne3));
+    try std.testing.expect(!di.equal(&ne4));
+}
+
+test "MT7: decode f16 -0.0" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .float = Float{ .float16 = -0.0 } };
+    var di = try decode_(&.{ 0xf9, 0x80, 0x00 }, &index, allocator, false);
+
+    try std.testing.expectEqual(expected.float.float16, di.float.float16);
+    //try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f16 1.0" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .float = Float{ .float16 = 1.0 } };
+    var di = try decode_(&.{ 0xf9, 0x3c, 0x00 }, &index, allocator, false);
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f16 1.5" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .float = Float{ .float16 = 1.5 } };
+    var di = try decode_(&.{ 0xf9, 0x3e, 0x00 }, &index, allocator, false);
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f16 " {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .float = Float{ .float16 = 5.960464477539063e-8 } };
+    var di = try decode_(&.{ 0xf9, 0x00, 0x01 }, &index, allocator, false);
 
     try std.testing.expect(di.equal(&expected));
 }
