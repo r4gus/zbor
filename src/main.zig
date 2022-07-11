@@ -12,7 +12,7 @@ const CborError = error{
 
 const Pair = struct { key: DataItem, value: DataItem };
 
-const Tag = struct { number: u64, content: *DataItem };
+const Tag = struct { number: u64, content: *DataItem, allocator: Allocator };
 
 const DataItemTag = enum { int, bytes, text, array, map, tag };
 
@@ -50,7 +50,12 @@ const DataItem = union(DataItemTag) {
                 }
                 m.deinit();
             },
-            .tag => |t| t.content.*.deinit(),
+            .tag => |t| {
+                // First free the allocated memory of the nested data items...
+                t.content.*.deinit();
+                // ...then free the memory of the content.
+                t.allocator.destroy(t.content);
+            },
         }
     }
 
@@ -196,6 +201,15 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
                 try item.map.append(Pair{ .key = k, .value = v });
             }
             return item;
+        },
+        // MT6: Tagged data item, e.g. 1("a").
+        6 => {
+            var item = try allocator.create(DataItem);
+            // The enclosed data item (tag content) is the single encoded data
+            // item that follows the head.
+            item.* = try decode_(data, index, allocator, false);
+
+            return DataItem{ .tag = Tag{ .number = val, .content = item, .allocator = allocator } };
         },
         else => {
             unreachable;
@@ -508,6 +522,38 @@ test "MT5: decode cbor map of text pairs" {
     try expected.map.append(Pair{ .key = s9, .value = s10 });
 
     const di = try decode_(&.{ 0xa5, 0x61, 0x61, 0x61, 0x41, 0x61, 0x62, 0x61, 0x42, 0x61, 0x63, 0x61, 0x43, 0x61, 0x64, 0x61, 0x44, 0x61, 0x65, 0x61, 0x45 }, &index, allocator, false);
+    defer di.deinit();
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT6: decode cbor tagged data item 1(1363896240)" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var item = try allocator.create(DataItem);
+    item.* = DataItem{ .int = 1363896240 };
+    var expected = DataItem{ .tag = Tag{ .number = 1, .content = item, .allocator = allocator } };
+    defer expected.deinit();
+
+    const di = try decode_(&.{ 0xc1, 0x1a, 0x51, 0x4b, 0x67, 0xb0 }, &index, allocator, false);
+    defer di.deinit();
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT6: decode cbor tagged data item 32(\"http://www.example.com\")" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var item = try allocator.create(DataItem);
+    var text = std.ArrayList(u8).init(allocator);
+    try text.appendSlice("http://www.example.com");
+    item.* = DataItem{ .text = text };
+    var expected = DataItem{ .tag = Tag{ .number = 32, .content = item, .allocator = allocator } };
+    defer expected.deinit();
+
+    const di = try decode_(&.{ 0xd8, 0x20, 0x76, 0x68, 0x74, 0x74, 0x70, 0x3a, 0x2f, 0x2f, 0x77, 0x77, 0x77, 0x2e, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d }, &index, allocator, false);
     defer di.deinit();
 
     try std.testing.expect(di.equal(&expected));

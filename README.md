@@ -17,8 +17,10 @@ and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 - [x] Text strings (major type 3).
 - [x] Array of data items (major type 4).
 - [x] Map of pairs of data items (major type 5).
-- [ ] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
-- [ ] Floating-point numbers and simple values, as well as the "break" stop code (major type 7).
+- [x] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
+- [ ] Floating-point numbers (major type 7).
+- [ ] simple values (major type 7). 
+- [ ] "break" stop code (major type 7).
 
 ## Supported types by encoder
 
@@ -29,7 +31,9 @@ and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 - [ ] Array of data items (major type 4).
 - [ ] Map of pairs of data items (major type 5).
 - [ ] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
-- [ ] Floating-point numbers and simple values, as well as the "break" stop code (major type 7).
+- [ ] Floating-point numbers (major type 7).
+- [ ] simple values (major type 7). 
+- [ ] "break" stop code (major type 7).
 
 ## Project Status
 
