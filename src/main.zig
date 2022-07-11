@@ -12,7 +12,9 @@ const CborError = error{
 
 const Pair = struct { key: DataItem, value: DataItem };
 
-const DataItemTag = enum { int, bytes, text, array, map };
+const Tag = struct { number: u64, content: *DataItem };
+
+const DataItemTag = enum { int, bytes, text, array, map, tag };
 
 const DataItem = union(DataItemTag) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
@@ -25,6 +27,8 @@ const DataItem = union(DataItemTag) {
     array: std.ArrayList(DataItem),
     /// Major type 5: A map of pairs of data items.
     map: std.ArrayList(Pair),
+    /// Major type 6: A tagged data item.
+    tag: Tag,
 
     fn deinit(self: @This()) void {
         switch (self) {
@@ -46,6 +50,7 @@ const DataItem = union(DataItemTag) {
                 }
                 m.deinit();
             },
+            .tag => |t| t.content.*.deinit(),
         }
     }
 
@@ -88,6 +93,10 @@ const DataItem = union(DataItemTag) {
                 }
 
                 return true;
+            },
+            .tag => |t| {
+                return t.number == other.tag.number and
+                    t.content.*.equal(other.tag.content);
             },
         }
     }

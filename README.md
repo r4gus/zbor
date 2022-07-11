@@ -9,7 +9,7 @@ message size, and extensibility without the need for version negotiation
 in different protocols like [CTAP](https://fidoalliance.org/specs/fido-v2.0-ps-20190130/fido-client-to-authenticator-protocol-v2.0-ps-20190130.html#ctap2-canonical-cbor-encoding-form) 
 and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 
-## Supported types
+## Supported types by decoder
 
 - [x] Unsigned integers in the range $[0, 2^{64}-1]$ (major type 0).
 - [x] Negative integers in the range $[-2^{64}, -1]$ (major type 1).
@@ -17,6 +17,17 @@ and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 - [x] Text strings (major type 3).
 - [x] Array of data items (major type 4).
 - [x] Map of pairs of data items (major type 5).
+- [ ] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
+- [ ] Floating-point numbers and simple values, as well as the "break" stop code (major type 7).
+
+## Supported types by encoder
+
+- [ ] Unsigned integers in the range $[0, 2^{64}-1]$ (major type 0).
+- [ ] Negative integers in the range $[-2^{64}, -1]$ (major type 1).
+- [ ] Byte strings (major type 2).
+- [ ] Text strings (major type 3).
+- [ ] Array of data items (major type 4).
+- [ ] Map of pairs of data items (major type 5).
 - [ ] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
 - [ ] Floating-point numbers and simple values, as well as the "break" stop code (major type 7).
 
