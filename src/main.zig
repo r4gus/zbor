@@ -7,6 +7,8 @@ const CborError = error{
     ReservedAdditionalInformation,
     // The given CBOR string is malformed.
     Malformed,
+    // A unsupported type has been encounterd.
+    Unsupported,
     OutOfMemory,
 };
 
@@ -25,7 +27,9 @@ const Float = union(FloatTag) {
     float64: f64,
 };
 
-const DataItemTag = enum { int, bytes, text, array, map, tag, float };
+const SimpleValue = enum(u8) { False = 20, True = 21, Null = 22, Undefined = 23 };
+
+const DataItemTag = enum { int, bytes, text, array, map, tag, float, simple };
 
 const DataItem = union(DataItemTag) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
@@ -42,6 +46,8 @@ const DataItem = union(DataItemTag) {
     tag: Tag,
     /// IEEE 754 Half-, Single-, or Double-Precision float.
     float: Float,
+    /// Major type 7: Simple value [false, true, null]
+    simple: SimpleValue,
 
     fn deinit(self: @This()) void {
         switch (self) {
@@ -70,6 +76,7 @@ const DataItem = union(DataItemTag) {
                 t.allocator.destroy(t.content);
             },
             .float => |_| {},
+            .simple => |_| {},
         }
     }
 
@@ -127,6 +134,9 @@ const DataItem = union(DataItemTag) {
                     .float32 => |fv| return fv == other.float.float32,
                     .float64 => |fv| return fv == other.float.float64,
                 }
+            },
+            .simple => |s| {
+                return s == other.simple;
             },
         }
     }
@@ -238,12 +248,25 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
         },
         7 => {
             switch (ai) {
+                20 => return DataItem{ .simple = SimpleValue.False },
+                21 => return DataItem{ .simple = SimpleValue.True },
+                22 => return DataItem{ .simple = SimpleValue.Null },
+                23 => return DataItem{ .simple = SimpleValue.Undefined },
+                24 => {
+                    if (val < 32) {
+                        return CborError.Malformed;
+                    } else {
+                        return CborError.Unsupported;
+                    }
+                },
                 // The following narrowing conversions are fine because the
                 // number of parsed bytes always matches the size of the float.
                 25 => return DataItem{ .float = Float{ .float16 = @bitCast(f16, @intCast(u16, val)) } },
                 26 => return DataItem{ .float = Float{ .float32 = @bitCast(f32, @intCast(u32, val)) } },
                 27 => return DataItem{ .float = Float{ .float64 = @bitCast(f64, val) } },
-                else => {},
+                // Break stop code unsupported for the moment.
+                31 => return CborError.Unsupported,
+                else => return CborError.Malformed,
             }
         },
         else => {
@@ -721,4 +744,28 @@ test "MT7: decode f64 -4.1" {
     var di = try decode_(&.{ 0xfb, 0xc0, 0x10, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66 }, &index, allocator, false);
 
     try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: simple value" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected1 = DataItem{ .simple = SimpleValue.False };
+    var di1 = try decode_(&.{0xf4}, &index, allocator, false);
+    try std.testing.expect(di1.equal(&expected1));
+
+    index = 0;
+    var expected2 = DataItem{ .simple = SimpleValue.True };
+    var di2 = try decode_(&.{0xf5}, &index, allocator, false);
+    try std.testing.expect(di2.equal(&expected2));
+
+    index = 0;
+    var expected3 = DataItem{ .simple = SimpleValue.Null };
+    var di3 = try decode_(&.{0xf6}, &index, allocator, false);
+    try std.testing.expect(di3.equal(&expected3));
+
+    index = 0;
+    var expected4 = DataItem{ .simple = SimpleValue.Undefined };
+    var di4 = try decode_(&.{0xf7}, &index, allocator, false);
+    try std.testing.expect(di4.equal(&expected4));
 }
