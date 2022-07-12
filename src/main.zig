@@ -5,8 +5,8 @@ const testing = std.testing;
 const CborError = error{
     // Indicates that one of the reserved values 28, 29 or 30 has been used.
     ReservedAdditionalInformation,
-    // Default error.
-    Default,
+    // The given CBOR string is malformed.
+    Malformed,
     OutOfMemory,
 };
 
@@ -251,7 +251,7 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
         },
     }
 
-    return CborError.Default;
+    return CborError.Malformed;
 }
 
 const TestError = CborError || error{ TestExpectedEqual, TestUnexpectedResult };
@@ -643,12 +643,82 @@ test "MT7: decode f16 1.5" {
     try std.testing.expect(di.equal(&expected));
 }
 
-test "MT7: decode f16 " {
+test "MT7: decode f16 5.960464477539063e-8" {
     const allocator = std.testing.allocator;
     var index: usize = 0;
 
     var expected = DataItem{ .float = Float{ .float16 = 5.960464477539063e-8 } };
     var di = try decode_(&.{ 0xf9, 0x00, 0x01 }, &index, allocator, false);
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f16 0.00006103515625" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .float = Float{ .float16 = 0.00006103515625 } };
+    var di = try decode_(&.{ 0xf9, 0x04, 0x00 }, &index, allocator, false);
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f16 -4.0" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .float = Float{ .float16 = -4.0 } };
+    var di = try decode_(&.{ 0xf9, 0xc4, 0x00 }, &index, allocator, false);
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f32 100000.0" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .float = Float{ .float32 = 100000.0 } };
+    var di = try decode_(&.{ 0xfa, 0x47, 0xc3, 0x50, 0x00 }, &index, allocator, false);
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f32 3.4028234663852886e+38" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .float = Float{ .float32 = 3.4028234663852886e+38 } };
+    var di = try decode_(&.{ 0xfa, 0x7f, 0x7f, 0xff, 0xff }, &index, allocator, false);
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f64 1.1" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .float = Float{ .float64 = 1.1 } };
+    var di = try decode_(&.{ 0xfb, 0x3f, 0xf1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9a }, &index, allocator, false);
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f64 1.0e+300" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .float = Float{ .float64 = 1.0e+300 } };
+    var di = try decode_(&.{ 0xfb, 0x7e, 0x37, 0xe4, 0x3c, 0x88, 0x00, 0x75, 0x9c }, &index, allocator, false);
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f64 -4.1" {
+    const allocator = std.testing.allocator;
+    var index: usize = 0;
+
+    var expected = DataItem{ .float = Float{ .float64 = -4.1 } };
+    var di = try decode_(&.{ 0xfb, 0xc0, 0x10, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66 }, &index, allocator, false);
 
     try std.testing.expect(di.equal(&expected));
 }
