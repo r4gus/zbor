@@ -140,7 +140,31 @@ const DataItem = union(DataItemTag) {
             },
         }
     }
+
+    /// Get the value associated with the given key.
+    ///
+    /// Retruns null if the DataItem is not a map or if the key couldn't
+    /// be found; a pointer to the associated value otherwise.
+    fn fromMap(self: *@This(), key: *const DataItem) ?*DataItem {
+        if (@as(DataItemTag, self.*) != DataItemTag.map) {
+            return null;
+        }
+
+        for (self.map.items) |*pair| {
+            if (@as(DataItemTag, pair.*.key) == @as(DataItemTag, key.*)) {
+                if (pair.*.key.equal(key)) {
+                    return &pair.*.value;
+                }
+            }
+        }
+
+        return null;
+    }
 };
+
+// ****************************************************************************
+// decoder
+// ****************************************************************************
 
 // calling function is responsible for deallocating memory.
 fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: bool) CborError!DataItem {
@@ -768,4 +792,34 @@ test "MT7: simple value" {
     var expected4 = DataItem{ .simple = SimpleValue.Undefined };
     var di4 = try decode_(&.{0xf7}, &index, allocator, false);
     try std.testing.expect(di4.equal(&expected4));
+}
+
+test "decode WebAuthn attestationObject" {
+    const allocator = std.testing.allocator;
+    const attestationObject = try std.fs.cwd().openFile("data/WebAuthnCreate.dat", .{ .mode = .read_only });
+    defer attestationObject.close();
+    const bytes = try attestationObject.readToEndAlloc(allocator, 4096);
+    defer allocator.free(bytes);
+
+    var index: usize = 0;
+    var di = try decode_(bytes, &index, allocator, false);
+    defer di.deinit();
+
+    var fmt = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try fmt.text.appendSlice("fmt");
+    defer fmt.deinit();
+
+    const fmt_ = di.fromMap(&fmt);
+    try std.testing.expectEqualStrings("fido-u2f", fmt_.?.text.items);
+}
+
+// ****************************************************************************
+// encoder
+// ****************************************************************************
+
+fn encode(allocator: Allocator, item: *DataItem) CborError!std.ArrayList(u8) {
+    var cbor = std.ArrayList(u8).init(allocator);
+    _ = item;
+
+    return cbor;
 }
