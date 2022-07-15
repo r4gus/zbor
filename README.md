@@ -35,6 +35,34 @@ and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 - [ ] simple values (major type 7). 
 - [ ] "break" stop code (major type 7).
 
+## Examples
+
+Besides the examples below, you may want to check out the source code and tests.
+
+### CBOR decoder
+
+To simply decode a CBOR byte string, one can use `decode()`.
+
+```zig
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+// Open a binary file and read its content.
+const attestationObject = try std.fs.cwd().openFile(
+    "attestationObject.dat", 
+    .{ mode = .read_only}
+);
+defer attestationObject.close();
+const bytes = try attestationObject.readToEndAlloc(gpa, 4096);
+defer gpa.free(bytes);
+
+// Decode the given CBOR byte string.
+// This will return a DataItem on success or throw an error otherwise.
+var data_item = try decode(bytes, gpa);
+// decode() will allocate memory if neccessary. The caller is responsible for
+// deallocation. deinit() will free the allocated memory of all DataItems recursively.
+defer data_item.deinit();
+```
+
 ## Project Status
 
 | Task | Todo | In progress | Done |

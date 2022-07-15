@@ -141,7 +141,23 @@ const DataItem = union(DataItemTag) {
         }
     }
 
-    /// Get the value associated with the given key.
+    /// Get the value at the specified index from an array.
+    ///
+    /// Returns null if the DataItem is not an array or if the
+    /// given index is out of bounds.
+    fn get(self: *@This(), index: usize) ?*DataItem {
+        if (@as(DataItemTag, self.*) != DataItemTag.array) {
+            return null;
+        }
+
+        if (index < self.array.items.len) {
+            return &self.array.items[index];
+        } else {
+            return null;
+        }
+    }
+
+    /// Get the value associated with the given key from a map.
     ///
     /// Retruns null if the DataItem is not a map or if the key couldn't
     /// be found; a pointer to the associated value otherwise.
@@ -875,13 +891,25 @@ test "decode WebAuthn attestationObject" {
 
     // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     const attStmt = di.getValueByString("attStmt");
+    try std.testing.expect(attStmt.?.isMap());
     const authData = di.getValueByString("authData");
-    const sig = attStmt.?.getValueByString("sig");
-    const x5c = attStmt.?.getValueByString("x5c");
+    try std.testing.expect(authData.?.isBytes());
 
-    _ = authData;
-    _ = sig;
-    _ = x5c;
+    // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    try std.testing.expectEqual(@as(usize, 196), authData.?.bytes.items.len);
+
+    // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    const sig = attStmt.?.getValueByString("sig");
+    try std.testing.expect(sig.?.isBytes());
+    try std.testing.expectEqual(@as(usize, 71), sig.?.bytes.items.len);
+
+    const x5c = attStmt.?.getValueByString("x5c");
+    try std.testing.expect(x5c.?.isArray());
+    try std.testing.expectEqual(@as(usize, 1), x5c.?.array.items.len);
+
+    const x5c_stmt = x5c.?.get(0);
+    try std.testing.expect(x5c_stmt.?.isBytes());
+    try std.testing.expectEqual(@as(usize, 704), x5c_stmt.?.bytes.items.len);
 }
 
 // ****************************************************************************
