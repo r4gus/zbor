@@ -145,7 +145,7 @@ const DataItem = union(DataItemTag) {
     ///
     /// Retruns null if the DataItem is not a map or if the key couldn't
     /// be found; a pointer to the associated value otherwise.
-    fn fromMap(self: *@This(), key: *const DataItem) ?*DataItem {
+    fn getValue(self: *@This(), key: *const DataItem) ?*DataItem {
         if (@as(DataItemTag, self.*) != DataItemTag.map) {
             return null;
         }
@@ -160,11 +160,73 @@ const DataItem = union(DataItemTag) {
 
         return null;
     }
+
+    fn getValueByString(self: *@This(), key: []const u8) ?*DataItem {
+        if (@as(DataItemTag, self.*) != DataItemTag.map) {
+            return null;
+        }
+
+        for (self.map.items) |*pair| {
+            if (@as(DataItemTag, pair.*.key) == .text) {
+                if (std.mem.eql(u8, pair.*.key.text.items, key)) {
+                    return &pair.*.value;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// Returns true if the given DataItem is an integer, false otherwise.
+    fn isInt(self: *@This()) bool {
+        return @as(DataItemTag, self.*) == .int;
+    }
+
+    /// Returns true if the given DataItem is a byte string, false otherwise.
+    fn isBytes(self: *@This()) bool {
+        return @as(DataItemTag, self.*) == .bytes;
+    }
+
+    /// Returns true if the given DataItem is a text string, false otherwise.
+    fn isText(self: *@This()) bool {
+        return @as(DataItemTag, self.*) == .text;
+    }
+
+    /// Returns true if the given DataItem is an array of DataItems, false otherwise.
+    fn isArray(self: *@This()) bool {
+        return @as(DataItemTag, self.*) == .array;
+    }
+
+    /// Returns true if the given DataItem is a map, false otherwise.
+    fn isMap(self: *@This()) bool {
+        return @as(DataItemTag, self.*) == .map;
+    }
+
+    /// Returns true if the given DataItem is a tagged DataItem, false otherwise.
+    fn isTagged(self: *@This()) bool {
+        return @as(DataItemTag, self.*) == .tag;
+    }
+
+    /// Returns true if the given DataItem is a float, false otherwise.
+    fn isFloat(self: *@This()) bool {
+        return @as(DataItemTag, self.*) == .float;
+    }
+
+    /// Returns true if the given DataItem is a simple value, false otherwise.
+    fn isSimple(self: *@This()) bool {
+        return @as(DataItemTag, self.*) == .simple;
+    }
 };
 
 // ****************************************************************************
 // decoder
 // ****************************************************************************
+
+/// Decode the given CBOR data.
+fn decode(data: []const u8, allocator: Allocator) CborError!DataItem {
+    var index: usize = 0;
+    return decode_(data, &index, allocator, false);
+}
 
 // calling function is responsible for deallocating memory.
 fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: bool) CborError!DataItem {
@@ -801,16 +863,25 @@ test "decode WebAuthn attestationObject" {
     const bytes = try attestationObject.readToEndAlloc(allocator, 4096);
     defer allocator.free(bytes);
 
-    var index: usize = 0;
-    var di = try decode_(bytes, &index, allocator, false);
+    var di = try decode(bytes, allocator);
     defer di.deinit();
 
-    var fmt = DataItem{ .text = std.ArrayList(u8).init(allocator) };
-    try fmt.text.appendSlice("fmt");
-    defer fmt.deinit();
+    try std.testing.expect(di.isMap());
 
-    const fmt_ = di.fromMap(&fmt);
-    try std.testing.expectEqualStrings("fido-u2f", fmt_.?.text.items);
+    // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    const fmt = di.getValueByString("fmt");
+    try std.testing.expect(fmt.?.isText());
+    try std.testing.expectEqualStrings("fido-u2f", fmt.?.text.items);
+
+    // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    const attStmt = di.getValueByString("attStmt");
+    const authData = di.getValueByString("authData");
+    const sig = attStmt.?.getValueByString("sig");
+    const x5c = attStmt.?.getValueByString("x5c");
+
+    _ = authData;
+    _ = sig;
+    _ = x5c;
 }
 
 // ****************************************************************************
