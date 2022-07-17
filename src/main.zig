@@ -916,9 +916,113 @@ test "decode WebAuthn attestationObject" {
 // encoder
 // ****************************************************************************
 
-fn encode(allocator: Allocator, item: *DataItem) CborError!std.ArrayList(u8) {
+fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u8) {
     var cbor = std.ArrayList(u8).init(allocator);
     _ = item;
 
+    switch (item.*) {
+        .int => |value| {
+            // CTAP2 canonical CBOR encoding form must encode integers as small
+            // as possible.
+            switch (value) {
+                // encode unsigned integer (major type 0).
+                0...23 => try cbor.append(@intCast(u8, value)),
+                24...255 => {
+                    try cbor.append(24); // additional information 24 (1 byte)
+                    try cbor.append(@intCast(u8, value));
+                },
+                256...65535 => {
+                    try cbor.append(25); // additional information 25 (2 bytes)
+                    try cbor.append(@intCast(u8, (value >> 8) & 0xff));
+                    try cbor.append(@intCast(u8, value & 0xff));
+                },
+                65536...4294967295 => {
+                    try cbor.append(26); // additional information 26 (4 bytes)
+                    try cbor.append(@intCast(u8, (value >> 24) & 0xff));
+                    try cbor.append(@intCast(u8, (value >> 16) & 0xff));
+                    try cbor.append(@intCast(u8, (value >> 8) & 0xff));
+                    try cbor.append(@intCast(u8, value & 0xff));
+                },
+                4294967296...18446744073709551615 => {
+                    try cbor.append(27); // additional information 27 (8 bytes)
+                    try cbor.append(@intCast(u8, (value >> 56) & 0xff));
+                    try cbor.append(@intCast(u8, (value >> 48) & 0xff));
+                    try cbor.append(@intCast(u8, (value >> 40) & 0xff));
+                    try cbor.append(@intCast(u8, (value >> 32) & 0xff));
+                    try cbor.append(@intCast(u8, (value >> 24) & 0xff));
+                    try cbor.append(@intCast(u8, (value >> 16) & 0xff));
+                    try cbor.append(@intCast(u8, (value >> 8) & 0xff));
+                    try cbor.append(@intCast(u8, value & 0xff));
+                },
+                else => {
+                    unreachable;
+                },
+            }
+        },
+        else => {
+            // actually reachable but we pretend for now...
+            unreachable;
+        },
+    }
+
     return cbor;
+}
+
+test "MT0: encode cbor unsigned integer value" {
+    const allocator = std.testing.allocator;
+
+    const di1 = DataItem{ .int = 0 };
+    const cbor1 = try encode(allocator, &di1);
+    defer cbor1.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0x00}, cbor1.items);
+
+    const di2 = DataItem{ .int = 23 };
+    const cbor2 = try encode(allocator, &di2);
+    defer cbor2.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0x17}, cbor2.items);
+
+    const di3 = DataItem{ .int = 24 };
+    const cbor3 = try encode(allocator, &di3);
+    defer cbor3.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x18, 0x18 }, cbor3.items);
+
+    const di4 = DataItem{ .int = 255 };
+    const cbor4 = try encode(allocator, &di4);
+    defer cbor4.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x18, 0xff }, cbor4.items);
+
+    const di5 = DataItem{ .int = 256 };
+    const cbor5 = try encode(allocator, &di5);
+    defer cbor5.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x19, 0x01, 0x00 }, cbor5.items);
+
+    const di6 = DataItem{ .int = 1000 };
+    const cbor6 = try encode(allocator, &di6);
+    defer cbor6.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x19, 0x03, 0xe8 }, cbor6.items);
+
+    const di7 = DataItem{ .int = 65535 };
+    const cbor7 = try encode(allocator, &di7);
+    defer cbor7.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x19, 0xff, 0xff }, cbor7.items);
+
+    const di8 = DataItem{ .int = 65536 };
+    const cbor8 = try encode(allocator, &di8);
+    defer cbor8.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x1a, 0x00, 0x01, 0x00, 0x00 }, cbor8.items);
+
+    const di9 = DataItem{ .int = 4294967295 };
+    const cbor9 = try encode(allocator, &di9);
+    defer cbor9.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x1a, 0xff, 0xff, 0xff, 0xff }, cbor9.items);
+
+    const di10 = DataItem{ .int = 12345678900 };
+    const cbor10 = try encode(allocator, &di10);
+    defer cbor10.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x1b, 0x00, 0x00, 0x00, 0x02, 0xdf, 0xdc, 0x1c, 0x34 }, cbor10.items);
+
+    const di11 = DataItem{ .int = 18446744073709551615 };
+    const cbor11 = try encode(allocator, &di11);
+    defer cbor11.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x1b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }, cbor11.items);
 }

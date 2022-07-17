@@ -24,7 +24,7 @@ and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 
 ## Supported types by encoder
 
-- [ ] Unsigned integers in the range $[0, 2^{64}-1]$ (major type 0).
+- [x] Unsigned integers in the range $[0, 2^{64}-1]$ (major type 0).
 - [ ] Negative integers in the range $[-2^{64}, -1]$ (major type 1).
 - [ ] Byte strings (major type 2).
 - [ ] Text strings (major type 3).
@@ -68,6 +68,6 @@ defer data_item.deinit();
 | Task | Todo | In progress | Done |
 |:----:|:----:|:-----------:|:----:|
 | Decoder | | x | |
-| Encoder | x | | |
+| Encoder | | x | |
 | CBOR to JSON | x | | |
 | JSON to CBOR | x | | |
