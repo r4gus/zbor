@@ -924,35 +924,41 @@ fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u
         .int => |value| {
             // CTAP2 canonical CBOR encoding form must encode integers as small
             // as possible.
-            switch (value) {
-                // encode unsigned integer (major type 0).
-                0...23 => try cbor.append(@intCast(u8, value)),
-                24...255 => {
-                    try cbor.append(24); // additional information 24 (1 byte)
-                    try cbor.append(@intCast(u8, value));
+            const v = if (value < 0) (-value) - 1 else value;
+
+            switch (v) {
+                0x00...0x17 => {
+                    if (value < 0)
+                        try cbor.append(@intCast(u8, v) | 0x20)
+                    else
+                        try cbor.append(@intCast(u8, v));
                 },
-                256...65535 => {
-                    try cbor.append(25); // additional information 25 (2 bytes)
-                    try cbor.append(@intCast(u8, (value >> 8) & 0xff));
-                    try cbor.append(@intCast(u8, value & 0xff));
+                0x18...0xff => {
+                    if (value < 0) try cbor.append(24 | 0x20) else try cbor.append(24);
+                    try cbor.append(@intCast(u8, v));
                 },
-                65536...4294967295 => {
-                    try cbor.append(26); // additional information 26 (4 bytes)
-                    try cbor.append(@intCast(u8, (value >> 24) & 0xff));
-                    try cbor.append(@intCast(u8, (value >> 16) & 0xff));
-                    try cbor.append(@intCast(u8, (value >> 8) & 0xff));
-                    try cbor.append(@intCast(u8, value & 0xff));
+                0x0100...0xffff => {
+                    if (value < 0) try cbor.append(25 | 0x20) else try cbor.append(25);
+                    try cbor.append(@intCast(u8, (v >> 8) & 0xff));
+                    try cbor.append(@intCast(u8, v & 0xff));
                 },
-                4294967296...18446744073709551615 => {
-                    try cbor.append(27); // additional information 27 (8 bytes)
-                    try cbor.append(@intCast(u8, (value >> 56) & 0xff));
-                    try cbor.append(@intCast(u8, (value >> 48) & 0xff));
-                    try cbor.append(@intCast(u8, (value >> 40) & 0xff));
-                    try cbor.append(@intCast(u8, (value >> 32) & 0xff));
-                    try cbor.append(@intCast(u8, (value >> 24) & 0xff));
-                    try cbor.append(@intCast(u8, (value >> 16) & 0xff));
-                    try cbor.append(@intCast(u8, (value >> 8) & 0xff));
-                    try cbor.append(@intCast(u8, value & 0xff));
+                0x00010000...0xffffffff => {
+                    if (value < 0) try cbor.append(26 | 0x20) else try cbor.append(26);
+                    try cbor.append(@intCast(u8, (v >> 24) & 0xff));
+                    try cbor.append(@intCast(u8, (v >> 16) & 0xff));
+                    try cbor.append(@intCast(u8, (v >> 8) & 0xff));
+                    try cbor.append(@intCast(u8, v & 0xff));
+                },
+                0x0000000100000000...0xffffffffffffffff => {
+                    if (value < 0) try cbor.append(27 | 0x20) else try cbor.append(27);
+                    try cbor.append(@intCast(u8, (v >> 56) & 0xff));
+                    try cbor.append(@intCast(u8, (v >> 48) & 0xff));
+                    try cbor.append(@intCast(u8, (v >> 40) & 0xff));
+                    try cbor.append(@intCast(u8, (v >> 32) & 0xff));
+                    try cbor.append(@intCast(u8, (v >> 24) & 0xff));
+                    try cbor.append(@intCast(u8, (v >> 16) & 0xff));
+                    try cbor.append(@intCast(u8, (v >> 8) & 0xff));
+                    try cbor.append(@intCast(u8, v & 0xff));
                 },
                 else => {
                     unreachable;
@@ -1025,4 +1031,38 @@ test "MT0: encode cbor unsigned integer value" {
     const cbor11 = try encode(allocator, &di11);
     defer cbor11.deinit();
     try std.testing.expectEqualSlices(u8, &.{ 0x1b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }, cbor11.items);
+}
+
+test "MT1: encode cbor signed integer value" {
+    const allocator = std.testing.allocator;
+
+    const di1 = DataItem{ .int = -1 };
+    const cbor1 = try encode(allocator, &di1);
+    defer cbor1.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0x20}, cbor1.items);
+
+    const di2 = DataItem{ .int = -3 };
+    const cbor2 = try encode(allocator, &di2);
+    defer cbor2.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0x22}, cbor2.items);
+
+    const di3 = DataItem{ .int = -100 };
+    const cbor3 = try encode(allocator, &di3);
+    defer cbor3.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x38, 0x63 }, cbor3.items);
+
+    const di4 = DataItem{ .int = -1000 };
+    const cbor4 = try encode(allocator, &di4);
+    defer cbor4.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x39, 0x03, 0xe7 }, cbor4.items);
+
+    const di5 = DataItem{ .int = -998877 };
+    const cbor5 = try encode(allocator, &di5);
+    defer cbor5.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x3a, 0x00, 0x0f, 0x3d, 0xdc }, cbor5.items);
+
+    const di6 = DataItem{ .int = -18446744073709551616 };
+    const cbor6 = try encode(allocator, &di6);
+    defer cbor6.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x3b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }, cbor6.items);
 }
