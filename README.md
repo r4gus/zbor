@@ -26,7 +26,7 @@ and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 
 - [x] Unsigned integers in the range $[0, 2^{64}-1]$ (major type 0).
 - [x] Negative integers in the range $[-2^{64}, -1]$ (major type 1).
-- [ ] Byte strings (major type 2).
+- [x] Byte strings (major type 2).
 - [ ] Text strings (major type 3).
 - [ ] Array of data items (major type 4).
 - [ ] Map of pairs of data items (major type 5).

@@ -918,57 +918,68 @@ test "decode WebAuthn attestationObject" {
 
 fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u8) {
     var cbor = std.ArrayList(u8).init(allocator);
-    _ = item;
 
+    // The first byte of a data item encodes its type.
+    var head: u8 = 0;
     switch (item.*) {
         .int => |value| {
-            // CTAP2 canonical CBOR encoding form must encode integers as small
-            // as possible.
-            const v = if (value < 0) (-value) - 1 else value;
+            if (value < 0) head = 0x20;
+        },
+        .bytes => |_| head = 0x40,
+        else => unreachable,
+    }
 
-            switch (v) {
-                0x00...0x17 => {
-                    if (value < 0)
-                        try cbor.append(@intCast(u8, v) | 0x20)
-                    else
-                        try cbor.append(@intCast(u8, v));
-                },
-                0x18...0xff => {
-                    if (value < 0) try cbor.append(24 | 0x20) else try cbor.append(24);
-                    try cbor.append(@intCast(u8, v));
-                },
-                0x0100...0xffff => {
-                    if (value < 0) try cbor.append(25 | 0x20) else try cbor.append(25);
-                    try cbor.append(@intCast(u8, (v >> 8) & 0xff));
-                    try cbor.append(@intCast(u8, v & 0xff));
-                },
-                0x00010000...0xffffffff => {
-                    if (value < 0) try cbor.append(26 | 0x20) else try cbor.append(26);
-                    try cbor.append(@intCast(u8, (v >> 24) & 0xff));
-                    try cbor.append(@intCast(u8, (v >> 16) & 0xff));
-                    try cbor.append(@intCast(u8, (v >> 8) & 0xff));
-                    try cbor.append(@intCast(u8, v & 0xff));
-                },
-                0x0000000100000000...0xffffffffffffffff => {
-                    if (value < 0) try cbor.append(27 | 0x20) else try cbor.append(27);
-                    try cbor.append(@intCast(u8, (v >> 56) & 0xff));
-                    try cbor.append(@intCast(u8, (v >> 48) & 0xff));
-                    try cbor.append(@intCast(u8, (v >> 40) & 0xff));
-                    try cbor.append(@intCast(u8, (v >> 32) & 0xff));
-                    try cbor.append(@intCast(u8, (v >> 24) & 0xff));
-                    try cbor.append(@intCast(u8, (v >> 16) & 0xff));
-                    try cbor.append(@intCast(u8, (v >> 8) & 0xff));
-                    try cbor.append(@intCast(u8, v & 0xff));
-                },
-                else => {
-                    unreachable;
-                },
-            }
+    // The arguments value represents either a integer, float or size.
+    var v: u64 = 0;
+    switch (item.*) {
+        .int => |value| {
+            if (value < 0)
+                v = @intCast(u64, (-value) - 1)
+            else
+                v = @intCast(u64, value);
         },
-        else => {
-            // actually reachable but we pretend for now...
-            unreachable;
+        // The number of bytes in the string es equal to the arugment.
+        .bytes => |value| v = @intCast(u64, value.items.len),
+        else => unreachable,
+    }
+
+    switch (v) {
+        0x00...0x17 => {
+            try cbor.append(head | @intCast(u8, v));
         },
+        0x18...0xff => {
+            try cbor.append(head | 24);
+            try cbor.append(@intCast(u8, v));
+        },
+        0x0100...0xffff => {
+            try cbor.append(head | 25);
+            try cbor.append(@intCast(u8, (v >> 8) & 0xff));
+            try cbor.append(@intCast(u8, v & 0xff));
+        },
+        0x00010000...0xffffffff => {
+            try cbor.append(head | 26);
+            try cbor.append(@intCast(u8, (v >> 24) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 16) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 8) & 0xff));
+            try cbor.append(@intCast(u8, v & 0xff));
+        },
+        0x0000000100000000...0xffffffffffffffff => {
+            try cbor.append(head | 27);
+            try cbor.append(@intCast(u8, (v >> 56) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 48) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 40) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 32) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 24) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 16) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 8) & 0xff));
+            try cbor.append(@intCast(u8, v & 0xff));
+        },
+    }
+
+    switch (item.*) {
+        .int => |_| {},
+        .bytes => |value| try cbor.appendSlice(value.items),
+        else => unreachable,
     }
 
     return cbor;
@@ -1065,4 +1076,42 @@ test "MT1: encode cbor signed integer value" {
     const cbor6 = try encode(allocator, &di6);
     defer cbor6.deinit();
     try std.testing.expectEqualSlices(u8, &.{ 0x3b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }, cbor6.items);
+}
+
+test "MT2: encode cbor byte string" {
+    const allocator = std.testing.allocator;
+
+    var di1 = DataItem{ .bytes = std.ArrayList(u8).init(allocator) };
+    defer di1.deinit();
+    const cbor1 = try encode(allocator, &di1);
+    defer cbor1.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0b01000000}, cbor1.items);
+
+    var list2 = std.ArrayList(u8).init(allocator);
+    try list2.append(10);
+    var di2 = DataItem{ .bytes = list2 };
+    defer di2.deinit();
+    const cbor2 = try encode(allocator, &di2);
+    defer cbor2.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x41, 0x0a }, cbor2.items);
+
+    var list3 = std.ArrayList(u8).init(allocator);
+    try list3.append(10);
+    try list3.append(11);
+    try list3.append(12);
+    try list3.append(13);
+    try list3.append(14);
+    var di3 = DataItem{ .bytes = list3 };
+    defer di3.deinit();
+    const cbor3 = try encode(allocator, &di3);
+    defer cbor3.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x45, 0x0a, 0xb, 0xc, 0xd, 0xe }, cbor3.items);
+
+    var list4 = std.ArrayList(u8).init(allocator);
+    try list4.appendSlice(&.{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 });
+    var di4 = DataItem{ .bytes = list4 };
+    defer di4.deinit();
+    const cbor4 = try encode(allocator, &di4);
+    defer cbor4.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x58, 0x19, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 }, cbor4.items);
 }
