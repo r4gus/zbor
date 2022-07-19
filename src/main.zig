@@ -926,6 +926,7 @@ fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u
             if (value < 0) head = 0x20;
         },
         .bytes => |_| head = 0x40,
+        .text => |_| head = 0x60,
         else => unreachable,
     }
 
@@ -938,8 +939,10 @@ fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u
             else
                 v = @intCast(u64, value);
         },
-        // The number of bytes in the string es equal to the arugment.
+        // The number of bytes in the byte string es equal to the arugment.
         .bytes => |value| v = @intCast(u64, value.items.len),
+        // The number of bytes in the text string es equal to the arugment.
+        .text => |value| v = @intCast(u64, value.items.len),
         else => unreachable,
     }
 
@@ -979,6 +982,7 @@ fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u
     switch (item.*) {
         .int => |_| {},
         .bytes => |value| try cbor.appendSlice(value.items),
+        .text => |value| try cbor.appendSlice(value.items),
         else => unreachable,
     }
 
@@ -1114,4 +1118,40 @@ test "MT2: encode cbor byte string" {
     const cbor4 = try encode(allocator, &di4);
     defer cbor4.deinit();
     try std.testing.expectEqualSlices(u8, &.{ 0x58, 0x19, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 }, cbor4.items);
+}
+
+test "MT3: encode cbor text string" {
+    const allocator = std.testing.allocator;
+
+    var di1 = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    defer di1.deinit();
+    const cbor1 = try encode(allocator, &di1);
+    defer cbor1.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0x60}, cbor1.items);
+
+    var list2 = std.ArrayList(u8).init(allocator);
+    try list2.appendSlice("a");
+    var di2 = DataItem{ .text = list2 };
+    defer di2.deinit();
+    const cbor2 = try encode(allocator, &di2);
+    defer cbor2.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x61, 0x61 }, cbor2.items);
+
+    var list3 = std.ArrayList(u8).init(allocator);
+    try list3.appendSlice("IETF");
+    var di3 = DataItem{ .text = list3 };
+    defer di3.deinit();
+    const cbor3 = try encode(allocator, &di3);
+    defer cbor3.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x64, 0x49, 0x45, 0x54, 0x46 }, cbor3.items);
+
+    var list4 = std.ArrayList(u8).init(allocator);
+    try list4.appendSlice("\"\\");
+    var di4 = DataItem{ .text = list4 };
+    defer di4.deinit();
+    const cbor4 = try encode(allocator, &di4);
+    defer cbor4.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x62, 0x22, 0x5c }, cbor4.items);
+
+    // TODO: test unicode https://www.rfc-editor.org/rfc/rfc8949.html#name-examples-of-encoded-cbor-da
 }
