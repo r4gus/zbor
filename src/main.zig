@@ -918,7 +918,11 @@ test "decode WebAuthn attestationObject" {
 
 fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u8) {
     var cbor = std.ArrayList(u8).init(allocator);
+    try encode_(&cbor, item);
+    return cbor;
+}
 
+fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
     // The first byte of a data item encodes its type.
     var head: u8 = 0;
     switch (item.*) {
@@ -927,6 +931,7 @@ fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u
         },
         .bytes => |_| head = 0x40,
         .text => |_| head = 0x60,
+        .array => |_| head = 0x80,
         else => unreachable,
     }
 
@@ -939,10 +944,12 @@ fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u
             else
                 v = @intCast(u64, value);
         },
-        // The number of bytes in the byte string es equal to the arugment.
+        // The number of bytes in the byte string is equal to the arugment.
         .bytes => |value| v = @intCast(u64, value.items.len),
-        // The number of bytes in the text string es equal to the arugment.
+        // The number of bytes in the text string is equal to the arugment.
         .text => |value| v = @intCast(u64, value.items.len),
+        // The argument is the number of data items in the array.
+        .array => |value| v = @intCast(u64, value.items.len),
         else => unreachable,
     }
 
@@ -983,10 +990,14 @@ fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u
         .int => |_| {},
         .bytes => |value| try cbor.appendSlice(value.items),
         .text => |value| try cbor.appendSlice(value.items),
+        .array => |arr| {
+            // Encode every data item of the array.
+            for (arr.items) |*itm| {
+                try encode_(cbor, itm);
+            }
+        },
         else => unreachable,
     }
-
-    return cbor;
 }
 
 test "MT0: encode cbor unsigned integer value" {
@@ -1154,4 +1165,48 @@ test "MT3: encode cbor text string" {
     try std.testing.expectEqualSlices(u8, &.{ 0x62, 0x22, 0x5c }, cbor4.items);
 
     // TODO: test unicode https://www.rfc-editor.org/rfc/rfc8949.html#name-examples-of-encoded-cbor-da
+}
+
+test "MT4: encode cbor array" {
+    const allocator = std.testing.allocator;
+
+    var di1 = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
+    defer di1.deinit();
+    const cbor1 = try encode(allocator, &di1);
+    defer cbor1.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0x80}, cbor1.items);
+
+    var di2 = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
+    try di2.array.append(DataItem{ .int = 1 });
+    try di2.array.append(DataItem{ .int = 2 });
+    try di2.array.append(DataItem{ .int = 3 });
+    defer di2.deinit();
+    const cbor2 = try encode(allocator, &di2);
+    defer cbor2.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x83, 0x01, 0x02, 0x03 }, cbor2.items);
+
+    var di3_1 = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
+    try di3_1.array.append(DataItem{ .int = 2 });
+    try di3_1.array.append(DataItem{ .int = 3 });
+    var di3_2 = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
+    try di3_2.array.append(DataItem{ .int = 4 });
+    try di3_2.array.append(DataItem{ .int = 5 });
+    var di3 = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
+    try di3.array.append(DataItem{ .int = 1 });
+    try di3.array.append(di3_1);
+    try di3.array.append(di3_2);
+    defer di3.deinit();
+    const cbor3 = try encode(allocator, &di3);
+    defer cbor3.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x83, 0x01, 0x82, 0x02, 0x03, 0x82, 0x04, 0x05 }, cbor3.items);
+
+    var di4 = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
+    defer di4.deinit();
+    var i: i128 = 1;
+    while (i <= 25) : (i += 1) {
+        try di4.array.append(DataItem{ .int = i });
+    }
+    const cbor4 = try encode(allocator, &di4);
+    defer cbor4.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x98, 0x19, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x18, 0x18, 0x19 }, cbor4.items);
 }
