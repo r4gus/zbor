@@ -1366,3 +1366,34 @@ test "MT4: encode cbor array" {
     defer cbor4.deinit();
     try std.testing.expectEqualSlices(u8, &.{ 0x98, 0x19, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x18, 0x18, 0x19 }, cbor4.items);
 }
+
+test "MT5: encode empty cbor map" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
+    defer di.deinit();
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0xa0}, cbor.items);
+}
+
+test "MT5: encode cbor map {1:2,3:4}" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
+    try di.map.append(Pair{ .key = DataItem{ .int = 1 }, .value = DataItem{ .int = 2 } });
+    try di.map.append(Pair{ .key = DataItem{ .int = 3 }, .value = DataItem{ .int = 4 } });
+    defer di.deinit();
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor.items);
+
+    // Keys should be sorted in asc order.
+    var di2 = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
+    try di2.map.append(Pair{ .key = DataItem{ .int = 3 }, .value = DataItem{ .int = 4 } });
+    try di2.map.append(Pair{ .key = DataItem{ .int = 1 }, .value = DataItem{ .int = 2 } });
+    defer di2.deinit();
+    const cbor2 = try encode(allocator, &di2);
+    defer cbor2.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor2.items);
+}
