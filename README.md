@@ -29,7 +29,7 @@ and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 - [x] Byte strings (major type 2).
 - [x] Text strings (major type 3) without UTF-8 support (for now).
 - [x] Array of data items (major type 4).
-- [ ] Map of pairs of data items (major type 5).
+- [x] Map of pairs of data items (major type 5).
 - [ ] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
 - [ ] Floating-point numbers (major type 7).
 - [ ] simple values (major type 7). 
@@ -62,6 +62,30 @@ var data_item = try decode(bytes, gpa);
 // deallocation. deinit() will free the allocated memory of all DataItems recursively.
 defer data_item.deinit();
 ```
+
+## CTAP2 canonical CBOR encoding
+
+This project tries to obey the CTAP2 canonical CBOR encoding rules as much
+as possible.
+
+* Integers are encoded as small as possible.
+    * 0 to 23 and -1 to -24 must be expressed in the same byte as the major type;
+    * 24 to 255 and -25 to -256 must be expressed only with an additional uint8_t;
+    * 256 to 65535 and -257 to -65536 must be expressed only with an additional uint16\_t;
+    * 65536 to 4294967295 and -65537 to -4294967296 must be expressed only with an additional uint32\_t.
+* The representations of any floating-point values are not changed.
+* The expression of lengths in major types 2 through 5 are as short as possible. 
+  The rules for these lengths follow the above rule for integers.
+* The keys in every map are sorted lowest value to highest. The sorting rules are:
+    * If the major types are different, the one with the lower value in numerical order sorts earlier.
+    * If two keys have different lengths, the shorter one sorts earlier;
+    * If two keys have the same length, the one with the lower value in (byte-wise) lexical order sorts earlier.
+
+> Note: These rules are equivalent to a lexicographical comparison of the 
+> canonical encoding of keys for major types 0-3 and 7 (integers, strings, 
+> and simple values). Keys with major types 4-6 are sorted by only taking the major
+> type into account. It is up to the user to make sure that majort types 4-6
+> are not used as key.
 
 ## Project Status
 
