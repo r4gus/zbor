@@ -234,6 +234,147 @@ const DataItem = union(DataItemTag) {
     }
 };
 
+fn pair_asc(context: void, lhs: Pair, rhs: Pair) bool {
+    _ = context;
+    return data_item_asc({}, lhs.key, rhs.key);
+}
+
+/// Comparator function for a DataItem, e.g. `sort(DataItem, slice, {}, data_item_asc)`.
+///
+/// This function aims to represent the CTAP2 canonical CBOR sorting rules
+/// for keys (see: https://fidoalliance.org/specs/fido-v2.0-ps-20190130/
+/// fido-client-to-authenticator-protocol-v2.0-ps-20190130.html#ctap2-
+/// canonical-cbor-encoding-form).
+///
+/// - If the major types are different, the one with the lower value in
+///   numerical order sorts earlier.
+/// - If two keys have different lengths, the shorter one sorts earlier;
+/// - If two keys have the same length, the one with the lower value in
+///   (byte-wise) lexical order sorts earlier.
+///
+/// Length and value are only taken into account for integers, strings and
+/// simple values. Always returns true if lhs and rhs have the same major
+/// type between 4 and 6.
+fn data_item_asc(context: void, lhs: DataItem, rhs: DataItem) bool {
+    _ = context;
+
+    // If the major types are different, the one with the lower value in
+    // numerical order sorts earlier.
+    switch (lhs) {
+        .int => |v1| {
+            switch (rhs) {
+                .int => |v2| {
+                    if (v1 < 0 and v2 >= 0) {
+                        // mt1 > mt0
+                        return false;
+                    } else if (v1 >= 0 and v2 < 0) {
+                        // mt0 < mt1
+                        return true;
+                    } else {
+                        // both mt0 or mt1. The one with the lower value
+                        // sorts earlier.
+                        return v1 < v2;
+                    }
+                },
+                else => return true,
+            }
+        },
+        .bytes => |v1| {
+            switch (rhs) {
+                // mt0/1 < mt2
+                .int => |_| return false,
+                .bytes => |v2| {
+                    // If two keys have different lengths, the shorter one
+                    // sorts earlier.
+                    if (v1.items.len < v2.items.len) {
+                        return true;
+                    } else if (v1.items.len > v2.items.len) {
+                        return false;
+                    } else {
+                        // if two keys have the same lengt, the one with the
+                        // lower value in (byte-wise) lexical order sorts earlier.
+                        return std.mem.lessThan(u8, v1.items, v2.items);
+                    }
+                },
+                else => return true,
+            }
+        },
+        .text => |v1| {
+            switch (rhs) {
+                .int, .bytes => return false,
+                .text => |v2| {
+                    // If two keys have different lengths, the shorter one
+                    // sorts earlier.
+                    if (v1.items.len < v2.items.len) {
+                        return true;
+                    } else if (v1.items.len > v2.items.len) {
+                        return false;
+                    } else {
+                        // if two keys have the same lengt, the one with the
+                        // lower value in (byte-wise) lexical order sorts earlier.
+                        return std.mem.lessThan(u8, v1.items, v2.items);
+                    }
+                },
+                else => return true,
+            }
+        },
+        .array => |_| {
+            switch (rhs) {
+                .int, .bytes, .text => return false,
+                else => return true,
+            }
+        },
+        .map => |_| {
+            switch (rhs) {
+                .int, .bytes, .text, .array => return false,
+                else => return true,
+            }
+        },
+        .tag => |_| {
+            switch (rhs) {
+                .int, .bytes, .text, .array, .map => return false,
+                else => return true,
+            }
+        },
+        .float => |v1| {
+            switch (rhs) {
+                .int, .bytes, .text, .array, .map, .tag => return false,
+                .float => |v2| {
+                    switch (v1) {
+                        .float16 => |f1| {
+                            switch (v2) {
+                                .float16 => |f2| return f1 < f2,
+                                else => return false,
+                            }
+                        },
+                        .float32 => |f1| {
+                            switch (v2) {
+                                .float16 => return true,
+                                .float32 => |f2| return f1 < f2,
+                                else => return false,
+                            }
+                        },
+                        .float64 => |f1| {
+                            switch (v2) {
+                                .float16, .float32 => return true,
+                                .float64 => |f2| return f1 < f2,
+                            }
+                        },
+                    }
+                },
+                else => return true,
+            }
+        },
+        .simple => |v1| {
+            switch (rhs) {
+                .int, .bytes, .text, .array, .map, .tag => return false,
+                .simple => |v2| return @enumToInt(v1) < @enumToInt(v2),
+                .float => |_| return true,
+            }
+        },
+    }
+}
+
 // ****************************************************************************
 // decoder
 // ****************************************************************************
@@ -932,6 +1073,7 @@ fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
         .bytes => |_| head = 0x40,
         .text => |_| head = 0x60,
         .array => |_| head = 0x80,
+        .map => |_| head = 0xa0,
         else => unreachable,
     }
 
@@ -950,6 +1092,8 @@ fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
         .text => |value| v = @intCast(u64, value.items.len),
         // The argument is the number of data items in the array.
         .array => |value| v = @intCast(u64, value.items.len),
+        // The argument is the number of (k,v) pairs.
+        .map => |value| v = @intCast(u64, value.items.len),
         else => unreachable,
     }
 
@@ -994,6 +1138,18 @@ fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
             // Encode every data item of the array.
             for (arr.items) |*itm| {
                 try encode_(cbor, itm);
+            }
+        },
+        .map => |m| {
+            // Sort keys lowest to highest (CTAP2 canonical CBOR encoding form)
+            std.sort.sort(Pair, m.items, {}, pair_asc);
+
+            var i: usize = 0;
+            while (i < m.items.len) : (i += 1) {
+                // each pair consisting of a key...
+                try encode_(cbor, &m.items[i].key);
+                // ...that is immediately followed by a value.
+                try encode_(cbor, &m.items[i].value);
             }
         },
         else => unreachable,
