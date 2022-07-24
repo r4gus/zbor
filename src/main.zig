@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
 
-const CborError = error{
+pub const CborError = error{
     // Indicates that one of the reserved values 28, 29 or 30 has been used.
     ReservedAdditionalInformation,
     // The given CBOR string is malformed.
@@ -12,13 +12,13 @@ const CborError = error{
     OutOfMemory,
 };
 
-const Pair = struct { key: DataItem, value: DataItem };
+pub const Pair = struct { key: DataItem, value: DataItem };
 
-const Tag = struct { number: u64, content: *DataItem, allocator: Allocator };
+pub const Tag = struct { number: u64, content: *DataItem, allocator: Allocator };
 
-const FloatTag = enum { float16, float32, float64 };
+pub const FloatTag = enum { float16, float32, float64 };
 
-const Float = union(FloatTag) {
+pub const Float = union(FloatTag) {
     /// IEEE 754 Half-Precision Float (16 bits follow)
     float16: f16,
     /// IEEE 754 Single-Precision Float (32 bits follow)
@@ -27,11 +27,11 @@ const Float = union(FloatTag) {
     float64: f64,
 };
 
-const SimpleValue = enum(u8) { False = 20, True = 21, Null = 22, Undefined = 23 };
+pub const SimpleValue = enum(u8) { False = 20, True = 21, Null = 22, Undefined = 23 };
 
-const DataItemTag = enum { int, bytes, text, array, map, tag, float, simple };
+pub const DataItemTag = enum { int, bytes, text, array, map, tag, float, simple };
 
-const DataItem = union(DataItemTag) {
+pub const DataItem = union(DataItemTag) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
     int: i128,
     /// Major type 2: A byte string.
@@ -80,7 +80,7 @@ const DataItem = union(DataItemTag) {
         }
     }
 
-    fn equal(self: *const @This(), other: *const @This()) bool {
+    pub fn equal(self: *const @This(), other: *const @This()) bool {
         // self and other hold different types, i.e. can't be equal.
         if (@as(DataItemTag, self.*) != @as(DataItemTag, other.*)) {
             return false;
@@ -145,7 +145,7 @@ const DataItem = union(DataItemTag) {
     ///
     /// Returns null if the DataItem is not an array or if the
     /// given index is out of bounds.
-    fn get(self: *@This(), index: usize) ?*DataItem {
+    pub fn get(self: *@This(), index: usize) ?*DataItem {
         if (@as(DataItemTag, self.*) != DataItemTag.array) {
             return null;
         }
@@ -161,7 +161,7 @@ const DataItem = union(DataItemTag) {
     ///
     /// Retruns null if the DataItem is not a map or if the key couldn't
     /// be found; a pointer to the associated value otherwise.
-    fn getValue(self: *@This(), key: *const DataItem) ?*DataItem {
+    pub fn getValue(self: *@This(), key: *const DataItem) ?*DataItem {
         if (@as(DataItemTag, self.*) != DataItemTag.map) {
             return null;
         }
@@ -177,7 +177,7 @@ const DataItem = union(DataItemTag) {
         return null;
     }
 
-    fn getValueByString(self: *@This(), key: []const u8) ?*DataItem {
+    pub fn getValueByString(self: *@This(), key: []const u8) ?*DataItem {
         if (@as(DataItemTag, self.*) != DataItemTag.map) {
             return null;
         }
@@ -194,47 +194,47 @@ const DataItem = union(DataItemTag) {
     }
 
     /// Returns true if the given DataItem is an integer, false otherwise.
-    fn isInt(self: *@This()) bool {
+    pub fn isInt(self: *@This()) bool {
         return @as(DataItemTag, self.*) == .int;
     }
 
     /// Returns true if the given DataItem is a byte string, false otherwise.
-    fn isBytes(self: *@This()) bool {
+    pub fn isBytes(self: *@This()) bool {
         return @as(DataItemTag, self.*) == .bytes;
     }
 
     /// Returns true if the given DataItem is a text string, false otherwise.
-    fn isText(self: *@This()) bool {
+    pub fn isText(self: *@This()) bool {
         return @as(DataItemTag, self.*) == .text;
     }
 
     /// Returns true if the given DataItem is an array of DataItems, false otherwise.
-    fn isArray(self: *@This()) bool {
+    pub fn isArray(self: *@This()) bool {
         return @as(DataItemTag, self.*) == .array;
     }
 
     /// Returns true if the given DataItem is a map, false otherwise.
-    fn isMap(self: *@This()) bool {
+    pub fn isMap(self: *@This()) bool {
         return @as(DataItemTag, self.*) == .map;
     }
 
     /// Returns true if the given DataItem is a tagged DataItem, false otherwise.
-    fn isTagged(self: *@This()) bool {
+    pub fn isTagged(self: *@This()) bool {
         return @as(DataItemTag, self.*) == .tag;
     }
 
     /// Returns true if the given DataItem is a float, false otherwise.
-    fn isFloat(self: *@This()) bool {
+    pub fn isFloat(self: *@This()) bool {
         return @as(DataItemTag, self.*) == .float;
     }
 
     /// Returns true if the given DataItem is a simple value, false otherwise.
-    fn isSimple(self: *@This()) bool {
+    pub fn isSimple(self: *@This()) bool {
         return @as(DataItemTag, self.*) == .simple;
     }
 };
 
-fn pair_asc(context: void, lhs: Pair, rhs: Pair) bool {
+pub fn pair_asc(context: void, lhs: Pair, rhs: Pair) bool {
     _ = context;
     return data_item_asc({}, lhs.key, rhs.key);
 }
@@ -255,7 +255,7 @@ fn pair_asc(context: void, lhs: Pair, rhs: Pair) bool {
 /// Length and value are only taken into account for integers, strings and
 /// simple values. Always returns true if lhs and rhs have the same major
 /// type between 4 and 6.
-fn data_item_asc(context: void, lhs: DataItem, rhs: DataItem) bool {
+pub fn data_item_asc(context: void, lhs: DataItem, rhs: DataItem) bool {
     _ = context;
 
     // If the major types are different, the one with the lower value in
@@ -380,13 +380,13 @@ fn data_item_asc(context: void, lhs: DataItem, rhs: DataItem) bool {
 // ****************************************************************************
 
 /// Decode the given CBOR data.
-fn decode(data: []const u8, allocator: Allocator) CborError!DataItem {
+pub fn decode(data: []const u8, allocator: Allocator) CborError!DataItem {
     var index: usize = 0;
     return decode_(data, &index, allocator, false);
 }
 
 // calling function is responsible for deallocating memory.
-fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: bool) CborError!DataItem {
+pub fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: bool) CborError!DataItem {
     _ = breakable;
     const head: u8 = data[index.*];
     index.* += 1;
@@ -519,6 +519,120 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
 
     return CborError.Malformed;
 }
+
+// ****************************************************************************
+// encoder
+// ****************************************************************************
+
+pub fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u8) {
+    var cbor = std.ArrayList(u8).init(allocator);
+    try encode_(&cbor, item);
+    return cbor;
+}
+
+pub fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
+    // The first byte of a data item encodes its type.
+    var head: u8 = 0;
+    switch (item.*) {
+        .int => |value| {
+            if (value < 0) head = 0x20;
+        },
+        .bytes => |_| head = 0x40,
+        .text => |_| head = 0x60,
+        .array => |_| head = 0x80,
+        .map => |_| head = 0xa0,
+        .tag => |_| head = 0xc0,
+        else => unreachable,
+    }
+
+    // The arguments value represents either a integer, float or size.
+    var v: u64 = 0;
+    switch (item.*) {
+        .int => |value| {
+            if (value < 0)
+                v = @intCast(u64, (-value) - 1)
+            else
+                v = @intCast(u64, value);
+        },
+        // The number of bytes in the byte string is equal to the arugment.
+        .bytes => |value| v = @intCast(u64, value.items.len),
+        // The number of bytes in the text string is equal to the arugment.
+        .text => |value| v = @intCast(u64, value.items.len),
+        // The argument is the number of data items in the array.
+        .array => |value| v = @intCast(u64, value.items.len),
+        // The argument is the number of (k,v) pairs.
+        .map => |value| v = @intCast(u64, value.items.len),
+        // The argument is the tag.
+        .tag => |value| v = value.number,
+        else => unreachable,
+    }
+
+    switch (v) {
+        0x00...0x17 => {
+            try cbor.append(head | @intCast(u8, v));
+        },
+        0x18...0xff => {
+            try cbor.append(head | 24);
+            try cbor.append(@intCast(u8, v));
+        },
+        0x0100...0xffff => {
+            try cbor.append(head | 25);
+            try cbor.append(@intCast(u8, (v >> 8) & 0xff));
+            try cbor.append(@intCast(u8, v & 0xff));
+        },
+        0x00010000...0xffffffff => {
+            try cbor.append(head | 26);
+            try cbor.append(@intCast(u8, (v >> 24) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 16) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 8) & 0xff));
+            try cbor.append(@intCast(u8, v & 0xff));
+        },
+        0x0000000100000000...0xffffffffffffffff => {
+            try cbor.append(head | 27);
+            try cbor.append(@intCast(u8, (v >> 56) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 48) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 40) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 32) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 24) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 16) & 0xff));
+            try cbor.append(@intCast(u8, (v >> 8) & 0xff));
+            try cbor.append(@intCast(u8, v & 0xff));
+        },
+    }
+
+    switch (item.*) {
+        .int => |_| {},
+        .bytes => |value| try cbor.appendSlice(value.items),
+        .text => |value| try cbor.appendSlice(value.items),
+        .array => |arr| {
+            // Encode every data item of the array.
+            for (arr.items) |*itm| {
+                try encode_(cbor, itm);
+            }
+        },
+        .map => |m| {
+            // Sort keys lowest to highest (CTAP2 canonical CBOR encoding form)
+            std.sort.sort(Pair, m.items, {}, pair_asc);
+
+            var i: usize = 0;
+            while (i < m.items.len) : (i += 1) {
+                // each pair consisting of a key...
+                try encode_(cbor, &m.items[i].key);
+                // ...that is immediately followed by a value.
+                try encode_(cbor, &m.items[i].value);
+            }
+        },
+        .tag => |t| {
+            // Tag content is the single encoded data item that follows the head.
+            try encode_(cbor, t.content);
+        },
+        else => unreachable,
+    }
+}
+
+// ****************************************************************************
+// tests
+// ****************************************************************************
 
 const TestError = CborError || error{ TestExpectedEqual, TestUnexpectedResult };
 
@@ -1053,109 +1167,6 @@ test "decode WebAuthn attestationObject" {
     try std.testing.expectEqual(@as(usize, 704), x5c_stmt.?.bytes.items.len);
 }
 
-// ****************************************************************************
-// encoder
-// ****************************************************************************
-
-fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u8) {
-    var cbor = std.ArrayList(u8).init(allocator);
-    try encode_(&cbor, item);
-    return cbor;
-}
-
-fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
-    // The first byte of a data item encodes its type.
-    var head: u8 = 0;
-    switch (item.*) {
-        .int => |value| {
-            if (value < 0) head = 0x20;
-        },
-        .bytes => |_| head = 0x40,
-        .text => |_| head = 0x60,
-        .array => |_| head = 0x80,
-        .map => |_| head = 0xa0,
-        else => unreachable,
-    }
-
-    // The arguments value represents either a integer, float or size.
-    var v: u64 = 0;
-    switch (item.*) {
-        .int => |value| {
-            if (value < 0)
-                v = @intCast(u64, (-value) - 1)
-            else
-                v = @intCast(u64, value);
-        },
-        // The number of bytes in the byte string is equal to the arugment.
-        .bytes => |value| v = @intCast(u64, value.items.len),
-        // The number of bytes in the text string is equal to the arugment.
-        .text => |value| v = @intCast(u64, value.items.len),
-        // The argument is the number of data items in the array.
-        .array => |value| v = @intCast(u64, value.items.len),
-        // The argument is the number of (k,v) pairs.
-        .map => |value| v = @intCast(u64, value.items.len),
-        else => unreachable,
-    }
-
-    switch (v) {
-        0x00...0x17 => {
-            try cbor.append(head | @intCast(u8, v));
-        },
-        0x18...0xff => {
-            try cbor.append(head | 24);
-            try cbor.append(@intCast(u8, v));
-        },
-        0x0100...0xffff => {
-            try cbor.append(head | 25);
-            try cbor.append(@intCast(u8, (v >> 8) & 0xff));
-            try cbor.append(@intCast(u8, v & 0xff));
-        },
-        0x00010000...0xffffffff => {
-            try cbor.append(head | 26);
-            try cbor.append(@intCast(u8, (v >> 24) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 16) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 8) & 0xff));
-            try cbor.append(@intCast(u8, v & 0xff));
-        },
-        0x0000000100000000...0xffffffffffffffff => {
-            try cbor.append(head | 27);
-            try cbor.append(@intCast(u8, (v >> 56) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 48) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 40) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 32) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 24) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 16) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 8) & 0xff));
-            try cbor.append(@intCast(u8, v & 0xff));
-        },
-    }
-
-    switch (item.*) {
-        .int => |_| {},
-        .bytes => |value| try cbor.appendSlice(value.items),
-        .text => |value| try cbor.appendSlice(value.items),
-        .array => |arr| {
-            // Encode every data item of the array.
-            for (arr.items) |*itm| {
-                try encode_(cbor, itm);
-            }
-        },
-        .map => |m| {
-            // Sort keys lowest to highest (CTAP2 canonical CBOR encoding form)
-            std.sort.sort(Pair, m.items, {}, pair_asc);
-
-            var i: usize = 0;
-            while (i < m.items.len) : (i += 1) {
-                // each pair consisting of a key...
-                try encode_(cbor, &m.items[i].key);
-                // ...that is immediately followed by a value.
-                try encode_(cbor, &m.items[i].value);
-            }
-        },
-        else => unreachable,
-    }
-}
-
 test "MT0: encode cbor unsigned integer value" {
     const allocator = std.testing.allocator;
 
@@ -1396,4 +1407,27 @@ test "MT5: encode cbor map {1:2,3:4}" {
     const cbor2 = try encode(allocator, &di2);
     defer cbor2.deinit();
     try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor2.items);
+}
+
+test "MT6: encode cbor tagged data item 1(1363896240)" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .tag = Tag{ .number = 1, .content = try allocator.create(DataItem), .allocator = allocator } };
+    defer di.deinit();
+    di.tag.content.* = DataItem{ .int = 1363896240 };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xc1, 0x1a, 0x51, 0x4b, 0x67, 0xb0 }, cbor.items);
+}
+
+test "MT6: encode cbor tagged data item 32(\"http://www.example.com\")" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .tag = Tag{ .number = 32, .content = try allocator.create(DataItem), .allocator = allocator } };
+    defer di.deinit();
+    di.tag.content.* = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+    try di.tag.content.text.appendSlice("http://www.example.com");
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xd8, 0x20, 0x76, 0x68, 0x74, 0x74, 0x70, 0x3a, 0x2f, 0x2f, 0x77, 0x77, 0x77, 0x2e, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d }, cbor.items);
 }
