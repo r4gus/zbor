@@ -68,7 +68,7 @@ defer data_item.deinit();
 The `encode()` function can be used to serialize a `DataItem` into a CBOR
 byte string.
 
-```
+```zig
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
 // Create a map-DataItem (major type 5)
