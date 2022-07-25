@@ -12,12 +12,16 @@ pub const CborError = error{
     OutOfMemory,
 };
 
+/// A (key, value) pair used with DataItem.map (major type 5).
 pub const Pair = struct { key: DataItem, value: DataItem };
 
+/// A DataItem that is tagged by a number (major type 6).
 pub const Tag = struct { number: u64, content: *DataItem, allocator: Allocator };
 
+/// Tag for a 16-, 32- or 64-bit floating point value.
 pub const FloatTag = enum { float16, float32, float64 };
 
+/// A 16-, 32- or 64-bit floating point value (major type 7).
 pub const Float = union(FloatTag) {
     /// IEEE 754 Half-Precision Float (16 bits follow)
     float16: f16,
@@ -27,10 +31,15 @@ pub const Float = union(FloatTag) {
     float64: f64,
 };
 
+/// A simple value (major type 7).
 pub const SimpleValue = enum(u8) { False = 20, True = 21, Null = 22, Undefined = 23 };
 
+/// Tag for a data item type.
 pub const DataItemTag = enum { int, bytes, text, array, map, tag, float, simple };
 
+/// A single piece of CBOR data.
+///
+/// The structure of a DataItem may contain zero, one, or more nested DataItems.
 pub const DataItem = union(DataItemTag) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
     int: i128,
@@ -44,7 +53,7 @@ pub const DataItem = union(DataItemTag) {
     map: std.ArrayList(Pair),
     /// Major type 6: A tagged data item.
     tag: Tag,
-    /// IEEE 754 Half-, Single-, or Double-Precision float.
+    /// Major type 7: IEEE 754 Half-, Single-, or Double-Precision float.
     float: Float,
     /// Major type 7: Simple value [false, true, null]
     simple: SimpleValue,
@@ -177,6 +186,10 @@ pub const DataItem = union(DataItemTag) {
         return null;
     }
 
+    /// Get the value associated with the given key from a map.
+    ///
+    /// Retruns null if the DataItem is not a map or if the key couldn't
+    /// be found; a pointer to the associated value otherwise.
     pub fn getValueByString(self: *@This(), key: []const u8) ?*DataItem {
         if (@as(DataItemTag, self.*) != DataItemTag.map) {
             return null;
@@ -379,14 +392,16 @@ pub fn data_item_asc(context: void, lhs: DataItem, rhs: DataItem) bool {
 // decoder
 // ****************************************************************************
 
-/// Decode the given CBOR data.
+/// Decode the given CBOR byte string into a (nested) DataItem.
+///
+/// The caller is responsible for deallocation, e.g. `defer data_item.deinit()`.
 pub fn decode(data: []const u8, allocator: Allocator) CborError!DataItem {
     var index: usize = 0;
     return decode_(data, &index, allocator, false);
 }
 
 // calling function is responsible for deallocating memory.
-pub fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: bool) CborError!DataItem {
+fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: bool) CborError!DataItem {
     _ = breakable;
     const head: u8 = data[index.*];
     index.* += 1;
@@ -524,13 +539,40 @@ pub fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable:
 // encoder
 // ****************************************************************************
 
+/// Encode a (nested) DataItem as CBOR byte string.
 pub fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u8) {
     var cbor = std.ArrayList(u8).init(allocator);
     try encode_(&cbor, item);
     return cbor;
 }
 
-pub fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
+fn encode_2(cbor: *std.ArrayList(u8), head: u8, v: u64) CborError!void {
+    try cbor.append(head | 25);
+    try cbor.append(@intCast(u8, (v >> 8) & 0xff));
+    try cbor.append(@intCast(u8, v & 0xff));
+}
+
+fn encode_4(cbor: *std.ArrayList(u8), head: u8, v: u64) CborError!void {
+    try cbor.append(head | 26);
+    try cbor.append(@intCast(u8, (v >> 24) & 0xff));
+    try cbor.append(@intCast(u8, (v >> 16) & 0xff));
+    try cbor.append(@intCast(u8, (v >> 8) & 0xff));
+    try cbor.append(@intCast(u8, v & 0xff));
+}
+
+fn encode_8(cbor: *std.ArrayList(u8), head: u8, v: u64) CborError!void {
+    try cbor.append(head | 27);
+    try cbor.append(@intCast(u8, (v >> 56) & 0xff));
+    try cbor.append(@intCast(u8, (v >> 48) & 0xff));
+    try cbor.append(@intCast(u8, (v >> 40) & 0xff));
+    try cbor.append(@intCast(u8, (v >> 32) & 0xff));
+    try cbor.append(@intCast(u8, (v >> 24) & 0xff));
+    try cbor.append(@intCast(u8, (v >> 16) & 0xff));
+    try cbor.append(@intCast(u8, (v >> 8) & 0xff));
+    try cbor.append(@intCast(u8, v & 0xff));
+}
+
+fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
     // The first byte of a data item encodes its type.
     var head: u8 = 0;
     switch (item.*) {
@@ -542,6 +584,7 @@ pub fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
         .array => |_| head = 0x80,
         .map => |_| head = 0xa0,
         .tag => |_| head = 0xc0,
+        .float => |_| head = 0xe0,
         else => unreachable,
     }
 
@@ -564,6 +607,23 @@ pub fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
         .map => |value| v = @intCast(u64, value.items.len),
         // The argument is the tag.
         .tag => |value| v = value.number,
+        .float => |f| {
+            // The representation of any floating-point values are not changed.
+            switch (f) {
+                .float16 => |value| {
+                    try encode_2(cbor, head, @intCast(u64, @bitCast(u16, value)));
+                    return;
+                },
+                .float32 => |value| {
+                    try encode_4(cbor, head, @intCast(u64, @bitCast(u32, value)));
+                    return;
+                },
+                .float64 => |value| {
+                    try encode_8(cbor, head, @bitCast(u64, value));
+                    return;
+                },
+            }
+        },
         else => unreachable,
     }
 
@@ -575,33 +635,13 @@ pub fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
             try cbor.append(head | 24);
             try cbor.append(@intCast(u8, v));
         },
-        0x0100...0xffff => {
-            try cbor.append(head | 25);
-            try cbor.append(@intCast(u8, (v >> 8) & 0xff));
-            try cbor.append(@intCast(u8, v & 0xff));
-        },
-        0x00010000...0xffffffff => {
-            try cbor.append(head | 26);
-            try cbor.append(@intCast(u8, (v >> 24) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 16) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 8) & 0xff));
-            try cbor.append(@intCast(u8, v & 0xff));
-        },
-        0x0000000100000000...0xffffffffffffffff => {
-            try cbor.append(head | 27);
-            try cbor.append(@intCast(u8, (v >> 56) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 48) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 40) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 32) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 24) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 16) & 0xff));
-            try cbor.append(@intCast(u8, (v >> 8) & 0xff));
-            try cbor.append(@intCast(u8, v & 0xff));
-        },
+        0x0100...0xffff => try encode_2(cbor, head, v),
+        0x00010000...0xffffffff => try encode_4(cbor, head, v),
+        0x0000000100000000...0xffffffffffffffff => try encode_8(cbor, head, v),
     }
 
     switch (item.*) {
-        .int => |_| {},
+        .int, .float => {},
         .bytes => |value| try cbor.appendSlice(value.items),
         .text => |value| try cbor.appendSlice(value.items),
         .array => |arr| {
@@ -1430,4 +1470,112 @@ test "MT6: encode cbor tagged data item 32(\"http://www.example.com\")" {
     const cbor = try encode(allocator, &di);
     defer cbor.deinit();
     try std.testing.expectEqualSlices(u8, &.{ 0xd8, 0x20, 0x76, 0x68, 0x74, 0x74, 0x70, 0x3a, 0x2f, 0x2f, 0x77, 0x77, 0x77, 0x2e, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d }, cbor.items);
+}
+
+test "MT7: encode f16 0.0" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = 0.0 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0x00, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f16 -0.0" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = -0.0 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0x80, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f16 1.0" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = 1.0 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0x3c, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f16 1.5" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = 1.5 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0x3e, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f16 5.960464477539063e-8" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = 5.960464477539063e-8 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0x00, 0x01 }, cbor.items);
+}
+
+test "MT7: encode f16 0.00006103515625" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = 0.00006103515625 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0x04, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f16 -4.0" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = -4.0 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0xc4, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f32 100000.0" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float32 = 100000.0 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xfa, 0x47, 0xc3, 0x50, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f32 3.4028234663852886e+38" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float32 = 3.4028234663852886e+38 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xfa, 0x7f, 0x7f, 0xff, 0xff }, cbor.items);
+}
+
+test "MT7: encode f64 1.1" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float64 = 1.1 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xfb, 0x3f, 0xf1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9a }, cbor.items);
+}
+
+test "MT7: encode f64 1.0e+300" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float64 = 1.0e+300 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xfb, 0x7e, 0x37, 0xe4, 0x3c, 0x88, 0x00, 0x75, 0x9c }, cbor.items);
+}
+
+test "MT7: encode f64 -4.1" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float64 = -4.1 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xfb, 0xc0, 0x10, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66 }, cbor.items);
 }
