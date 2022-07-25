@@ -85,26 +85,52 @@ try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor.i
 
 ### DataItem
 
+A `DataItem` is the abstract representation of a single piece of CBOR data. It
+is defined as a tagged union, i.e. one can use the `DataItemTag` enum to detect
+which field is active (also see: [Type of a DataItem](#type-of-a-dataitem)).
+
+Each field is associated with one of the major types 0-7:
+
+* `int` - An integer in the range $-2^{64}..2^{64}-1$; defined as `i128` (represents both major types 0 and 1)
+* `bytes`- A byte string; defined as `std.ArrayList(u8)` (represents major type 2)
+* `text`- A text string; defined as `std.ArrayList(u8)` (represents major type 3)
+* `array`- An array of `DataItem`s; defined as `std.ArrayList(DataItem)`
+* `map`- A map of (key, value) pairs; defined as `std.ArrayList(Pair)`
+* `tag` - A tagged data item; defined as `Tag`
+* `float` - A 16-, 32- or 64-bit floating-point value; defined as `Float`
+* `simple` - A simple value; defined as `SimpleValue`
+    * `False`
+    * `True`
+    * `Null`
+    * `Undefined`
+
 #### Type of a DataItem
 
 One can use the `isInt`, `isBytes`, `isText`, `isArray`, `isMap`, `isTagged`,
 `isFloat` and `isSimple` function to check the given `DataItem`'s type.
 
-#### Map (major type 5)
+#### int (major type 0 and 1)
 
-To access the value associated with a key one can use the `getValue()` and
-`getValueByString()` functions. The first takes an arbitrary `DataItem` as
-key while the second expects a string.
+Both major type 0 and 1 are decoded to and encoded from the `DataItem.int` field.
 
-```zig
-// CBOR decoder example ...
-const fmt = data_item.getValueByString("fmt");
+> Note: Integers are always encoded as small as possible.
 
-try std.testing.expect(fmt.?.isText());
-try std.testing.expectEqualStrings("fido-u2f", fmt.?.text.items);
-```
+#### bytes (major type 2)
 
-#### Array (major type 3 and 4)
+The `DataItem.bytes` field gives access to the underlying `ArrayList(u8)` which
+can be manipulated as usual.
+
+#### text (major type 3)
+
+The `DataItem.text` field gives access to the underlying `ArrayList(u8)` which
+can be manipulated as usual.
+
+> Note: The current implementation lacks any special UTF-8 support.
+
+#### array (major type 4)
+
+The `DataItem.array` field gives access to the underlying `ArrayList(DataItem)` which
+can be manipulated as usual.
 
 The `get()` function can be used to access the element of an array at a specified
 index. The function will return `null` if the `DataItem` is not an array or if
@@ -121,6 +147,42 @@ const x5c_stmt = x5c.?.get(0);
 try std.testing.expect(x5c_stmt.?.isBytes());
 try std.testing.expectEqual(@as(usize, 704), x5c_stmt.?.bytes.items.len);
 ```
+
+#### map (major type 5)
+
+To access the value associated with a key one can use the `getValue()` and
+`getValueByString()` functions. The first takes an arbitrary `DataItem` as
+key while the second expects a string.
+
+```zig
+// CBOR decoder example ...
+const fmt = data_item.getValueByString("fmt");
+
+try std.testing.expect(fmt.?.isText());
+try std.testing.expectEqualStrings("fido-u2f", fmt.?.text.items);
+```
+
+#### tag (major type 6)
+
+A tagged data item associates an integer in the range $0..2^{64}-1$ with a data
+item. This can be used to give it some additional semantics, e.g. a tag value of 2
+combined with a byte string could indicate an unsigned bignum.
+
+See [RFC8949: Tagging of Items](https://www.rfc-editor.org/rfc/rfc8949.html#name-tagging-of-items)
+for more information.
+
+#### float (major type 7)
+
+Representation of 16- (`DataItem.float.float16`), 32- (`DataItem.float.float32`), 
+and 64-bit (`DataItem.float.float64`) floating-point numbers.
+
+> Note: The representations of any floating-point values are not changed by the
+> encoder.
+
+
+#### simple (major type 7)
+
+Currently supported are `False` (20), `True` (21), `Null` (22) and `Undefined` (23).
 
 ## CTAP2 canonical CBOR encoding
 
