@@ -87,12 +87,12 @@ try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor.i
 
 ### DataItem
 
-### Type of a DataItem
+#### Type of a DataItem
 
 One can use the `isInt`, `isBytes`, `isText`, `isArray`, `isMap`, `isTagged`,
 `isFloat` and `isSimple` function to check the given `DataItem`'s type.
 
-### Map (major type 5)
+#### Map (major type 5)
 
 To access the value associated with a key one can use the `getValue()` and
 `getValueByString()` functions. The first takes an arbitrary `DataItem` as
@@ -106,7 +106,7 @@ try std.testing.expect(fmt.?.isText());
 try std.testing.expectEqualStrings("fido-u2f", fmt.?.text.items);
 ```
 
-### Array (major type 3 and 4)
+#### Array (major type 3 and 4)
 
 The `get()` function can be used to access the element of an array at a specified
 index. The function will return `null` if the `DataItem` is not an array or if
