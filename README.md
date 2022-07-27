@@ -17,7 +17,7 @@ and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 - [x] Map of pairs of data items (major type 5).
 - [x] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
 - [x] Floating-point numbers (major type 7).
-- [ ] simple values (major type 7). 
+- [x] simple values (major type 7). 
 - [ ] "break" stop code (major type 7).
 
 ## Supported types by encoder
@@ -30,7 +30,7 @@ and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 - [x] Map of pairs of data items (major type 5).
 - [x] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
 - [x] Floating-point numbers (major type 7).
-- [ ] simple values (major type 7). 
+- [x] simple values (major type 7). 
 - [ ] "break" stop code (major type 7).
 
 ## Examples
@@ -214,5 +214,5 @@ as possible.
 |:----:|:----:|:-----------:|:----:|
 | Decoder | | x | |
 | Encoder | | x | |
-| CBOR to JSON | x | | |
+| CBOR to JSON | | x | |
 | JSON to CBOR | x | | |

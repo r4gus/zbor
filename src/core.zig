@@ -57,6 +57,12 @@ pub const DataItem = union(DataItemTag) {
     /// Major type 7: Simple value [false, true, null]
     simple: SimpleValue,
 
+    pub fn bytes(allocator: Allocator, value: []const u8) CborError!@This() {
+        var di = DataItem{ .bytes = std.ArrayList(u8).init(allocator) };
+        try di.bytes.appendSlice(value);
+        return di;
+    }
+
     pub fn deinit(self: @This()) void {
         switch (self) {
             .int => |_| {},
@@ -243,6 +249,26 @@ pub const DataItem = union(DataItemTag) {
     /// Returns true if the given DataItem is a simple value, false otherwise.
     pub fn isSimple(self: *@This()) bool {
         return @as(DataItemTag, self.*) == .simple;
+    }
+
+    pub fn jsonStringify(value: @This(), options: std.json.StringifyOptions, out_stream: anytype) @TypeOf(out_stream).Error!void {
+        _ = options;
+
+        switch (value) {
+            // An integer (major type 0 or 1) becomes a JSON number.
+            .int => |v| try out_stream.print("{d}", .{v}),
+            // A byte string is encoded in base64url without padding and
+            // becomes a JSON string.
+            .bytes => |v| {
+                _ = v;
+                var base64url = std.base64.url_safe_no_pad;
+                var buffer = try v.allocator.alloc(u8, base64url.Encoder.calcSize(v.items.len));
+                defer v.allocator.free(buffer);
+                _ = base64url.Encoder.encode(buffer, v.items);
+                try std.json.stringify(buffer, .{}, out_stream);
+            },
+            else => unreachable,
+        }
     }
 };
 

@@ -896,3 +896,28 @@ test "MT7: encode f64 -4.1" {
     defer cbor.deinit();
     try std.testing.expectEqualSlices(u8, &.{ 0xfb, 0xc0, 0x10, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66 }, cbor.items);
 }
+
+test "MT0,1: DataItem{ .int = 30 } to json" {
+    const allocator = std.testing.allocator;
+
+    const di = DataItem{ .int = 30 };
+
+    var string = std.ArrayList(u8).init(allocator);
+    defer string.deinit();
+    try std.json.stringify(di, .{}, string.writer());
+
+    try std.testing.expectEqualStrings("30", string.items);
+}
+
+test "MT2: DataItem to json" {
+    const allocator = std.testing.allocator;
+
+    const di = try DataItem.bytes(allocator, &.{ 0x95, 0x28, 0xe0, 0x8f, 0x32, 0xda, 0x3d, 0x36, 0x83, 0xc4, 0x6a, 0x1c, 0x36, 0x58, 0xb4, 0x86, 0x47, 0x2b });
+    defer di.deinit();
+
+    var string = std.ArrayList(u8).init(allocator);
+    defer string.deinit();
+    try std.json.stringify(di, .{}, string.writer());
+
+    try std.testing.expectEqualStrings("\"lSjgjzLaPTaDxGocNli0hkcr\"", string.items);
+}
