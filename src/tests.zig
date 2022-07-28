@@ -242,3 +242,180 @@ test "MT6: decode cbor tagged data item 32(\"http://www.example.com\")" {
     try std.testing.expect(exp1.equal(&di1));
     try std.testing.expectEqualStrings(exp1.tag.content.text, di1.tag.content.text);
 }
+
+test "MT7: decode f16 0.0" {
+    const allocator = std.testing.allocator;
+
+    var expected = DataItem.float16(0.0);
+    var ne1 = DataItem.float16(0.1);
+    var ne2 = DataItem.float16(-0.1);
+    var ne3 = DataItem.float32(0.0);
+    var ne4 = DataItem.float64(0.0);
+    var di = try decode(allocator, &.{ 0xf9, 0x00, 0x00 });
+
+    try std.testing.expect(di.equal(&expected));
+    try std.testing.expect(!di.equal(&ne1));
+    try std.testing.expect(!di.equal(&ne2));
+    try std.testing.expect(!di.equal(&ne3));
+    try std.testing.expect(!di.equal(&ne4));
+}
+
+test "MT7: decode f16 -0.0" {
+    const allocator = std.testing.allocator;
+
+    var expected = DataItem{ .float = Float{ .float16 = -0.0 } };
+    var di = try decode(allocator, &.{ 0xf9, 0x80, 0x00 });
+
+    try std.testing.expectEqual(expected.float.float16, di.float.float16);
+    //try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f16 1.0" {
+    const allocator = std.testing.allocator;
+
+    var expected = DataItem{ .float = Float{ .float16 = 1.0 } };
+    var di = try decode(allocator, &.{ 0xf9, 0x3c, 0x00 });
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f16 1.5" {
+    const allocator = std.testing.allocator;
+
+    var expected = DataItem{ .float = Float{ .float16 = 1.5 } };
+    var di = try decode(allocator, &.{ 0xf9, 0x3e, 0x00 });
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f16 5.960464477539063e-8" {
+    const allocator = std.testing.allocator;
+
+    var expected = DataItem{ .float = Float{ .float16 = 5.960464477539063e-8 } };
+    var di = try decode(allocator, &.{ 0xf9, 0x00, 0x01 });
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f16 0.00006103515625" {
+    const allocator = std.testing.allocator;
+
+    var expected = DataItem{ .float = Float{ .float16 = 0.00006103515625 } };
+    var di = try decode(allocator, &.{ 0xf9, 0x04, 0x00 });
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f16 -4.0" {
+    const allocator = std.testing.allocator;
+
+    var expected = DataItem{ .float = Float{ .float16 = -4.0 } };
+    var di = try decode(allocator, &.{ 0xf9, 0xc4, 0x00 });
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f32 100000.0" {
+    const allocator = std.testing.allocator;
+
+    var expected = DataItem{ .float = Float{ .float32 = 100000.0 } };
+    var di = try decode(allocator, &.{ 0xfa, 0x47, 0xc3, 0x50, 0x00 });
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f32 3.4028234663852886e+38" {
+    const allocator = std.testing.allocator;
+
+    var expected = DataItem{ .float = Float{ .float32 = 3.4028234663852886e+38 } };
+    var di = try decode(allocator, &.{ 0xfa, 0x7f, 0x7f, 0xff, 0xff });
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f64 1.1" {
+    const allocator = std.testing.allocator;
+
+    var expected = DataItem{ .float = Float{ .float64 = 1.1 } };
+    var di = try decode(allocator, &.{ 0xfb, 0x3f, 0xf1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9a });
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f64 1.0e+300" {
+    const allocator = std.testing.allocator;
+
+    var expected = DataItem{ .float = Float{ .float64 = 1.0e+300 } };
+    var di = try decode(allocator, &.{ 0xfb, 0x7e, 0x37, 0xe4, 0x3c, 0x88, 0x00, 0x75, 0x9c });
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: decode f64 -4.1" {
+    const allocator = std.testing.allocator;
+
+    var expected = DataItem{ .float = Float{ .float64 = -4.1 } };
+    var di = try decode(allocator, &.{ 0xfb, 0xc0, 0x10, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66 });
+
+    try std.testing.expect(di.equal(&expected));
+}
+
+test "MT7: simple value" {
+    const allocator = std.testing.allocator;
+
+    var expected1 = DataItem.False();
+    var di1 = try decode(allocator, &.{0xf4});
+    try std.testing.expect(di1.equal(&expected1));
+
+    var expected2 = DataItem.True();
+    var di2 = try decode(allocator, &.{0xf5});
+    try std.testing.expect(di2.equal(&expected2));
+
+    var expected3 = DataItem.Null();
+    var di3 = try decode(allocator, &.{0xf6});
+    try std.testing.expect(di3.equal(&expected3));
+
+    var expected4 = DataItem.Undefined();
+    var di4 = try decode(allocator, &.{0xf7});
+    try std.testing.expect(di4.equal(&expected4));
+}
+
+test "decode WebAuthn attestationObject" {
+    const allocator = std.testing.allocator;
+    const attestationObject = try std.fs.cwd().openFile("data/WebAuthnCreate.dat", .{ .mode = .read_only });
+    defer attestationObject.close();
+    const bytes = try attestationObject.readToEndAlloc(allocator, 4096);
+    defer allocator.free(bytes);
+
+    var di = try decode(allocator, bytes);
+    defer di.deinit(allocator);
+
+    try std.testing.expect(di.isMap());
+
+    // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    const fmt = di.getValueByString("fmt");
+    try std.testing.expect(fmt.?.isText());
+    try std.testing.expectEqualStrings("fido-u2f", fmt.?.text);
+
+    // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    const attStmt = di.getValueByString("attStmt");
+    try std.testing.expect(attStmt.?.isMap());
+    const authData = di.getValueByString("authData");
+    try std.testing.expect(authData.?.isBytes());
+
+    // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    try std.testing.expectEqual(@as(usize, 196), authData.?.bytes.len);
+
+    // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    const sig = attStmt.?.getValueByString("sig");
+    try std.testing.expect(sig.?.isBytes());
+    try std.testing.expectEqual(@as(usize, 71), sig.?.bytes.len);
+
+    const x5c = attStmt.?.getValueByString("x5c");
+    try std.testing.expect(x5c.?.isArray());
+    try std.testing.expectEqual(@as(usize, 1), x5c.?.array.len);
+
+    const x5c_stmt = x5c.?.get(0);
+    try std.testing.expect(x5c_stmt.?.isBytes());
+    try std.testing.expectEqual(@as(usize, 704), x5c_stmt.?.bytes.len);
+}
