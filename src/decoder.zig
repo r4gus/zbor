@@ -109,15 +109,15 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
         },
         // MT5: Map of pairs of DataItem, e.g. {1:2, 3:4}.
         5 => {
-            // var item = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
-            // var i: usize = 0;
-            // while (i < val) : (i += 1) {
-            //     // The index will be incremented by the recursive call to decode_.
-            //     const k = try decode_(data, index, allocator, false);
-            //     const v = try decode_(data, index, allocator, false);
-            //     try item.map.append(Pair{ .key = k, .value = v });
-            // }
-            // return item;
+            var item = DataItem{ .map = try allocator.alloc(Pair, @as(usize, val)) };
+            var i: usize = 0;
+            while (i < val) : (i += 1) {
+                // The index will be incremented by the recursive call to decode_.
+                const k = try decode_(data, index, allocator, false);
+                const v = try decode_(data, index, allocator, false);
+                item.map[i] = Pair{ .key = k, .value = v };
+            }
+            return item;
         },
         // MT6: Tagged data item, e.g. 1("a").
         6 => {

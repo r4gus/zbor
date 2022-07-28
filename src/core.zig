@@ -127,6 +127,13 @@ pub const DataItem = union(DataItemTag) {
         return di;
     }
 
+    /// Create a new data item of type map.
+    pub fn map(allocator: Allocator, value: []const Pair) CborError!@This() {
+        var di = DataItem{ .map = try allocator.alloc(Pair, value.len) };
+        std.mem.copy(Pair, di.map, value);
+        return di;
+    }
+
     /// Create the simple value True.
     pub fn True() @This() {
         return DataItem{ .simple = SimpleValue.True };

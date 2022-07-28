@@ -171,3 +171,53 @@ test "MT4: decode cbor array" {
     try std.testing.expect(!exp2.equal(&di4));
     try std.testing.expect(!exp3.equal(&di4));
 }
+
+test "MT5: decode empty cbor map" {
+    const allocator = std.testing.allocator;
+
+    const exp1 = try DataItem.map(allocator, &.{});
+    defer exp1.deinit(allocator);
+    const di1 = try decode(allocator, &.{0xa0});
+    defer di1.deinit(allocator);
+    try std.testing.expect(exp1.equal(&di1));
+}
+
+test "MT5: decode cbor map {1:2,3:4}" {
+    const allocator = std.testing.allocator;
+
+    const exp1 = try DataItem.map(allocator, &.{ Pair.new(DataItem.int(1), DataItem.int(2)), Pair.new(DataItem.int(3), DataItem.int(4)) });
+    defer exp1.deinit(allocator);
+    const di1 = try decode(allocator, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 });
+    defer di1.deinit(allocator);
+    try std.testing.expect(exp1.equal(&di1));
+}
+
+test "MT5: decode cbor map {\"a\":1,\"b\":[2,3]}" {
+    const allocator = std.testing.allocator;
+
+    const exp1 = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "a"), DataItem.int(1)), Pair.new(try DataItem.text(allocator, "b"), try DataItem.array(allocator, &.{ DataItem.int(2), DataItem.int(3) })) });
+    defer exp1.deinit(allocator);
+    const di1 = try decode(allocator, &.{ 0xa2, 0x61, 0x61, 0x01, 0x61, 0x62, 0x82, 0x02, 0x03 });
+    defer di1.deinit(allocator);
+    try std.testing.expect(exp1.equal(&di1));
+}
+
+test "MT5: decode cbor map within array [\"a\",{\"b\":\"c\"}]" {
+    const allocator = std.testing.allocator;
+
+    const exp1 = try DataItem.array(allocator, &.{ try DataItem.text(allocator, "a"), try DataItem.map(allocator, &.{Pair.new(try DataItem.text(allocator, "b"), try DataItem.text(allocator, "c"))}) });
+    defer exp1.deinit(allocator);
+    const di1 = try decode(allocator, &.{ 0x82, 0x61, 0x61, 0xa1, 0x61, 0x62, 0x61, 0x63 });
+    defer di1.deinit(allocator);
+    try std.testing.expect(exp1.equal(&di1));
+}
+
+test "MT5: decode cbor map of text pairs" {
+    const allocator = std.testing.allocator;
+
+    const exp1 = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "a"), try DataItem.text(allocator, "A")), Pair.new(try DataItem.text(allocator, "b"), try DataItem.text(allocator, "B")), Pair.new(try DataItem.text(allocator, "c"), try DataItem.text(allocator, "C")), Pair.new(try DataItem.text(allocator, "d"), try DataItem.text(allocator, "D")), Pair.new(try DataItem.text(allocator, "e"), try DataItem.text(allocator, "E")) });
+    defer exp1.deinit(allocator);
+    const di1 = try decode(allocator, &.{ 0xa5, 0x61, 0x61, 0x61, 0x41, 0x61, 0x62, 0x61, 0x42, 0x61, 0x63, 0x61, 0x43, 0x61, 0x64, 0x61, 0x44, 0x61, 0x65, 0x61, 0x45 });
+    defer di1.deinit(allocator);
+    try std.testing.expect(exp1.equal(&di1));
+}
