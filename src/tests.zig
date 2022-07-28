@@ -221,3 +221,24 @@ test "MT5: decode cbor map of text pairs" {
     defer di1.deinit(allocator);
     try std.testing.expect(exp1.equal(&di1));
 }
+
+test "MT6: decode cbor tagged data item 1(1363896240)" {
+    const allocator = std.testing.allocator;
+
+    const exp1 = try DataItem.tagged(allocator, 1, DataItem.int(1363896240));
+    defer exp1.deinit(allocator);
+    const di1 = try decode(allocator, &.{ 0xc1, 0x1a, 0x51, 0x4b, 0x67, 0xb0 });
+    defer di1.deinit(allocator);
+    try std.testing.expect(exp1.equal(&di1));
+}
+
+test "MT6: decode cbor tagged data item 32(\"http://www.example.com\")" {
+    const allocator = std.testing.allocator;
+
+    const exp1 = try DataItem.tagged(allocator, 32, try DataItem.text(allocator, "http://www.example.com"));
+    defer exp1.deinit(allocator);
+    const di1 = try decode(allocator, &.{ 0xd8, 0x20, 0x76, 0x68, 0x74, 0x74, 0x70, 0x3a, 0x2f, 0x2f, 0x77, 0x77, 0x77, 0x2e, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d });
+    defer di1.deinit(allocator);
+    try std.testing.expect(exp1.equal(&di1));
+    try std.testing.expectEqualStrings(exp1.tag.content.text, di1.tag.content.text);
+}

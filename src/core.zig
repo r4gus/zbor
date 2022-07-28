@@ -26,7 +26,6 @@ pub const Pair = struct {
 pub const Tag = struct {
     number: u64,
     content: *DataItem,
-    allocator: Allocator,
 
     /// Returns true if the tagged data item is a unsigned bignum (tag = 2, type = byte string).
     pub fn isUnsignedBignum(self: *const @This()) bool {
@@ -44,19 +43,19 @@ pub const Tag = struct {
         // A bignum is represented by encoding its byte string in base64url
         // without padding and becomes a JSON string.
         if (value.isUnsignedBignum() or value.isSignedBignum()) {
-            const i: usize = if (value.isSignedBignum()) 1 else 0;
-            var base64url = std.base64.url_safe_no_pad;
+            // const i: usize = if (value.isSignedBignum()) 1 else 0;
+            // var base64url = std.base64.url_safe_no_pad;
 
-            var buffer = try value.allocator.alloc(u8, base64url.Encoder.calcSize(value.content.bytes.items.len) + i);
-            defer value.allocator.free(buffer);
+            // var buffer = try value.allocator.alloc(u8, base64url.Encoder.calcSize(value.content.bytes.items.len) + i);
+            // defer value.allocator.free(buffer);
 
-            // For tag number 3 (signed bignum) a '~' (ASCII tilde) is inserted
-            // before the base-encoded value.
-            if (value.isSignedBignum()) {
-                buffer[0] = '~';
-            }
-            _ = base64url.Encoder.encode(buffer[i..], value.content.bytes.items);
-            try std.json.stringify(buffer, .{}, out_stream);
+            // // For tag number 3 (signed bignum) a '~' (ASCII tilde) is inserted
+            // // before the base-encoded value.
+            // if (value.isSignedBignum()) {
+            //     buffer[0] = '~';
+            // }
+            // _ = base64url.Encoder.encode(buffer[i..], value.content.bytes.items);
+            // try std.json.stringify(buffer, .{}, out_stream);
         }
     }
 };
@@ -131,6 +130,13 @@ pub const DataItem = union(DataItemTag) {
     pub fn map(allocator: Allocator, value: []const Pair) CborError!@This() {
         var di = DataItem{ .map = try allocator.alloc(Pair, value.len) };
         std.mem.copy(Pair, di.map, value);
+        return di;
+    }
+
+    /// Create a new tagged data item.
+    pub fn tagged(allocator: Allocator, tag: u64, value: DataItem) CborError!@This() {
+        var di = DataItem{ .tag = Tag{ .number = tag, .content = try allocator.create(DataItem) } };
+        di.tag.content.* = value;
         return di;
     }
 
@@ -239,6 +245,62 @@ pub const DataItem = union(DataItemTag) {
     /// Returns true if the given DataItem is a simple value, false otherwise.
     pub fn isSimple(self: *const @This()) bool {
         return @as(DataItemTag, self.*) == .simple;
+    }
+
+    /// Get the value at the specified index from an array.
+    ///
+    /// Returns null if the DataItem is not an array or if the
+    /// given index is out of bounds.
+    pub fn get(self: *@This(), index: usize) ?*DataItem {
+        if (@as(DataItemTag, self.*) != DataItemTag.array) {
+            return null;
+        }
+
+        if (index < self.array.len) {
+            return &self.array[index];
+        } else {
+            return null;
+        }
+    }
+
+    /// Get the value associated with the given key from a map.
+    ///
+    /// Retruns null if the DataItem is not a map or if the key couldn't
+    /// be found; a pointer to the associated value otherwise.
+    pub fn getValue(self: *@This(), key: *const DataItem) ?*DataItem {
+        if (@as(DataItemTag, self.*) != DataItemTag.map) {
+            return null;
+        }
+
+        for (self.map) |*pair| {
+            if (@as(DataItemTag, pair.*.key) == @as(DataItemTag, key.*)) {
+                if (pair.*.key.equal(key)) {
+                    return &pair.*.value;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// Get the value associated with the given key from a map.
+    ///
+    /// Retruns null if the DataItem is not a map or if the key couldn't
+    /// be found; a pointer to the associated value otherwise.
+    pub fn getValueByString(self: *@This(), key: []const u8) ?*DataItem {
+        if (@as(DataItemTag, self.*) != DataItemTag.map) {
+            return null;
+        }
+
+        for (self.map) |*pair| {
+            if (@as(DataItemTag, pair.*.key) == .text) {
+                if (std.mem.eql(u8, pair.*.key.text, key)) {
+                    return &pair.*.value;
+                }
+            }
+        }
+
+        return null;
     }
 
     /// Compare two DataItems for equality.

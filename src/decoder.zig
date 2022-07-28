@@ -121,12 +121,11 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
         },
         // MT6: Tagged data item, e.g. 1("a").
         6 => {
-            //var item = try allocator.create(DataItem);
+            var item = try allocator.create(DataItem);
             // The enclosed data item (tag content) is the single encoded data
             // item that follows the head.
-            //item.* = try decode_(data, index, allocator, false);
-
-            //return DataItem{ .tag = Tag{ .number = val, .content = item, .allocator = allocator } };
+            item.* = try decode_(data, index, allocator, false);
+            return DataItem{ .tag = Tag{ .number = val, .content = item } };
         },
         7 => {
             switch (ai) {
