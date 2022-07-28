@@ -23,7 +23,43 @@ pub const Pair = struct {
 };
 
 /// A DataItem that is tagged by a number (major type 6).
-pub const Tag = struct { number: u64, content: *DataItem, allocator: Allocator };
+pub const Tag = struct {
+    number: u64,
+    content: *DataItem,
+    allocator: Allocator,
+
+    /// Returns true if the tagged data item is a unsigned bignum (tag = 2, type = byte string).
+    pub fn isUnsignedBignum(self: *const @This()) bool {
+        return self.number == 2 and @as(DataItemTag, self.content.*) == .bytes;
+    }
+
+    /// Returns true if the tagged data item is a signed bignum (tag = 3, type = byte string).
+    pub fn isSignedBignum(self: *const @This()) bool {
+        return self.number == 3 and @as(DataItemTag, self.content.*) == .bytes;
+    }
+
+    pub fn jsonStringify(value: @This(), options: std.json.StringifyOptions, out_stream: anytype) @TypeOf(out_stream).Error!void {
+        _ = options;
+
+        // A bignum is represented by encoding its byte string in base64url
+        // without padding and becomes a JSON string.
+        if (value.isUnsignedBignum() or value.isSignedBignum()) {
+            const i: usize = if (value.isSignedBignum()) 1 else 0;
+            var base64url = std.base64.url_safe_no_pad;
+
+            var buffer = try value.allocator.alloc(u8, base64url.Encoder.calcSize(value.content.bytes.items.len) + i);
+            defer value.allocator.free(buffer);
+
+            // For tag number 3 (signed bignum) a '~' (ASCII tilde) is inserted
+            // before the base-encoded value.
+            if (value.isSignedBignum()) {
+                buffer[0] = '~';
+            }
+            _ = base64url.Encoder.encode(buffer[i..], value.content.bytes.items);
+            try std.json.stringify(buffer, .{}, out_stream);
+        }
+    }
+};
 
 /// Tag for a 16-, 32- or 64-bit floating point value.
 pub const FloatTag = enum { float16, float32, float64 };
@@ -98,34 +134,60 @@ pub const DataItem = union(DataItemTag) {
         return di;
     }
 
+    /// Create the simple value True.
     pub fn True() @This() {
         return DataItem{ .simple = SimpleValue.True };
     }
 
+    /// Create the simple value False.
     pub fn False() @This() {
         return DataItem{ .simple = SimpleValue.False };
     }
 
+    /// Create the simple value Null.
     pub fn Null() @This() {
         return DataItem{ .simple = SimpleValue.Null };
     }
 
+    /// Create the simple value Undefined.
     pub fn Undefined() @This() {
         return DataItem{ .simple = SimpleValue.Undefined };
     }
 
+    /// Create a IEEE 754 half-precision floating point value.
     pub fn float16(v: f16) @This() {
         return DataItem{ .float = Float{ .float16 = v } };
     }
 
+    /// Create a IEEE 754 single-precision floating point value.
     pub fn float32(v: f32) @This() {
         return DataItem{ .float = Float{ .float32 = v } };
     }
 
+    /// Create a IEEE 754 double-precision floating point value.
     pub fn float64(v: f64) @This() {
         return DataItem{ .float = Float{ .float64 = v } };
     }
 
+    /// Create a unsigned bignum (tag = 2, type = byte string).
+    /// The bignum is represented in network byte order (big endian, i.e. the
+    /// lowest memory address holds the most significant byte).
+    pub fn unsignedBignum(allocator: Allocator, value: []const u8) CborError!@This() {
+        var di = DataItem{ .tag = Tag{ .number = 2, .content = try allocator.create(DataItem), .allocator = allocator } };
+        di.tag.content.* = try DataItem.bytes(allocator, value);
+        return di;
+    }
+
+    /// Create a signed bignum (tag = 3, type = byte string).
+    /// The bignum is represented in network byte order (big endian, i.e. the
+    /// lowest memory address holds the most significant byte).
+    pub fn signedBignum(allocator: Allocator, value: []const u8) CborError!@This() {
+        var di = DataItem{ .tag = Tag{ .number = 3, .content = try allocator.create(DataItem), .allocator = allocator } };
+        di.tag.content.* = try DataItem.bytes(allocator, value);
+        return di;
+    }
+
+    /// Recursively free all allocated memory.
     pub fn deinit(self: @This()) void {
         switch (self) {
             .int => |_| {},
@@ -157,6 +219,7 @@ pub const DataItem = union(DataItemTag) {
         }
     }
 
+    /// Compare two DataItems for equality.
     pub fn equal(self: *const @This(), other: *const @This()) bool {
         // self and other hold different types, i.e. can't be equal.
         if (@as(DataItemTag, self.*) != @as(DataItemTag, other.*)) {
@@ -357,6 +420,7 @@ pub const DataItem = union(DataItemTag) {
                 }
                 try out_stream.writeAll("}");
             },
+            .tag => |v| try std.json.stringify(v, .{}, out_stream),
             // A float becomes a JSON number if its finite.
             .float => |v| {
                 switch (v) {
@@ -375,10 +439,10 @@ pub const DataItem = union(DataItemTag) {
                     else => try out_stream.writeAll("null"),
                 }
             },
-            else => unreachable,
         }
     }
 
+    /// Convert the given DataItem to JSON.
     pub fn toJson(self: *const @This(), allocator: Allocator) !std.ArrayList(u8) {
         var json = std.ArrayList(u8).init(allocator);
         try std.json.stringify(self, .{}, json.writer());

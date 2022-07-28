@@ -961,6 +961,23 @@ test "MT5: DataItem to json" {
     try std.testing.expectEqualStrings("{\"a\":1,\"b\":[2,3]}", string.items);
 }
 
+test "MT6: BigNum to json" {
+    const allocator = std.testing.allocator;
+
+    const di1 = try DataItem.unsignedBignum(allocator, &.{ 0xf6, 0x53, 0xd8, 0xf5, 0x55, 0x8b, 0xf2, 0x49, 0x1d, 0x90, 0x96, 0x13, 0x44, 0x8d, 0xd1, 0xd3 });
+    defer di1.deinit();
+    const di2 = try DataItem.signedBignum(allocator, &.{ 0xf6, 0x53, 0xd8, 0xf5, 0x55, 0x8b, 0xf2, 0x49, 0x1d, 0x90, 0x96, 0x13, 0x44, 0x8d, 0xd1, 0xd3 });
+    defer di2.deinit();
+
+    const json1 = try di1.toJson(allocator);
+    defer json1.deinit();
+    const json2 = try di2.toJson(allocator);
+    defer json2.deinit();
+
+    try std.testing.expectEqualStrings("\"9lPY9VWL8kkdkJYTRI3R0w\"", json1.items);
+    try std.testing.expectEqualStrings("\"~9lPY9VWL8kkdkJYTRI3R0w\"", json2.items);
+}
+
 test "MT7: DataItem to json (false, true, null)" {
     const allocator = std.testing.allocator;
 
