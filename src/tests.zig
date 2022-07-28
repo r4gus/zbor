@@ -984,3 +984,18 @@ test "MT7: DataItem to json (false, true, null)" {
     // Any other simple value is represented as the substitue value (null).
     try std.testing.expectEqualStrings("null", json4.items);
 }
+
+test "MT7: DataItem to json (float)" {
+    const allocator = std.testing.allocator;
+
+    const di1 = DataItem.float64(-4.1);
+    //const di2 = DataItem.float32(3.4028234663852886e+38);
+
+    const json1 = try di1.toJson(allocator);
+    defer json1.deinit();
+    //const json2 = try di2.toJson(allocator);
+    //defer json2.deinit();
+
+    try std.testing.expectEqualStrings("-4.1e+00", json1.items);
+    //try std.testing.expectEqualStrings("3.4028234663852886e+38", json2.items);
+}

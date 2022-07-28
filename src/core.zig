@@ -114,6 +114,18 @@ pub const DataItem = union(DataItemTag) {
         return DataItem{ .simple = SimpleValue.Undefined };
     }
 
+    pub fn float16(v: f16) @This() {
+        return DataItem{ .float = Float{ .float16 = v } };
+    }
+
+    pub fn float32(v: f32) @This() {
+        return DataItem{ .float = Float{ .float32 = v } };
+    }
+
+    pub fn float64(v: f64) @This() {
+        return DataItem{ .float = Float{ .float64 = v } };
+    }
+
     pub fn deinit(self: @This()) void {
         switch (self) {
             .int => |_| {},
@@ -344,6 +356,14 @@ pub const DataItem = union(DataItemTag) {
                     }
                 }
                 try out_stream.writeAll("}");
+            },
+            // A float becomes a JSON number if its finite.
+            .float => |v| {
+                switch (v) {
+                    .float16 => |f| try std.json.stringify(f, .{}, out_stream),
+                    .float32 => |f| try std.json.stringify(f, .{}, out_stream),
+                    .float64 => |f| try std.json.stringify(f, .{}, out_stream),
+                }
             },
             .simple => |v| {
                 switch (v) {
