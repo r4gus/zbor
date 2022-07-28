@@ -2,17 +2,30 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub const CborError = error{
-    // Indicates that one of the reserved values 28, 29 or 30 has been used.
+    /// Indicates that one of the reserved values 28, 29 or 30 has been used.
     ReservedAdditionalInformation,
-    // The given CBOR string is malformed.
+    /// The given CBOR string is malformed.
     Malformed,
-    // A unsupported type has been encounterd.
+    /// A unsupported type has been encounterd.
     Unsupported,
     OutOfMemory,
 };
 
+pub const CborSerializationError = error{
+    /// One of the keys of a map is not a text string.
+    InvalidKey,
+};
+
 /// A (key, value) pair used with DataItem.map (major type 5).
-pub const Pair = struct { key: DataItem, value: DataItem };
+pub const Pair = struct {
+    key: DataItem,
+    value: DataItem,
+
+    /// Create data item pair.
+    pub fn new(k: DataItem, v: DataItem) @This() {
+        return Pair{ .key = k, .value = v };
+    }
+};
 
 /// A DataItem that is tagged by a number (major type 6).
 pub const Tag = struct { number: u64, content: *DataItem, allocator: Allocator };
@@ -57,9 +70,36 @@ pub const DataItem = union(DataItemTag) {
     /// Major type 7: Simple value [false, true, null]
     simple: SimpleValue,
 
+    /// Create a new data item of type int.
+    pub fn int(value: i128) @This() {
+        return DataItem{ .int = value };
+    }
+
+    /// Create a new data item of type byte string.
     pub fn bytes(allocator: Allocator, value: []const u8) CborError!@This() {
         var di = DataItem{ .bytes = std.ArrayList(u8).init(allocator) };
         try di.bytes.appendSlice(value);
+        return di;
+    }
+
+    /// Create a new data item of type text string.
+    pub fn text(allocator: Allocator, value: []const u8) CborError!@This() {
+        var di = DataItem{ .text = std.ArrayList(u8).init(allocator) };
+        try di.text.appendSlice(value);
+        return di;
+    }
+
+    /// Create a new data item of type array.
+    pub fn array(allocator: Allocator, value: []const DataItem) CborError!@This() {
+        var di = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
+        try di.array.appendSlice(value);
+        return di;
+    }
+
+    /// Create a new data item of type map.
+    pub fn map(allocator: Allocator, value: []const Pair) CborError!@This() {
+        var di = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
+        try di.map.appendSlice(value);
         return di;
     }
 
@@ -212,42 +252,42 @@ pub const DataItem = union(DataItemTag) {
     }
 
     /// Returns true if the given DataItem is an integer, false otherwise.
-    pub fn isInt(self: *@This()) bool {
+    pub fn isInt(self: *const @This()) bool {
         return @as(DataItemTag, self.*) == .int;
     }
 
     /// Returns true if the given DataItem is a byte string, false otherwise.
-    pub fn isBytes(self: *@This()) bool {
+    pub fn isBytes(self: *const @This()) bool {
         return @as(DataItemTag, self.*) == .bytes;
     }
 
     /// Returns true if the given DataItem is a text string, false otherwise.
-    pub fn isText(self: *@This()) bool {
+    pub fn isText(self: *const @This()) bool {
         return @as(DataItemTag, self.*) == .text;
     }
 
     /// Returns true if the given DataItem is an array of DataItems, false otherwise.
-    pub fn isArray(self: *@This()) bool {
+    pub fn isArray(self: *const @This()) bool {
         return @as(DataItemTag, self.*) == .array;
     }
 
     /// Returns true if the given DataItem is a map, false otherwise.
-    pub fn isMap(self: *@This()) bool {
+    pub fn isMap(self: *const @This()) bool {
         return @as(DataItemTag, self.*) == .map;
     }
 
     /// Returns true if the given DataItem is a tagged DataItem, false otherwise.
-    pub fn isTagged(self: *@This()) bool {
+    pub fn isTagged(self: *const @This()) bool {
         return @as(DataItemTag, self.*) == .tag;
     }
 
     /// Returns true if the given DataItem is a float, false otherwise.
-    pub fn isFloat(self: *@This()) bool {
+    pub fn isFloat(self: *const @This()) bool {
         return @as(DataItemTag, self.*) == .float;
     }
 
     /// Returns true if the given DataItem is a simple value, false otherwise.
-    pub fn isSimple(self: *@This()) bool {
+    pub fn isSimple(self: *const @This()) bool {
         return @as(DataItemTag, self.*) == .simple;
     }
 
@@ -260,12 +300,39 @@ pub const DataItem = union(DataItemTag) {
             // A byte string is encoded in base64url without padding and
             // becomes a JSON string.
             .bytes => |v| {
-                _ = v;
                 var base64url = std.base64.url_safe_no_pad;
                 var buffer = try v.allocator.alloc(u8, base64url.Encoder.calcSize(v.items.len));
                 defer v.allocator.free(buffer);
                 _ = base64url.Encoder.encode(buffer, v.items);
                 try std.json.stringify(buffer, .{}, out_stream);
+            },
+            .text => |v| {
+                // TODO: Certain UTF-8 characters must be escaped.
+                // see: https://www.rfc-editor.org/rfc/rfc8259#section-7
+                try std.json.stringify(v.items, .{}, out_stream);
+            },
+            // An array becomes a JSON array.
+            .array => |v| {
+                try std.json.stringify(v.items, .{ .string = .Array }, out_stream);
+            },
+            // A map becomes a JSON object. This is possible directly only if all
+            // keys are UTF-8 strings.
+            .map => |v| {
+                try out_stream.writeAll("{");
+                for (v.items) |pair, index| {
+                    // Just ignore all pairs where the key is not a text string.
+                    if (pair.key.isText()) {
+                        try std.json.stringify(pair.key, .{}, out_stream);
+                        try out_stream.writeAll(":");
+                        try std.json.stringify(pair.value, .{}, out_stream);
+
+                        if (index < v.items.len - 1) {
+                            // stupid comma
+                            try out_stream.writeAll(",");
+                        }
+                    }
+                }
+                try out_stream.writeAll("}");
             },
             else => unreachable,
         }

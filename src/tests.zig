@@ -921,3 +921,42 @@ test "MT2: DataItem to json" {
 
     try std.testing.expectEqualStrings("\"lSjgjzLaPTaDxGocNli0hkcr\"", string.items);
 }
+
+test "MT3: DataItem to json" {
+    const allocator = std.testing.allocator;
+
+    const di = try DataItem.text(allocator, "fido-u2f");
+    defer di.deinit();
+
+    var string = std.ArrayList(u8).init(allocator);
+    defer string.deinit();
+    try std.json.stringify(di, .{}, string.writer());
+
+    try std.testing.expectEqualStrings("\"fido-u2f\"", string.items);
+}
+
+test "MT4: DataItem to json" {
+    const allocator = std.testing.allocator;
+
+    const di = try DataItem.array(allocator, &.{ DataItem.int(1), DataItem.int(2), DataItem.int(3) });
+    defer di.deinit();
+
+    var string = std.ArrayList(u8).init(allocator);
+    defer string.deinit();
+    try std.json.stringify(di, .{}, string.writer());
+
+    try std.testing.expectEqualStrings("[1,2,3]", string.items);
+}
+
+test "MT5: DataItem to json" {
+    const allocator = std.testing.allocator;
+
+    const di = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "a"), DataItem.int(1)), Pair.new(try DataItem.text(allocator, "b"), try DataItem.array(allocator, &.{ DataItem.int(2), DataItem.int(3) })) });
+    defer di.deinit();
+
+    var string = std.ArrayList(u8).init(allocator);
+    defer string.deinit();
+    try std.json.stringify(di, .{}, string.writer());
+
+    try std.testing.expectEqualStrings("{\"a\":1,\"b\":[2,3]}", string.items);
+}
