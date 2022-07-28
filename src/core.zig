@@ -11,11 +11,6 @@ pub const CborError = error{
     OutOfMemory,
 };
 
-pub const CborSerializationError = error{
-    /// One of the keys of a map is not a text string.
-    InvalidKey,
-};
-
 /// A (key, value) pair used with DataItem.map (major type 5).
 pub const Pair = struct {
     key: DataItem,
@@ -101,6 +96,22 @@ pub const DataItem = union(DataItemTag) {
         var di = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
         try di.map.appendSlice(value);
         return di;
+    }
+
+    pub fn True() @This() {
+        return DataItem{ .simple = SimpleValue.True };
+    }
+
+    pub fn False() @This() {
+        return DataItem{ .simple = SimpleValue.False };
+    }
+
+    pub fn Null() @This() {
+        return DataItem{ .simple = SimpleValue.Null };
+    }
+
+    pub fn Undefined() @This() {
+        return DataItem{ .simple = SimpleValue.Undefined };
     }
 
     pub fn deinit(self: @This()) void {
@@ -334,8 +345,24 @@ pub const DataItem = union(DataItemTag) {
                 }
                 try out_stream.writeAll("}");
             },
+            .simple => |v| {
+                switch (v) {
+                    .False => try out_stream.writeAll("false"),
+                    .True => try out_stream.writeAll("true"),
+                    .Null => try out_stream.writeAll("null"),
+                    // Any other simple value is represented by the
+                    // substitue value.
+                    else => try out_stream.writeAll("null"),
+                }
+            },
             else => unreachable,
         }
+    }
+
+    pub fn toJson(self: *const @This(), allocator: Allocator) !std.ArrayList(u8) {
+        var json = std.ArrayList(u8).init(allocator);
+        try std.json.stringify(self, .{}, json.writer());
+        return json;
     }
 };
 
