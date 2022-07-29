@@ -43,19 +43,19 @@ pub const Tag = struct {
         // A bignum is represented by encoding its byte string in base64url
         // without padding and becomes a JSON string.
         if (value.isUnsignedBignum() or value.isSignedBignum()) {
-            // const i: usize = if (value.isSignedBignum()) 1 else 0;
-            // var base64url = std.base64.url_safe_no_pad;
+            const i: usize = if (value.isSignedBignum()) 1 else 0;
+            var base64url = std.base64.url_safe_no_pad;
 
-            // var buffer = try value.allocator.alloc(u8, base64url.Encoder.calcSize(value.content.bytes.items.len) + i);
-            // defer value.allocator.free(buffer);
+            var buffer = try out_stream.context.allocator.alloc(u8, base64url.Encoder.calcSize(value.content.bytes.len) + i);
+            defer out_stream.context.allocator.free(buffer);
 
-            // // For tag number 3 (signed bignum) a '~' (ASCII tilde) is inserted
-            // // before the base-encoded value.
-            // if (value.isSignedBignum()) {
-            //     buffer[0] = '~';
-            // }
-            // _ = base64url.Encoder.encode(buffer[i..], value.content.bytes.items);
-            // try std.json.stringify(buffer, .{}, out_stream);
+            // For tag number 3 (signed bignum) a '~' (ASCII tilde) is inserted
+            // before the base-encoded value.
+            if (value.isSignedBignum()) {
+                buffer[0] = '~';
+            }
+            _ = base64url.Encoder.encode(buffer[i..], value.content.bytes);
+            try std.json.stringify(buffer, .{}, out_stream);
         }
     }
 };
@@ -388,12 +388,11 @@ pub const DataItem = union(DataItemTag) {
             // A byte string is encoded in base64url without padding and
             // becomes a JSON string.
             .bytes => |v| {
-                _ = v;
-                // var base64url = std.base64.url_safe_no_pad;
-                // var buffer = try v.allocator.alloc(u8, base64url.Encoder.calcSize(v.items.len));
-                // defer v.allocator.free(buffer);
-                // _ = base64url.Encoder.encode(buffer, v.items);
-                // try std.json.stringify(buffer, .{}, out_stream);
+                var base64url = std.base64.url_safe_no_pad;
+                var buffer = try out_stream.context.allocator.alloc(u8, base64url.Encoder.calcSize(v.len));
+                defer out_stream.context.allocator.free(buffer);
+                _ = base64url.Encoder.encode(buffer, v);
+                try std.json.stringify(buffer, .{}, out_stream);
             },
             .text => |v| {
                 // TODO: Certain UTF-8 characters must be escaped.
