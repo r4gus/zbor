@@ -12,7 +12,7 @@ const SimpleValue = core.SimpleValue;
 const DataItemTag = core.DataItemTag;
 const DataItem = core.DataItem;
 
-//const encode = @import("encoder.zig").encode;
+const encode = @import("encoder.zig").encode;
 const decode = @import("decoder.zig").decode;
 
 const TestError = CborError || error{ TestExpectedEqual, TestUnexpectedResult };
@@ -418,4 +418,338 @@ test "decode WebAuthn attestationObject" {
     const x5c_stmt = x5c.?.get(0);
     try std.testing.expect(x5c_stmt.?.isBytes());
     try std.testing.expectEqual(@as(usize, 704), x5c_stmt.?.bytes.len);
+}
+
+test "MT0: encode cbor unsigned integer value" {
+    const allocator = std.testing.allocator;
+
+    const di1 = DataItem{ .int = 0 };
+    const cbor1 = try encode(allocator, &di1);
+    defer cbor1.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0x00}, cbor1.items);
+
+    const di2 = DataItem{ .int = 23 };
+    const cbor2 = try encode(allocator, &di2);
+    defer cbor2.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0x17}, cbor2.items);
+
+    const di3 = DataItem{ .int = 24 };
+    const cbor3 = try encode(allocator, &di3);
+    defer cbor3.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x18, 0x18 }, cbor3.items);
+
+    const di4 = DataItem{ .int = 255 };
+    const cbor4 = try encode(allocator, &di4);
+    defer cbor4.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x18, 0xff }, cbor4.items);
+
+    const di5 = DataItem{ .int = 256 };
+    const cbor5 = try encode(allocator, &di5);
+    defer cbor5.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x19, 0x01, 0x00 }, cbor5.items);
+
+    const di6 = DataItem{ .int = 1000 };
+    const cbor6 = try encode(allocator, &di6);
+    defer cbor6.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x19, 0x03, 0xe8 }, cbor6.items);
+
+    const di7 = DataItem{ .int = 65535 };
+    const cbor7 = try encode(allocator, &di7);
+    defer cbor7.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x19, 0xff, 0xff }, cbor7.items);
+
+    const di8 = DataItem{ .int = 65536 };
+    const cbor8 = try encode(allocator, &di8);
+    defer cbor8.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x1a, 0x00, 0x01, 0x00, 0x00 }, cbor8.items);
+
+    const di9 = DataItem{ .int = 4294967295 };
+    const cbor9 = try encode(allocator, &di9);
+    defer cbor9.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x1a, 0xff, 0xff, 0xff, 0xff }, cbor9.items);
+
+    const di10 = DataItem{ .int = 12345678900 };
+    const cbor10 = try encode(allocator, &di10);
+    defer cbor10.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x1b, 0x00, 0x00, 0x00, 0x02, 0xdf, 0xdc, 0x1c, 0x34 }, cbor10.items);
+
+    const di11 = DataItem{ .int = 18446744073709551615 };
+    const cbor11 = try encode(allocator, &di11);
+    defer cbor11.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x1b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }, cbor11.items);
+}
+
+test "MT1: encode cbor signed integer value" {
+    const allocator = std.testing.allocator;
+
+    const di1 = DataItem{ .int = -1 };
+    const cbor1 = try encode(allocator, &di1);
+    defer cbor1.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0x20}, cbor1.items);
+
+    const di2 = DataItem{ .int = -3 };
+    const cbor2 = try encode(allocator, &di2);
+    defer cbor2.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0x22}, cbor2.items);
+
+    const di3 = DataItem{ .int = -100 };
+    const cbor3 = try encode(allocator, &di3);
+    defer cbor3.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x38, 0x63 }, cbor3.items);
+
+    const di4 = DataItem{ .int = -1000 };
+    const cbor4 = try encode(allocator, &di4);
+    defer cbor4.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x39, 0x03, 0xe7 }, cbor4.items);
+
+    const di5 = DataItem{ .int = -998877 };
+    const cbor5 = try encode(allocator, &di5);
+    defer cbor5.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x3a, 0x00, 0x0f, 0x3d, 0xdc }, cbor5.items);
+
+    const di6 = DataItem{ .int = -18446744073709551616 };
+    const cbor6 = try encode(allocator, &di6);
+    defer cbor6.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x3b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }, cbor6.items);
+}
+
+test "MT2: encode cbor byte string" {
+    const allocator = std.testing.allocator;
+
+    var di1 = try DataItem.bytes(allocator, &.{});
+    defer di1.deinit(allocator);
+    const cbor1 = try encode(allocator, &di1);
+    defer cbor1.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0b01000000}, cbor1.items);
+
+    var di2 = try DataItem.bytes(allocator, &.{10});
+    defer di2.deinit(allocator);
+    const cbor2 = try encode(allocator, &di2);
+    defer cbor2.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x41, 0x0a }, cbor2.items);
+
+    var di3 = try DataItem.bytes(allocator, &.{ 10, 11, 12, 13, 14 });
+    defer di3.deinit(allocator);
+    const cbor3 = try encode(allocator, &di3);
+    defer cbor3.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x45, 0x0a, 0xb, 0xc, 0xd, 0xe }, cbor3.items);
+
+    var di4 = try DataItem.bytes(allocator, &.{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 });
+    defer di4.deinit(allocator);
+    const cbor4 = try encode(allocator, &di4);
+    defer cbor4.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x58, 0x19, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 }, cbor4.items);
+}
+
+test "MT3: encode cbor text string" {
+    const allocator = std.testing.allocator;
+
+    var di1 = try DataItem.text(allocator, &.{});
+    defer di1.deinit(allocator);
+    const cbor1 = try encode(allocator, &di1);
+    defer cbor1.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0x60}, cbor1.items);
+
+    var di2 = try DataItem.text(allocator, "a");
+    defer di2.deinit(allocator);
+    const cbor2 = try encode(allocator, &di2);
+    defer cbor2.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x61, 0x61 }, cbor2.items);
+
+    var di3 = try DataItem.text(allocator, "IETF");
+    defer di3.deinit(allocator);
+    const cbor3 = try encode(allocator, &di3);
+    defer cbor3.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x64, 0x49, 0x45, 0x54, 0x46 }, cbor3.items);
+
+    var di4 = try DataItem.text(allocator, "\"\\");
+    defer di4.deinit(allocator);
+    const cbor4 = try encode(allocator, &di4);
+    defer cbor4.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x62, 0x22, 0x5c }, cbor4.items);
+
+    // TODO: test unicode https://www.rfc-editor.org/rfc/rfc8949.html#name-examples-of-encoded-cbor-da
+}
+
+test "MT4: encode cbor array" {
+    const allocator = std.testing.allocator;
+
+    var di1 = try DataItem.array(allocator, &.{});
+    defer di1.deinit(allocator);
+    const cbor1 = try encode(allocator, &di1);
+    defer cbor1.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0x80}, cbor1.items);
+
+    var di2 = try DataItem.array(allocator, &.{ DataItem.int(1), DataItem.int(2), DataItem.int(3) });
+    defer di2.deinit(allocator);
+    const cbor2 = try encode(allocator, &di2);
+    defer cbor2.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x83, 0x01, 0x02, 0x03 }, cbor2.items);
+
+    const di3 = try DataItem.array(allocator, &.{ DataItem.int(1), try DataItem.array(allocator, &.{ DataItem.int(2), DataItem.int(3) }), try DataItem.array(allocator, &.{ DataItem.int(4), DataItem.int(5) }) });
+    defer di3.deinit(allocator);
+    const cbor3 = try encode(allocator, &di3);
+    defer cbor3.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x83, 0x01, 0x82, 0x02, 0x03, 0x82, 0x04, 0x05 }, cbor3.items);
+
+    const di4 = try DataItem.array(allocator, &.{ DataItem.int(1), DataItem.int(2), DataItem.int(3), DataItem.int(4), DataItem.int(5), DataItem.int(6), DataItem.int(7), DataItem.int(8), DataItem.int(9), DataItem.int(10), DataItem.int(11), DataItem.int(12), DataItem.int(13), DataItem.int(14), DataItem.int(15), DataItem.int(16), DataItem.int(17), DataItem.int(18), DataItem.int(19), DataItem.int(20), DataItem.int(21), DataItem.int(22), DataItem.int(23), DataItem.int(24), DataItem.int(25) });
+    defer di4.deinit(allocator);
+    const cbor4 = try encode(allocator, &di4);
+    defer cbor4.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0x98, 0x19, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x18, 0x18, 0x19 }, cbor4.items);
+}
+
+test "MT5: encode empty cbor map" {
+    const allocator = std.testing.allocator;
+
+    var di = try DataItem.map(allocator, &.{});
+    defer di.deinit(allocator);
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{0xa0}, cbor.items);
+}
+
+test "MT5: encode cbor map {1:2,3:4}" {
+    const allocator = std.testing.allocator;
+
+    var di = try DataItem.map(allocator, &.{ Pair.new(DataItem.int(1), DataItem.int(2)), Pair.new(DataItem.int(3), DataItem.int(4)) });
+    defer di.deinit(allocator);
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor.items);
+
+    // Keys should be sorted in asc order.
+    var di2 = try DataItem.map(allocator, &.{ Pair.new(DataItem.int(3), DataItem.int(4)), Pair.new(DataItem.int(1), DataItem.int(2)) });
+    defer di2.deinit(allocator);
+    const cbor2 = try encode(allocator, &di2);
+    defer cbor2.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor2.items);
+}
+
+test "MT6: encode cbor tagged data item 1(1363896240)" {
+    const allocator = std.testing.allocator;
+
+    var di = try DataItem.tagged(allocator, 1, DataItem.int(1363896240));
+    defer di.deinit(allocator);
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xc1, 0x1a, 0x51, 0x4b, 0x67, 0xb0 }, cbor.items);
+}
+
+test "MT6: encode cbor tagged data item 32(\"http://www.example.com\")" {
+    const allocator = std.testing.allocator;
+
+    var di = try DataItem.tagged(allocator, 32, try DataItem.text(allocator, "http://www.example.com"));
+    defer di.deinit(allocator);
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xd8, 0x20, 0x76, 0x68, 0x74, 0x74, 0x70, 0x3a, 0x2f, 0x2f, 0x77, 0x77, 0x77, 0x2e, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d }, cbor.items);
+}
+
+test "MT7: encode f16 0.0" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = 0.0 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0x00, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f16 -0.0" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = -0.0 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0x80, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f16 1.0" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = 1.0 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0x3c, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f16 1.5" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = 1.5 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0x3e, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f16 5.960464477539063e-8" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = 5.960464477539063e-8 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0x00, 0x01 }, cbor.items);
+}
+
+test "MT7: encode f16 0.00006103515625" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = 0.00006103515625 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0x04, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f16 -4.0" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float16 = -4.0 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xf9, 0xc4, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f32 100000.0" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float32 = 100000.0 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xfa, 0x47, 0xc3, 0x50, 0x00 }, cbor.items);
+}
+
+test "MT7: encode f32 3.4028234663852886e+38" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float32 = 3.4028234663852886e+38 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xfa, 0x7f, 0x7f, 0xff, 0xff }, cbor.items);
+}
+
+test "MT7: encode f64 1.1" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float64 = 1.1 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xfb, 0x3f, 0xf1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9a }, cbor.items);
+}
+
+test "MT7: encode f64 1.0e+300" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float64 = 1.0e+300 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xfb, 0x7e, 0x37, 0xe4, 0x3c, 0x88, 0x00, 0x75, 0x9c }, cbor.items);
+}
+
+test "MT7: encode f64 -4.1" {
+    const allocator = std.testing.allocator;
+
+    var di = DataItem{ .float = Float{ .float64 = -4.1 } };
+    const cbor = try encode(allocator, &di);
+    defer cbor.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 0xfb, 0xc0, 0x10, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66 }, cbor.items);
 }
