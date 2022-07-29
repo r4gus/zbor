@@ -7,31 +7,15 @@ message size, and extensibility without the need for version negotiation
 in different protocols like [CTAP](https://fidoalliance.org/specs/fido-v2.0-ps-20190130/fido-client-to-authenticator-protocol-v2.0-ps-20190130.html#ctap2-canonical-cbor-encoding-form) 
 and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 
-## Supported types by decoder
+## Features
 
-- [x] Unsigned integers in the range $[0, 2^{64}-1]$ (major type 0).
-- [x] Negative integers in the range $[-2^{64}, -1]$ (major type 1).
-- [x] Byte strings (major type 2).
-- [x] Text strings (major type 3) without UTF-8 support (for now).
-- [x] Array of data items (major type 4).
-- [x] Map of pairs of data items (major type 5).
-- [x] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
-- [x] Floating-point numbers (major type 7).
-- [x] simple values (major type 7). 
-- [ ] "break" stop code (major type 7).
+- CBOR decoder
+- CBOR encoder
+- CBOR to JSON serialization
+- JSON to CBOR serialization (comming soon)
 
-## Supported types by encoder
-
-- [x] Unsigned integers in the range $[0, 2^{64}-1]$ (major type 0).
-- [x] Negative integers in the range $[-2^{64}, -1]$ (major type 1).
-- [x] Byte strings (major type 2).
-- [x] Text strings (major type 3) without UTF-8 support (for now).
-- [x] Array of data items (major type 4).
-- [x] Map of pairs of data items (major type 5).
-- [x] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
-- [x] Floating-point numbers (major type 7).
-- [x] simple values (major type 7). 
-- [ ] "break" stop code (major type 7).
+A CBOR byte string is decoded into a (nested) `DataItem` data structure, which 
+can be inspected and manipulated.
 
 ## Examples
 
@@ -281,6 +265,36 @@ const float64 = DataItem.float64(1.0e+300);
 
 Currently supported are `False` (20), `True` (21), `Null` (22) and `Undefined` (23).
 
+## Serialization
+
+### DataItem to JSON
+
+Because `DataItem` implements `jsonStringify()` one can serialize it to JSON.
+
+```zig
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+const di = try DataItem.map(gpa, &.{ 
+    Pair.new(try DataItem.text(gpa, "a"), DataItem.int(1)), 
+    Pair.new(try DataItem.text(gpa, "b"), try DataItem.array(gpa, &.{ 
+        DataItem.int(2), DataItem.int(3) 
+    })) 
+});
+defer di.deinit(allocator);
+
+var json = std.ArrayList(u8).init(allocator);
+defer json.deinit();
+
+// Serialize di into JSON
+try std.json.stringify(di, .{}, json.writer());
+
+try std.testing.expectEqualStrings("{\"a\":1,\"b\":[2,3]}", string.items);
+```
+
+### JSON to DataItem
+
+Comming soon...
+
 ## CTAP2 canonical CBOR encoding
 
 This project tries to obey the CTAP2 canonical CBOR encoding rules as much
@@ -313,3 +327,29 @@ as possible.
 | Encoder | | x | |
 | CBOR to JSON | | x | |
 | JSON to CBOR | x | | |
+
+### Supported types by decoder
+
+- [x] Unsigned integers in the range $[0, 2^{64}-1]$ (major type 0).
+- [x] Negative integers in the range $[-2^{64}, -1]$ (major type 1).
+- [x] Byte strings (major type 2).
+- [x] Text strings (major type 3) without UTF-8 support (for now).
+- [x] Array of data items (major type 4).
+- [x] Map of pairs of data items (major type 5).
+- [x] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
+- [x] Floating-point numbers (major type 7).
+- [x] simple values (major type 7). 
+- [ ] "break" stop code (major type 7).
+
+### Supported types by encoder
+
+- [x] Unsigned integers in the range $[0, 2^{64}-1]$ (major type 0).
+- [x] Negative integers in the range $[-2^{64}, -1]$ (major type 1).
+- [x] Byte strings (major type 2).
+- [x] Text strings (major type 3) without UTF-8 support (for now).
+- [x] Array of data items (major type 4).
+- [x] Map of pairs of data items (major type 5).
+- [x] Tagged data item whose tag number is in the range $[0, 2^{64}-1]$ (major type 6).
+- [x] Floating-point numbers (major type 7).
+- [x] simple values (major type 7). 
+- [ ] "break" stop code (major type 7).
