@@ -79,10 +79,10 @@ which field is active (also see: [Type of a DataItem](#type-of-a-dataitem)).
 Each field is associated with one of the major types 0-7:
 
 * `int` - An integer in the range $-2^{64}..2^{64}-1$; defined as `i128` (represents both major types 0 and 1)
-* `bytes`- A byte string; defined as `std.ArrayList(u8)` (represents major type 2)
-* `text`- A text string; defined as `std.ArrayList(u8)` (represents major type 3)
-* `array`- An array of `DataItem`s; defined as `std.ArrayList(DataItem)`
-* `map`- A map of (key, value) pairs; defined as `std.ArrayList(Pair)`
+* `bytes`- A byte string; defined as `[]u8` (represents major type 2)
+* `text`- A text string; defined as `[]u8` (represents major type 3)
+* `array`- An array of `DataItem`s; defined as `[]DataItem`
+* `map`- A map of (key, value) pairs; defined as `[]Pair`
 * `tag` - A tagged data item; defined as `Tag`
 * `float` - A 16-, 32- or 64-bit floating-point value; defined as `Float`
 * `simple` - A simple value; defined as `SimpleValue`
