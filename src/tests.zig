@@ -818,21 +818,31 @@ test "MT5: DataItem to json" {
     try std.testing.expectEqualStrings("{\"a\":1,\"b\":[2,3]}", string.items);
 }
 
-test "MT6: BigNum to json" {
+test "MT6: BigNum and other tagged values to json" {
     const allocator = std.testing.allocator;
 
     const di1 = try DataItem.unsignedBignum(allocator, &.{ 0xf6, 0x53, 0xd8, 0xf5, 0x55, 0x8b, 0xf2, 0x49, 0x1d, 0x90, 0x96, 0x13, 0x44, 0x8d, 0xd1, 0xd3 });
     defer di1.deinit(allocator);
     const di2 = try DataItem.signedBignum(allocator, &.{ 0xf6, 0x53, 0xd8, 0xf5, 0x55, 0x8b, 0xf2, 0x49, 0x1d, 0x90, 0x96, 0x13, 0x44, 0x8d, 0xd1, 0xd3 });
     defer di2.deinit(allocator);
+    const di3 = try DataItem.tagged(allocator, 22, try DataItem.bytes(allocator, &.{ 0xf6, 0x53, 0xd8, 0xf5, 0x55, 0x8b, 0xf2, 0x49, 0x1d, 0x90, 0x96, 0x13, 0x44, 0x8d, 0xd1, 0xd3 }));
+    defer di3.deinit(allocator);
+    const di4 = try DataItem.tagged(allocator, 23, try DataItem.bytes(allocator, "abcd"));
+    defer di4.deinit(allocator);
 
     const json1 = try di1.toJson(allocator);
     defer json1.deinit();
     const json2 = try di2.toJson(allocator);
     defer json2.deinit();
+    const json3 = try di3.toJson(allocator);
+    defer json3.deinit();
+    const json4 = try di4.toJson(allocator);
+    defer json4.deinit();
 
     try std.testing.expectEqualStrings("\"9lPY9VWL8kkdkJYTRI3R0w\"", json1.items);
     try std.testing.expectEqualStrings("\"~9lPY9VWL8kkdkJYTRI3R0w\"", json2.items);
+    try std.testing.expectEqualStrings("\"9lPY9VWL8kkdkJYTRI3R0w==\"", json3.items);
+    try std.testing.expectEqualStrings("\"61626364\"", json4.items);
 }
 
 test "MT7: DataItem to json (false, true, null)" {

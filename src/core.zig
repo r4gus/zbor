@@ -40,9 +40,11 @@ pub const Tag = struct {
     pub fn jsonStringify(value: @This(), options: std.json.StringifyOptions, out_stream: anytype) @TypeOf(out_stream).Error!void {
         _ = options;
 
-        // A bignum is represented by encoding its byte string in base64url
-        // without padding and becomes a JSON string.
-        if (value.isUnsignedBignum() or value.isSignedBignum()) {
+        if ((value.number == 2 or value.number == 3 or value.number == 21) and
+            @as(DataItemTag, value.content.*) == .bytes)
+        {
+            // A bignum is represented by encoding its byte string in base64url
+            // without padding and becomes a JSON string.
             const i: usize = if (value.isSignedBignum()) 1 else 0;
             var base64url = std.base64.url_safe_no_pad;
 
@@ -56,6 +58,22 @@ pub const Tag = struct {
             }
             _ = base64url.Encoder.encode(buffer[i..], value.content.bytes);
             try std.json.stringify(buffer, .{}, out_stream);
+        } else if (value.number == 22 and @as(DataItemTag, value.content.*) == .bytes) {
+            // A byte string is represented by encoding it in base64.
+            var base64 = std.base64.standard;
+
+            var buffer = try out_stream.context.allocator.alloc(u8, base64.Encoder.calcSize(value.content.bytes.len));
+            defer out_stream.context.allocator.free(buffer);
+
+            _ = base64.Encoder.encode(buffer, value.content.bytes);
+            try std.json.stringify(buffer, .{}, out_stream);
+        } else if (value.number == 23 and @as(DataItemTag, value.content.*) == .bytes) {
+            // Base16 encoding
+            try out_stream.print("\"{s}\"", .{std.fmt.fmtSliceHexUpper(value.content.bytes)});
+        } else {
+            // For all other tags, the tag content is represented as a JSON value;
+            // the tag number is ignored;
+            try std.json.stringify(value.content, .{}, out_stream);
         }
     }
 };
