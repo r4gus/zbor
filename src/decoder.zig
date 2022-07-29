@@ -10,12 +10,11 @@ const Float = core.Float;
 const SimpleValue = core.SimpleValue;
 const DataItemTag = core.DataItemTag;
 const DataItem = core.DataItem;
-const pair_asc = core.pair_asc;
 
 /// Decode the given CBOR byte string into a (nested) DataItem.
 ///
 /// The caller is responsible for deallocation, e.g. `defer data_item.deinit()`.
-pub fn decode(data: []const u8, allocator: Allocator) CborError!DataItem {
+pub fn decode(allocator: Allocator, data: []const u8) CborError!DataItem {
     var index: usize = 0;
     return decode_(data, &index, allocator, false);
 }
@@ -23,6 +22,7 @@ pub fn decode(data: []const u8, allocator: Allocator) CborError!DataItem {
 // calling function is responsible for deallocating memory.
 fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: bool) CborError!DataItem {
     _ = breakable;
+    _ = allocator;
     const head: u8 = data[index.*];
     index.* += 1;
     const mt: u8 = head >> 5; // the 3 msb represent the major type.
@@ -78,40 +78,44 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
             // The value of the item is -1 minus the argument.
             return DataItem{ .int = -1 - @as(i128, val) };
         },
-        // MT2: Byte string.
+        // Byte string (mt 2)
         // The number of bytes in the string is equal to the argument (val).
         2 => {
-            var item = DataItem{ .bytes = std.ArrayList(u8).init(allocator) };
-            try item.bytes.appendSlice(data[index.* .. index.* + @as(usize, val)]);
+            if (index.* + @as(usize, val) > data.len) return CborError.Malformed; // Not enough bytes available.
+
+            var item = DataItem{ .bytes = try allocator.alloc(u8, @as(usize, val)) };
+            std.mem.copy(u8, item.bytes, data[index.* .. index.* + @as(usize, val)]);
             index.* += @as(usize, val);
             return item;
         },
-        // MT3: UTF-8 text string, e.g. "a", "IETF".
+        // Text string (mt 3)
         3 => {
-            var item = DataItem{ .text = std.ArrayList(u8).init(allocator) };
-            try item.text.appendSlice(data[index.* .. index.* + @as(usize, val)]);
+            if (index.* + @as(usize, val) > data.len) return CborError.Malformed; // Not enough bytes available.
+
+            var item = DataItem{ .text = try allocator.alloc(u8, @as(usize, val)) };
+            std.mem.copy(u8, item.text, data[index.* .. index.* + @as(usize, val)]);
             index.* += @as(usize, val);
             return item;
         },
         // MT4: DataItem array, e.g. [], [1, 2, 3], [1, [2, 3], [4, 5]].
         4 => {
-            var item = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
+            var item = DataItem{ .array = try allocator.alloc(DataItem, @as(usize, val)) };
             var i: usize = 0;
             while (i < val) : (i += 1) {
                 // The index will be incremented by the recursive call to decode_.
-                try item.array.append(try decode_(data, index, allocator, false));
+                item.array[i] = try decode_(data, index, allocator, false);
             }
             return item;
         },
         // MT5: Map of pairs of DataItem, e.g. {1:2, 3:4}.
         5 => {
-            var item = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
+            var item = DataItem{ .map = try allocator.alloc(Pair, @as(usize, val)) };
             var i: usize = 0;
             while (i < val) : (i += 1) {
                 // The index will be incremented by the recursive call to decode_.
                 const k = try decode_(data, index, allocator, false);
                 const v = try decode_(data, index, allocator, false);
-                try item.map.append(Pair{ .key = k, .value = v });
+                item.map[i] = Pair{ .key = k, .value = v };
             }
             return item;
         },
@@ -121,8 +125,7 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
             // The enclosed data item (tag content) is the single encoded data
             // item that follows the head.
             item.* = try decode_(data, index, allocator, false);
-
-            return DataItem{ .tag = Tag{ .number = val, .content = item, .allocator = allocator } };
+            return DataItem{ .tag = Tag{ .number = val, .content = item } };
         },
         7 => {
             switch (ai) {

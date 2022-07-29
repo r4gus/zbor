@@ -71,13 +71,13 @@ fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
                 v = @intCast(u64, value);
         },
         // The number of bytes in the byte string is equal to the arugment.
-        .bytes => |value| v = @intCast(u64, value.items.len),
+        .bytes => |value| v = @intCast(u64, value.len),
         // The number of bytes in the text string is equal to the arugment.
-        .text => |value| v = @intCast(u64, value.items.len),
+        .text => |value| v = @intCast(u64, value.len),
         // The argument is the number of data items in the array.
-        .array => |value| v = @intCast(u64, value.items.len),
+        .array => |value| v = @intCast(u64, value.len),
         // The argument is the number of (k,v) pairs.
-        .map => |value| v = @intCast(u64, value.items.len),
+        .map => |value| v = @intCast(u64, value.len),
         // The argument is the tag.
         .tag => |value| v = value.number,
         .float => |f| {
@@ -115,24 +115,24 @@ fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
 
     switch (item.*) {
         .int, .float => {},
-        .bytes => |value| try cbor.appendSlice(value.items),
-        .text => |value| try cbor.appendSlice(value.items),
+        .bytes => |value| try cbor.appendSlice(value),
+        .text => |value| try cbor.appendSlice(value),
         .array => |arr| {
             // Encode every data item of the array.
-            for (arr.items) |*itm| {
+            for (arr) |*itm| {
                 try encode_(cbor, itm);
             }
         },
         .map => |m| {
             // Sort keys lowest to highest (CTAP2 canonical CBOR encoding form)
-            std.sort.sort(Pair, m.items, {}, pair_asc);
+            std.sort.sort(Pair, m, {}, pair_asc);
 
             var i: usize = 0;
-            while (i < m.items.len) : (i += 1) {
+            while (i < m.len) : (i += 1) {
                 // each pair consisting of a key...
-                try encode_(cbor, &m.items[i].key);
+                try encode_(cbor, &m[i].key);
                 // ...that is immediately followed by a value.
-                try encode_(cbor, &m.items[i].value);
+                try encode_(cbor, &m[i].value);
             }
         },
         .tag => |t| {

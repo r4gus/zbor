@@ -26,7 +26,6 @@ pub const Pair = struct {
 pub const Tag = struct {
     number: u64,
     content: *DataItem,
-    allocator: Allocator,
 
     /// Returns true if the tagged data item is a unsigned bignum (tag = 2, type = byte string).
     pub fn isUnsignedBignum(self: *const @This()) bool {
@@ -47,15 +46,15 @@ pub const Tag = struct {
             const i: usize = if (value.isSignedBignum()) 1 else 0;
             var base64url = std.base64.url_safe_no_pad;
 
-            var buffer = try value.allocator.alloc(u8, base64url.Encoder.calcSize(value.content.bytes.items.len) + i);
-            defer value.allocator.free(buffer);
+            var buffer = try out_stream.context.allocator.alloc(u8, base64url.Encoder.calcSize(value.content.bytes.len) + i);
+            defer out_stream.context.allocator.free(buffer);
 
             // For tag number 3 (signed bignum) a '~' (ASCII tilde) is inserted
             // before the base-encoded value.
             if (value.isSignedBignum()) {
                 buffer[0] = '~';
             }
-            _ = base64url.Encoder.encode(buffer[i..], value.content.bytes.items);
+            _ = base64url.Encoder.encode(buffer[i..], value.content.bytes);
             try std.json.stringify(buffer, .{}, out_stream);
         }
     }
@@ -87,13 +86,13 @@ pub const DataItem = union(DataItemTag) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
     int: i128,
     /// Major type 2: A byte string.
-    bytes: std.ArrayList(u8),
+    bytes: []u8,
     /// Major type 3: A text string encoded as utf-8.
-    text: std.ArrayList(u8),
+    text: []u8,
     /// Major type 4: An array of data items.
-    array: std.ArrayList(DataItem),
+    array: []DataItem,
     /// Major type 5: A map of pairs of data items.
-    map: std.ArrayList(Pair),
+    map: []Pair,
     /// Major type 6: A tagged data item.
     tag: Tag,
     /// Major type 7: IEEE 754 Half-, Single-, or Double-Precision float.
@@ -108,29 +107,36 @@ pub const DataItem = union(DataItemTag) {
 
     /// Create a new data item of type byte string.
     pub fn bytes(allocator: Allocator, value: []const u8) CborError!@This() {
-        var di = DataItem{ .bytes = std.ArrayList(u8).init(allocator) };
-        try di.bytes.appendSlice(value);
+        var di = DataItem{ .bytes = try allocator.alloc(u8, value.len) };
+        std.mem.copy(u8, di.bytes, value);
         return di;
     }
 
     /// Create a new data item of type text string.
     pub fn text(allocator: Allocator, value: []const u8) CborError!@This() {
-        var di = DataItem{ .text = std.ArrayList(u8).init(allocator) };
-        try di.text.appendSlice(value);
+        var di = DataItem{ .text = try allocator.alloc(u8, value.len) };
+        std.mem.copy(u8, di.text, value);
         return di;
     }
 
     /// Create a new data item of type array.
     pub fn array(allocator: Allocator, value: []const DataItem) CborError!@This() {
-        var di = DataItem{ .array = std.ArrayList(DataItem).init(allocator) };
-        try di.array.appendSlice(value);
+        var di = DataItem{ .array = try allocator.alloc(DataItem, value.len) };
+        std.mem.copy(DataItem, di.array, value);
         return di;
     }
 
     /// Create a new data item of type map.
     pub fn map(allocator: Allocator, value: []const Pair) CborError!@This() {
-        var di = DataItem{ .map = std.ArrayList(Pair).init(allocator) };
-        try di.map.appendSlice(value);
+        var di = DataItem{ .map = try allocator.alloc(Pair, value.len) };
+        std.mem.copy(Pair, di.map, value);
+        return di;
+    }
+
+    /// Create a new tagged data item.
+    pub fn tagged(allocator: Allocator, tag: u64, value: DataItem) CborError!@This() {
+        var di = DataItem{ .tag = Tag{ .number = tag, .content = try allocator.create(DataItem) } };
+        di.tag.content.* = value;
         return di;
     }
 
@@ -173,168 +179,46 @@ pub const DataItem = union(DataItemTag) {
     /// The bignum is represented in network byte order (big endian, i.e. the
     /// lowest memory address holds the most significant byte).
     pub fn unsignedBignum(allocator: Allocator, value: []const u8) CborError!@This() {
-        var di = DataItem{ .tag = Tag{ .number = 2, .content = try allocator.create(DataItem), .allocator = allocator } };
-        di.tag.content.* = try DataItem.bytes(allocator, value);
-        return di;
+        return try DataItem.tagged(allocator, 2, try DataItem.bytes(allocator, value));
     }
 
     /// Create a signed bignum (tag = 3, type = byte string).
     /// The bignum is represented in network byte order (big endian, i.e. the
     /// lowest memory address holds the most significant byte).
     pub fn signedBignum(allocator: Allocator, value: []const u8) CborError!@This() {
-        var di = DataItem{ .tag = Tag{ .number = 3, .content = try allocator.create(DataItem), .allocator = allocator } };
-        di.tag.content.* = try DataItem.bytes(allocator, value);
-        return di;
+        return try DataItem.tagged(allocator, 3, try DataItem.bytes(allocator, value));
     }
 
     /// Recursively free all allocated memory.
-    pub fn deinit(self: @This()) void {
+    /// The given allocator must be the one used for creating the DataItem and
+    /// its children.
+    pub fn deinit(self: @This(), allocator: Allocator) void {
         switch (self) {
-            .int => |_| {},
-            .bytes => |list| list.deinit(),
-            .text => |list| list.deinit(),
+            .int, .float, .simple => {},
+            .bytes => |list| allocator.free(list),
+            .text => |list| allocator.free(list),
             .array => |arr| {
                 // We must deinitialize each item of the given array...
-                for (arr.items) |item| {
-                    item.deinit();
+                for (arr) |item| {
+                    item.deinit(allocator);
                 }
                 // ...before deinitializing the ArrayList itself.
-                arr.deinit();
+                allocator.free(arr);
             },
             .map => |m| {
-                for (m.items) |item| {
-                    item.key.deinit();
-                    item.value.deinit();
+                for (m) |item| {
+                    item.key.deinit(allocator);
+                    item.value.deinit(allocator);
                 }
-                m.deinit();
+                allocator.free(m);
             },
             .tag => |t| {
                 // First free the allocated memory of the nested data items...
-                t.content.*.deinit();
+                t.content.*.deinit(allocator);
                 // ...then free the memory of the content.
-                t.allocator.destroy(t.content);
-            },
-            .float => |_| {},
-            .simple => |_| {},
-        }
-    }
-
-    /// Compare two DataItems for equality.
-    pub fn equal(self: *const @This(), other: *const @This()) bool {
-        // self and other hold different types, i.e. can't be equal.
-        if (@as(DataItemTag, self.*) != @as(DataItemTag, other.*)) {
-            return false;
-        }
-
-        switch (self.*) {
-            .int => |value| return value == other.*.int,
-            .bytes => |list| return std.mem.eql(u8, list.items, other.*.bytes.items),
-            .text => |list| return std.mem.eql(u8, list.items, other.*.text.items),
-            .array => |arr| {
-                if (arr.items.len != other.*.array.items.len) {
-                    return false;
-                }
-
-                var i: usize = 0;
-                while (i < arr.items.len) : (i += 1) {
-                    if (!arr.items[i].equal(&other.*.array.items[i])) {
-                        return false;
-                    }
-                }
-
-                return true;
-            },
-            .map => |m| {
-                if (m.items.len != other.*.map.items.len) {
-                    return false;
-                }
-
-                var i: usize = 0;
-                while (i < m.items.len) : (i += 1) {
-                    if (!m.items[i].key.equal(&other.*.map.items[i].key) or
-                        !m.items[i].value.equal(&other.*.map.items[i].value))
-                    {
-                        return false;
-                    }
-                }
-
-                return true;
-            },
-            .tag => |t| {
-                return t.number == other.tag.number and
-                    t.content.*.equal(other.tag.content);
-            },
-            .float => |f| {
-                if (@as(FloatTag, f) != @as(FloatTag, other.float)) {
-                    return false;
-                }
-
-                switch (f) {
-                    .float16 => |fv| return fv == other.float.float16,
-                    .float32 => |fv| return fv == other.float.float32,
-                    .float64 => |fv| return fv == other.float.float64,
-                }
-            },
-            .simple => |s| {
-                return s == other.simple;
+                allocator.destroy(t.content);
             },
         }
-    }
-
-    /// Get the value at the specified index from an array.
-    ///
-    /// Returns null if the DataItem is not an array or if the
-    /// given index is out of bounds.
-    pub fn get(self: *@This(), index: usize) ?*DataItem {
-        if (@as(DataItemTag, self.*) != DataItemTag.array) {
-            return null;
-        }
-
-        if (index < self.array.items.len) {
-            return &self.array.items[index];
-        } else {
-            return null;
-        }
-    }
-
-    /// Get the value associated with the given key from a map.
-    ///
-    /// Retruns null if the DataItem is not a map or if the key couldn't
-    /// be found; a pointer to the associated value otherwise.
-    pub fn getValue(self: *@This(), key: *const DataItem) ?*DataItem {
-        if (@as(DataItemTag, self.*) != DataItemTag.map) {
-            return null;
-        }
-
-        for (self.map.items) |*pair| {
-            if (@as(DataItemTag, pair.*.key) == @as(DataItemTag, key.*)) {
-                if (pair.*.key.equal(key)) {
-                    return &pair.*.value;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /// Get the value associated with the given key from a map.
-    ///
-    /// Retruns null if the DataItem is not a map or if the key couldn't
-    /// be found; a pointer to the associated value otherwise.
-    pub fn getValueByString(self: *@This(), key: []const u8) ?*DataItem {
-        if (@as(DataItemTag, self.*) != DataItemTag.map) {
-            return null;
-        }
-
-        for (self.map.items) |*pair| {
-            if (@as(DataItemTag, pair.*.key) == .text) {
-                if (std.mem.eql(u8, pair.*.key.text.items, key)) {
-                    return &pair.*.value;
-                }
-            }
-        }
-
-        return null;
     }
 
     /// Returns true if the given DataItem is an integer, false otherwise.
@@ -377,6 +261,124 @@ pub const DataItem = union(DataItemTag) {
         return @as(DataItemTag, self.*) == .simple;
     }
 
+    /// Get the value at the specified index from an array.
+    ///
+    /// Returns null if the DataItem is not an array or if the
+    /// given index is out of bounds.
+    pub fn get(self: *@This(), index: usize) ?*DataItem {
+        if (@as(DataItemTag, self.*) != DataItemTag.array) {
+            return null;
+        }
+
+        if (index < self.array.len) {
+            return &self.array[index];
+        } else {
+            return null;
+        }
+    }
+
+    /// Get the value associated with the given key from a map.
+    ///
+    /// Retruns null if the DataItem is not a map or if the key couldn't
+    /// be found; a pointer to the associated value otherwise.
+    pub fn getValue(self: *@This(), key: *const DataItem) ?*DataItem {
+        if (@as(DataItemTag, self.*) != DataItemTag.map) {
+            return null;
+        }
+
+        for (self.map) |*pair| {
+            if (@as(DataItemTag, pair.*.key) == @as(DataItemTag, key.*)) {
+                if (pair.*.key.equal(key)) {
+                    return &pair.*.value;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// Get the value associated with the given key from a map.
+    ///
+    /// Retruns null if the DataItem is not a map or if the key couldn't
+    /// be found; a pointer to the associated value otherwise.
+    pub fn getValueByString(self: *@This(), key: []const u8) ?*DataItem {
+        if (@as(DataItemTag, self.*) != DataItemTag.map) {
+            return null;
+        }
+
+        for (self.map) |*pair| {
+            if (@as(DataItemTag, pair.*.key) == .text) {
+                if (std.mem.eql(u8, pair.*.key.text, key)) {
+                    return &pair.*.value;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// Compare two DataItems for equality.
+    pub fn equal(self: *const @This(), other: *const @This()) bool {
+        // self and other hold different types, i.e. can't be equal.
+        if (@as(DataItemTag, self.*) != @as(DataItemTag, other.*)) {
+            return false;
+        }
+
+        switch (self.*) {
+            .int => |value| return value == other.*.int,
+            .bytes => |list| return std.mem.eql(u8, list, other.*.bytes),
+            .text => |list| return std.mem.eql(u8, list, other.*.text),
+            .array => |arr| {
+                if (arr.len != other.*.array.len) {
+                    return false;
+                }
+
+                var i: usize = 0;
+                while (i < arr.len) : (i += 1) {
+                    if (!arr[i].equal(&other.*.array[i])) {
+                        return false;
+                    }
+                }
+
+                return true;
+            },
+            .map => |m| {
+                if (m.len != other.*.map.len) {
+                    return false;
+                }
+
+                var i: usize = 0;
+                while (i < m.len) : (i += 1) {
+                    if (!m[i].key.equal(&other.*.map[i].key) or
+                        !m[i].value.equal(&other.*.map[i].value))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            },
+            .tag => |t| {
+                return t.number == other.tag.number and
+                    t.content.*.equal(other.tag.content);
+            },
+            .float => |f| {
+                if (@as(FloatTag, f) != @as(FloatTag, other.float)) {
+                    return false;
+                }
+
+                switch (f) {
+                    .float16 => |fv| return fv == other.float.float16,
+                    .float32 => |fv| return fv == other.float.float32,
+                    .float64 => |fv| return fv == other.float.float64,
+                }
+            },
+            .simple => |s| {
+                return s == other.simple;
+            },
+        }
+    }
+
     pub fn jsonStringify(value: @This(), options: std.json.StringifyOptions, out_stream: anytype) @TypeOf(out_stream).Error!void {
         _ = options;
 
@@ -387,32 +389,32 @@ pub const DataItem = union(DataItemTag) {
             // becomes a JSON string.
             .bytes => |v| {
                 var base64url = std.base64.url_safe_no_pad;
-                var buffer = try v.allocator.alloc(u8, base64url.Encoder.calcSize(v.items.len));
-                defer v.allocator.free(buffer);
-                _ = base64url.Encoder.encode(buffer, v.items);
+                var buffer = try out_stream.context.allocator.alloc(u8, base64url.Encoder.calcSize(v.len));
+                defer out_stream.context.allocator.free(buffer);
+                _ = base64url.Encoder.encode(buffer, v);
                 try std.json.stringify(buffer, .{}, out_stream);
             },
             .text => |v| {
                 // TODO: Certain UTF-8 characters must be escaped.
                 // see: https://www.rfc-editor.org/rfc/rfc8259#section-7
-                try std.json.stringify(v.items, .{}, out_stream);
+                try std.json.stringify(v, .{}, out_stream);
             },
             // An array becomes a JSON array.
             .array => |v| {
-                try std.json.stringify(v.items, .{ .string = .Array }, out_stream);
+                try std.json.stringify(v, .{ .string = .Array }, out_stream);
             },
             // A map becomes a JSON object. This is possible directly only if all
             // keys are UTF-8 strings.
             .map => |v| {
                 try out_stream.writeAll("{");
-                for (v.items) |pair, index| {
+                for (v) |pair, index| {
                     // Just ignore all pairs where the key is not a text string.
                     if (pair.key.isText()) {
                         try std.json.stringify(pair.key, .{}, out_stream);
                         try out_stream.writeAll(":");
                         try std.json.stringify(pair.value, .{}, out_stream);
 
-                        if (index < v.items.len - 1) {
+                        if (index < v.len - 1) {
                             // stupid comma
                             try out_stream.writeAll(",");
                         }
@@ -502,14 +504,14 @@ pub fn data_item_asc(context: void, lhs: DataItem, rhs: DataItem) bool {
                 .bytes => |v2| {
                     // If two keys have different lengths, the shorter one
                     // sorts earlier.
-                    if (v1.items.len < v2.items.len) {
+                    if (v1.len < v2.len) {
                         return true;
-                    } else if (v1.items.len > v2.items.len) {
+                    } else if (v1.len > v2.len) {
                         return false;
                     } else {
                         // if two keys have the same lengt, the one with the
                         // lower value in (byte-wise) lexical order sorts earlier.
-                        return std.mem.lessThan(u8, v1.items, v2.items);
+                        return std.mem.lessThan(u8, v1, v2);
                     }
                 },
                 else => return true,
@@ -521,14 +523,14 @@ pub fn data_item_asc(context: void, lhs: DataItem, rhs: DataItem) bool {
                 .text => |v2| {
                     // If two keys have different lengths, the shorter one
                     // sorts earlier.
-                    if (v1.items.len < v2.items.len) {
+                    if (v1.len < v2.len) {
                         return true;
-                    } else if (v1.items.len > v2.items.len) {
+                    } else if (v1.len > v2.len) {
                         return false;
                     } else {
                         // if two keys have the same lengt, the one with the
                         // lower value in (byte-wise) lexical order sorts earlier.
-                        return std.mem.lessThan(u8, v1.items, v2.items);
+                        return std.mem.lessThan(u8, v1, v2);
                     }
                 },
                 else => return true,

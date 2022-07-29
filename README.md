@@ -55,10 +55,12 @@ defer gpa.free(bytes);
 
 // Decode the given CBOR byte string.
 // This will return a DataItem on success or throw an error otherwise.
-var data_item = try decode(bytes, gpa);
+var data_item = try decode(gpa, bytes);
 // decode() will allocate memory if neccessary. The caller is responsible for
 // deallocation. deinit() will free the allocated memory of all DataItems recursively.
-defer data_item.deinit();
+// Because DataItem doesn't store the used Allocator, it must be provided by the
+// caller as argument.
+defer data_item.deinit(gpa);
 ```
 
 ### CBOR encoder
@@ -70,10 +72,11 @@ byte string.
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
 // Create a map-DataItem (major type 5)
-var di = DataItem{ .map = std.ArrayList(Pair).init(gpa) };
-try di.map.append(Pair{ .key = DataItem{ .int = 1 }, .value = DataItem{ .int = 2 } });
-try di.map.append(Pair{ .key = DataItem{ .int = 3 }, .value = DataItem{ .int = 4 } });
-defer di.deinit();
+var di = DataItem.map(gpa, &.{
+    Pair.new(DataItem.int(1), DataItem.int(2)), // 1:2
+    Pair.new(DataItem.int(3), DataItem.int(4))  // 3:4
+});
+defer di.deinit(gpa);
 
 // Encode the CBOR map `{1:2,3:4}`. The function will return a ArrayList on
 // success or throw an CborError otherwise.
