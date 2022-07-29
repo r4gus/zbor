@@ -378,6 +378,79 @@ pub const DataItem = union(DataItemTag) {
             },
         }
     }
+
+    pub fn jsonStringify(value: @This(), options: std.json.StringifyOptions, out_stream: anytype) @TypeOf(out_stream).Error!void {
+        _ = options;
+
+        switch (value) {
+            // An integer (major type 0 or 1) becomes a JSON number.
+            .int => |v| try out_stream.print("{d}", .{v}),
+            // A byte string is encoded in base64url without padding and
+            // becomes a JSON string.
+            .bytes => |v| {
+                _ = v;
+                // var base64url = std.base64.url_safe_no_pad;
+                // var buffer = try v.allocator.alloc(u8, base64url.Encoder.calcSize(v.items.len));
+                // defer v.allocator.free(buffer);
+                // _ = base64url.Encoder.encode(buffer, v.items);
+                // try std.json.stringify(buffer, .{}, out_stream);
+            },
+            .text => |v| {
+                // TODO: Certain UTF-8 characters must be escaped.
+                // see: https://www.rfc-editor.org/rfc/rfc8259#section-7
+                try std.json.stringify(v, .{}, out_stream);
+            },
+            // An array becomes a JSON array.
+            .array => |v| {
+                try std.json.stringify(v, .{ .string = .Array }, out_stream);
+            },
+            // A map becomes a JSON object. This is possible directly only if all
+            // keys are UTF-8 strings.
+            .map => |v| {
+                try out_stream.writeAll("{");
+                for (v) |pair, index| {
+                    // Just ignore all pairs where the key is not a text string.
+                    if (pair.key.isText()) {
+                        try std.json.stringify(pair.key, .{}, out_stream);
+                        try out_stream.writeAll(":");
+                        try std.json.stringify(pair.value, .{}, out_stream);
+
+                        if (index < v.len - 1) {
+                            // stupid comma
+                            try out_stream.writeAll(",");
+                        }
+                    }
+                }
+                try out_stream.writeAll("}");
+            },
+            .tag => |v| try std.json.stringify(v, .{}, out_stream),
+            // A float becomes a JSON number if its finite.
+            .float => |v| {
+                switch (v) {
+                    .float16 => |f| try std.json.stringify(f, .{}, out_stream),
+                    .float32 => |f| try std.json.stringify(f, .{}, out_stream),
+                    .float64 => |f| try std.json.stringify(f, .{}, out_stream),
+                }
+            },
+            .simple => |v| {
+                switch (v) {
+                    .False => try out_stream.writeAll("false"),
+                    .True => try out_stream.writeAll("true"),
+                    .Null => try out_stream.writeAll("null"),
+                    // Any other simple value is represented by the
+                    // substitue value.
+                    else => try out_stream.writeAll("null"),
+                }
+            },
+        }
+    }
+
+    /// Convert the given DataItem to JSON.
+    pub fn toJson(self: *const @This(), allocator: Allocator) !std.ArrayList(u8) {
+        var json = std.ArrayList(u8).init(allocator);
+        try std.json.stringify(self, .{}, json.writer());
+        return json;
+    }
 };
 
 pub fn pair_asc(context: void, lhs: Pair, rhs: Pair) bool {

@@ -753,3 +753,93 @@ test "MT7: encode f64 -4.1" {
     defer cbor.deinit();
     try std.testing.expectEqualSlices(u8, &.{ 0xfb, 0xc0, 0x10, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66 }, cbor.items);
 }
+
+test "MT0,1: DataItem{ .int = 30 } to json" {
+    const allocator = std.testing.allocator;
+
+    const di = DataItem{ .int = 30 };
+
+    var string = std.ArrayList(u8).init(allocator);
+    defer string.deinit();
+    try std.json.stringify(di, .{}, string.writer());
+
+    try std.testing.expectEqualStrings("30", string.items);
+}
+
+test "MT3: DataItem to json" {
+    const allocator = std.testing.allocator;
+
+    const di = try DataItem.text(allocator, "fido-u2f");
+    defer di.deinit(allocator);
+
+    var string = std.ArrayList(u8).init(allocator);
+    defer string.deinit();
+    try std.json.stringify(di, .{}, string.writer());
+
+    try std.testing.expectEqualStrings("\"fido-u2f\"", string.items);
+}
+
+test "MT4: DataItem to json" {
+    const allocator = std.testing.allocator;
+
+    const di = try DataItem.array(allocator, &.{ DataItem.int(1), DataItem.int(2), DataItem.int(3) });
+    defer di.deinit(allocator);
+
+    var string = std.ArrayList(u8).init(allocator);
+    defer string.deinit();
+    try std.json.stringify(di, .{}, string.writer());
+
+    try std.testing.expectEqualStrings("[1,2,3]", string.items);
+}
+
+test "MT5: DataItem to json" {
+    const allocator = std.testing.allocator;
+
+    const di = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "a"), DataItem.int(1)), Pair.new(try DataItem.text(allocator, "b"), try DataItem.array(allocator, &.{ DataItem.int(2), DataItem.int(3) })) });
+    defer di.deinit(allocator);
+
+    var string = std.ArrayList(u8).init(allocator);
+    defer string.deinit();
+    try std.json.stringify(di, .{}, string.writer());
+
+    try std.testing.expectEqualStrings("{\"a\":1,\"b\":[2,3]}", string.items);
+}
+
+test "MT7: DataItem to json (false, true, null)" {
+    const allocator = std.testing.allocator;
+
+    const di1 = DataItem.False();
+    const di2 = DataItem.True();
+    const di3 = DataItem.Null();
+    const di4 = DataItem.Undefined();
+
+    const json1 = try di1.toJson(allocator);
+    defer json1.deinit();
+    const json2 = try di2.toJson(allocator);
+    defer json2.deinit();
+    const json3 = try di3.toJson(allocator);
+    defer json3.deinit();
+    const json4 = try di4.toJson(allocator);
+    defer json4.deinit();
+
+    try std.testing.expectEqualStrings("false", json1.items);
+    try std.testing.expectEqualStrings("true", json2.items);
+    try std.testing.expectEqualStrings("null", json3.items);
+    // Any other simple value is represented as the substitue value (null).
+    try std.testing.expectEqualStrings("null", json4.items);
+}
+
+test "MT7: DataItem to json (float)" {
+    const allocator = std.testing.allocator;
+
+    const di1 = DataItem.float64(-4.1);
+    //const di2 = DataItem.float32(3.4028234663852886e+38);
+
+    const json1 = try di1.toJson(allocator);
+    defer json1.deinit();
+    //const json2 = try di2.toJson(allocator);
+    //defer json2.deinit();
+
+    try std.testing.expectEqualStrings("-4.1e+00", json1.items);
+    //try std.testing.expectEqualStrings("3.4028234663852886e+38", json2.items);
+}
