@@ -114,26 +114,72 @@ One can use the `isInt`, `isBytes`, `isText`, `isArray`, `isMap`, `isTagged`,
 
 #### int (major type 0 and 1)
 
-Both major type 0 and 1 are decoded to and encoded from the `DataItem.int` field.
+Integers are represented by the major types 0 (unsigned, $0-2^{64}..1$) and 1 
+(negative, $-2^{64}..-1$). The `.int` field of the tagged union `DataItem` 
+represents both major types using `i128` as a type.
+
+The following code defines a new int `DataItem` with the value `12345`:
+```zig
+const di = DataItem{ .int = 12345 };
+
+// or just use a helper function
+const di2 = DataItem.int(12345);
+```
+Note that because no extra memory is allocated, you're not required to call 
+`deinit()` on `di`.
 
 > Note: Integers are always encoded as small as possible.
 
 #### bytes (major type 2)
 
-The `DataItem.bytes` field gives access to the underlying `ArrayList(u8)` which
-can be manipulated as usual.
+The `.bytes` field of a `DataItem` is a `u8` slice.
+
+The following code defines a new bytes `DataItem`:
+```zig
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+const di = try DataItem.bytes(gpa, &.{0x1, 0x2, 0x3, 0x4, 0x5});
+// The DataItem doesn't store the used allocator so one must
+// provide it to deinit().
+defer di.deinit(gpa);
+```
+
+The passed data is copied instead of being referenced directly.
 
 #### text (major type 3)
 
-The `DataItem.text` field gives access to the underlying `ArrayList(u8)` which
-can be manipulated as usual.
+The `.text` field of a `DataItem` is a `u8` slice representing a utf-8 string.
+
+A new text string can created using the following code:
+
+```zig
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+const di = try DataItem.text(gpa, "IETF");
+// The DataItem doesn't store the used allocator so one must
+// provide it to deinit().
+defer di.deinit(gpa);
+```
+
+The passed string is copied instead of being referenced directly.
 
 > Note: The current implementation lacks any special UTF-8 support.
 
 #### array (major type 4)
 
-The `DataItem.array` field gives access to the underlying `ArrayList(DataItem)` which
-can be manipulated as usual.
+The `DataItem.array` field gives access to the underlying `DataItem` slice.
+
+A new array can be created using the following code:
+
+```zig
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+// Create an array of two data items of type int (mt 0)
+const di = try DataItem.array(gpa, &.{DataItem.int(1), DataItem.int(2)});
+// The DataItem doesn't store the used allocator so one must
+// provide it to deinit().
+defer di.deinit(gpa);
+```
 
 The `get()` function can be used to access the element of an array at a specified
 index. The function will return `null` if the `DataItem` is not an array or if
@@ -153,6 +199,33 @@ try std.testing.expectEqual(@as(usize, 704), x5c_stmt.?.bytes.items.len);
 
 #### map (major type 5)
 
+The `DataItem.map` field gives access to the underlying `Pair` slice. A `Pair`
+consists of a key and a value and is defined as:
+
+```zig
+pub const Pair = struct { key: DataItem, value: DataItem };
+```
+
+You can create a new pair using the `new()` function:
+```zig
+const p = Pair.new(try DataItem.text(gpa, "a"), DataItem.int(2)); // "a":2
+```
+
+A new map can be created using the following code:
+
+```zig
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+// Create an map: {1:2,3:4}
+var di = try DataItem.map(gpa, &.{
+    Pair.new(DataItem.int(1), DataItem.int(2)), // 1:2
+    Pair.new(DataItem.int(3), DataItem.int(4))  // 3:4
+});
+// The DataItem doesn't store the used allocator so one must
+// provide it to deinit().
+defer di.deinit(gpa);
+```
+
 To access the value associated with a key one can use the `getValue()` and
 `getValueByString()` functions. The first takes an arbitrary `DataItem` as
 key while the second expects a string.
@@ -165,6 +238,9 @@ try std.testing.expect(fmt.?.isText());
 try std.testing.expectEqualStrings("fido-u2f", fmt.?.text.items);
 ```
 
+> Note: In general one can use any `DataItem` type as key. If you want to serialize
+> a `DataItem` to JSON make sure that all keys are text strings.
+
 #### tag (major type 6)
 
 A tagged data item associates an integer in the range $0..2^{64}-1$ with a data
@@ -174,10 +250,28 @@ combined with a byte string could indicate an unsigned bignum.
 See [RFC8949: Tagging of Items](https://www.rfc-editor.org/rfc/rfc8949.html#name-tagging-of-items)
 for more information.
 
+
+A new tagged data item can be created using the following code:
+```zig
+// Create the tagged data item 1(2)
+const di = try DataItem.tagged(gpa, 1, DataItem.int(2));
+defer di.deinit(gpa);
+
+// Create bignum
+const bignum = try DataItem.unsignedBignum(gpa, &.{ 0xf6, 0x53, 0xd8, 0xf5, 0x55, 0x8b, 0xf2, 0x49, 0x1d, 0x90, 0x96, 0x13, 0x44, 0x8d, 0xd1, 0xd3 });
+defer bignum.deinit(gpa);
+```
+
 #### float (major type 7)
 
 Representation of 16- (`DataItem.float.float16`), 32- (`DataItem.float.float32`), 
 and 64-bit (`DataItem.float.float64`) floating-point numbers.
+
+```zig
+const float16 = DataItem.float16(5.960464477539063e-8);
+const float32 = DataItem.float32(3.4028234663852886e+38);
+const float64 = DataItem.float64(1.0e+300);
+```
 
 > Note: The representations of any floating-point values are not changed by the
 > encoder.
