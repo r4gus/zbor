@@ -27,6 +27,7 @@ To simply decode a CBOR byte string, one can use the `decode()` function.
 
 ```zig
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
 
 // Open a binary file and read its content.
 const attestationObject = try std.fs.cwd().openFile(
@@ -34,17 +35,17 @@ const attestationObject = try std.fs.cwd().openFile(
     .{ mode = .read_only}
 );
 defer attestationObject.close();
-const bytes = try attestationObject.readToEndAlloc(gpa, 4096);
-defer gpa.free(bytes);
+const bytes = try attestationObject.readToEndAlloc(allocator, 4096);
+defer allocator.free(bytes);
 
 // Decode the given CBOR byte string.
 // This will return a DataItem on success or throw an error otherwise.
-var data_item = try decode(gpa, bytes);
+var data_item = try decode(allocator, bytes);
 // decode() will allocate memory if neccessary. The caller is responsible for
 // deallocation. deinit() will free the allocated memory of all DataItems recursively.
 // Because DataItem doesn't store the used Allocator, it must be provided by the
 // caller as argument.
-defer data_item.deinit(gpa);
+defer data_item.deinit(allocator);
 ```
 
 ### CBOR encoder
@@ -54,17 +55,18 @@ byte string.
 
 ```zig
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
 
 // Create a map-DataItem (major type 5)
-var di = DataItem.map(gpa, &.{
+var di = DataItem.map(allocator, &.{
     Pair.new(DataItem.int(1), DataItem.int(2)), // 1:2
     Pair.new(DataItem.int(3), DataItem.int(4))  // 3:4
 });
-defer di.deinit(gpa);
+defer di.deinit(allocator);
 
 // Encode the CBOR map `{1:2,3:4}`. The function will return a ArrayList on
 // success or throw an CborError otherwise.
-const cbor = try encode(gpa, &di);
+const cbor = try encode(allocator, &di);
 defer cbor.deinit();
 
 try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor.items);
@@ -121,11 +123,12 @@ The `.bytes` field of a `DataItem` is a `u8` slice.
 The following code defines a new bytes `DataItem`:
 ```zig
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
 
-const di = try DataItem.bytes(gpa, &.{0x1, 0x2, 0x3, 0x4, 0x5});
+const di = try DataItem.bytes(allocator, &.{0x1, 0x2, 0x3, 0x4, 0x5});
 // The DataItem doesn't store the used allocator so one must
 // provide it to deinit().
-defer di.deinit(gpa);
+defer di.deinit(allocator);
 ```
 
 The passed data is copied instead of being referenced directly.
@@ -138,11 +141,12 @@ A new text string can created using the following code:
 
 ```zig
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
 
-const di = try DataItem.text(gpa, "IETF");
+const di = try DataItem.text(allocator, "IETF");
 // The DataItem doesn't store the used allocator so one must
 // provide it to deinit().
-defer di.deinit(gpa);
+defer di.deinit(allocator);
 ```
 
 The passed string is copied instead of being referenced directly.
@@ -157,12 +161,13 @@ A new array can be created using the following code:
 
 ```zig
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
 
 // Create an array of two data items of type int (mt 0)
-const di = try DataItem.array(gpa, &.{DataItem.int(1), DataItem.int(2)});
+const di = try DataItem.array(allocator, &.{DataItem.int(1), DataItem.int(2)});
 // The DataItem doesn't store the used allocator so one must
 // provide it to deinit().
-defer di.deinit(gpa);
+defer di.deinit(allocator);
 ```
 
 The `get()` function can be used to access the element of an array at a specified
@@ -192,22 +197,23 @@ pub const Pair = struct { key: DataItem, value: DataItem };
 
 You can create a new pair using the `new()` function:
 ```zig
-const p = Pair.new(try DataItem.text(gpa, "a"), DataItem.int(2)); // "a":2
+const p = Pair.new(try DataItem.text(allocator, "a"), DataItem.int(2)); // "a":2
 ```
 
 A new map can be created using the following code:
 
 ```zig
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
 
 // Create an map: {1:2,3:4}
-var di = try DataItem.map(gpa, &.{
+var di = try DataItem.map(allocator, &.{
     Pair.new(DataItem.int(1), DataItem.int(2)), // 1:2
     Pair.new(DataItem.int(3), DataItem.int(4))  // 3:4
 });
 // The DataItem doesn't store the used allocator so one must
 // provide it to deinit().
-defer di.deinit(gpa);
+defer di.deinit(allocator);
 ```
 
 To access the value associated with a key one can use the `getValue()` and
@@ -238,12 +244,12 @@ for more information.
 A new tagged data item can be created using the following code:
 ```zig
 // Create the tagged data item 1(2)
-const di = try DataItem.tagged(gpa, 1, DataItem.int(2));
-defer di.deinit(gpa);
+const di = try DataItem.tagged(allocator, 1, DataItem.int(2));
+defer di.deinit(allocator);
 
 // Create bignum
-const bignum = try DataItem.unsignedBignum(gpa, &.{ 0xf6, 0x53, 0xd8, 0xf5, 0x55, 0x8b, 0xf2, 0x49, 0x1d, 0x90, 0x96, 0x13, 0x44, 0x8d, 0xd1, 0xd3 });
-defer bignum.deinit(gpa);
+const bignum = try DataItem.unsignedBignum(allocator, &.{ 0xf6, 0x53, 0xd8, 0xf5, 0x55, 0x8b, 0xf2, 0x49, 0x1d, 0x90, 0x96, 0x13, 0x44, 0x8d, 0xd1, 0xd3 });
+defer bignum.deinit(allocator);
 ```
 
 #### float (major type 7)
@@ -273,10 +279,11 @@ Because `DataItem` implements `jsonStringify()` one can serialize it to JSON.
 
 ```zig
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
 
-const di = try DataItem.map(gpa, &.{ 
-    Pair.new(try DataItem.text(gpa, "a"), DataItem.int(1)), 
-    Pair.new(try DataItem.text(gpa, "b"), try DataItem.array(gpa, &.{ 
+const di = try DataItem.map(allocator, &.{ 
+    Pair.new(try DataItem.text(allocator, "a"), DataItem.int(1)), 
+    Pair.new(try DataItem.text(allocator, "b"), try DataItem.array(allocator, &.{ 
         DataItem.int(2), DataItem.int(3) 
     })) 
 });

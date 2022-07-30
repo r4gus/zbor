@@ -19,6 +19,12 @@ const pair_asc = core.pair_asc;
 const encode = encoder.encode;
 const decode = decoder.decode;
 
+pub fn main() anyerror!void {
+    const stdout = std.io.getStdOut().writer();
+
+    try stdout.writeAll("Hello World\n");
+}
+
 test {
     const tests = @import("tests.zig");
 
