@@ -6,18 +6,18 @@ const core = @import("core.zig");
 const encoder = @import("encoder.zig");
 const decoder = @import("decoder.zig");
 
-const CborError = core.CborError;
-const Pair = core.Pair;
-const Tag = core.Tag;
-const FloatTag = core.FloatTag;
-const Float = core.Float;
-const SimpleValue = core.SimpleValue;
-const DataItemTag = core.DataItemTag;
-const DataItem = core.DataItem;
+pub const CborError = core.CborError;
+pub const Pair = core.Pair;
+pub const Tag = core.Tag;
+pub const FloatTag = core.FloatTag;
+pub const Float = core.Float;
+pub const SimpleValue = core.SimpleValue;
+pub const DataItemTag = core.DataItemTag;
+pub const DataItem = core.DataItem;
 const pair_asc = core.pair_asc;
 
-const encode = encoder.encode;
-const decode = decoder.decode;
+pub const encode = encoder.encode;
+pub const decode = decoder.decode;
 
 test {
     const tests = @import("tests.zig");
