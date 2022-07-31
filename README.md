@@ -10,6 +10,11 @@ and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 The project is split into a library and a command line application which can be
 used to decode CBOR data.
 
+* [Examples](#examples)
+* [Serialization](#serialization)
+* [Command line application](#command-line-application)
+* [Supported Types](#project-status)
+
 ## Features
 
 - CBOR decoder
