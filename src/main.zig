@@ -19,35 +19,6 @@ const pair_asc = core.pair_asc;
 const encode = encoder.encode;
 const decode = decoder.decode;
 
-pub fn main() anyerror!void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    const stdout = std.io.getStdOut().writer();
-    const stderr = std.io.getStdErr().writer();
-
-    // Get command line arguments
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
-
-    if (args.len < 2) {
-        try stderr.writeAll("error: no cbor byte string specified\n");
-        return;
-    }
-
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
-    try buffer.resize(args[1].len / 2);
-    _ = try std.fmt.hexToBytes(buffer.items, args[1]);
-
-    var di = try decode(allocator, buffer.items);
-    defer di.deinit(allocator);
-    var json = std.ArrayList(u8).init(allocator);
-    defer json.deinit();
-
-    try std.json.stringify(di, .{}, json.writer());
-    try stdout.print("{s}\n", .{json.items});
-}
-
 test {
     const tests = @import("tests.zig");
 

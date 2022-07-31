@@ -24,7 +24,8 @@ pub fn build(b: *std.build.Builder) void {
     test_step.dependOn(&main_tests.step);
 
     // Executable
-    const exe = b.addExecutable("zbor", "src/main.zig");
+    const exe = b.addExecutable("zbor", "src/main_exe.zig");
+    exe.addPackagePath("clap", "libs/zig-clap/clap.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();

@@ -7,6 +7,9 @@ message size, and extensibility without the need for version negotiation
 in different protocols like [CTAP](https://fidoalliance.org/specs/fido-v2.0-ps-20190130/fido-client-to-authenticator-protocol-v2.0-ps-20190130.html#ctap2-canonical-cbor-encoding-form) 
 and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 
+The project is split into a library and a command line application which can be
+used to decode CBOR data.
+
 ## Features
 
 - CBOR decoder
@@ -276,6 +279,8 @@ Currently supported are `False` (20), `True` (21), `Null` (22) and `Undefined` (
 ### DataItem to JSON
 
 Because `DataItem` implements `jsonStringify()` one can serialize it to JSON.
+The rules used for serialization are defined in 
+[RFC8949 §6.1: Converting from CBOR to JSON](https://www.rfc-editor.org/rfc/rfc8949.html#name-converting-from-cbor-to-jso)
 
 ```zig
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -326,14 +331,22 @@ as possible.
 > type into account. It is up to the user to make sure that majort types 4-6
 > are not used as key.
 
-## Project Status
+## Command line application
 
-| Task | Todo | In progress | Done |
-|:----:|:----:|:-----------:|:----:|
-| Decoder | | x | |
-| Encoder | | x | |
-| CBOR to JSON | | x | |
-| JSON to CBOR | x | | |
+The command line application can decode a given CBOR byte string and print it
+to stdout.
+
+* Options:
+    * `-h`, `--help` - Display a help message.
+    * `-o`, `--output` - Specify the output format (only json at the moment).
+    * `--hex <str>` - Provide the CBOR data as hex string.
+
+```
+$ ./zig-out/bin/zbor -o json --hex=c074323031332d30332d32315432303a30343a30305a
+"2013-03-21T20:04:00Z"
+```
+
+## Project status
 
 ### Supported types by decoder
 
