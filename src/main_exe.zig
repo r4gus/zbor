@@ -80,7 +80,15 @@ pub fn main() anyerror!void {
             return;
         };
     } else if (res.positionals.len > 0) {
-        return;
+        const file = std.fs.cwd().openFile(res.positionals[0], .{ .mode = .read_only }) catch {
+            try stderr.print("unable to open file `{s}`\n", .{res.positionals[0]});
+            return;
+        };
+        defer file.close();
+
+        const stat = try file.stat();
+        try buffer.resize(stat.size);
+        _ = try file.readAll(buffer.items);
     } else {
         try stderr.writeAll("no CBOR file path or hex string specified\n");
         return;

@@ -883,3 +883,22 @@ test "MT7: DataItem to json (float)" {
     try std.testing.expectEqualStrings("-4.1e+00", json1.items);
     //try std.testing.expectEqualStrings("3.4028234663852886e+38", json2.items);
 }
+
+test "serialize WebAuthn attestationObject to json" {
+    const allocator = std.testing.allocator;
+    const attestationObject = try std.fs.cwd().openFile("data/WebAuthnCreate.dat", .{ .mode = .read_only });
+    defer attestationObject.close();
+    const bytes = try attestationObject.readToEndAlloc(allocator, 4096);
+    defer allocator.free(bytes);
+
+    var di = try decode(allocator, bytes);
+    defer di.deinit(allocator);
+
+    var json = std.ArrayList(u8).init(allocator);
+    defer json.deinit();
+    try std.json.stringify(di, .{}, json.writer());
+
+    const expected = "{\"fmt\":\"fido-u2f\",\"attStmt\":{\"sig\":\"MEUCIQDxiq8pf_27Z2osKh-3EnKViLVnMvh5oSuUhhC1AtBb1wIgT-C4h13JDnutnjn1mR9JVfRlE0rXXoknYH5eI3jAqWc\",\"x5c\":[\"MIICvDCCAaSgAwIBAgIEA63wEjANBgkqhkiG9w0BAQsFADAuMSwwKgYDVQQDEyNZdWJpY28gVTJGIFJvb3QgQ0EgU2VyaWFsIDQ1NzIwMDYzMTAgFw0xNDA4MDEwMDAwMDBaGA8yMDUwMDkwNDAwMDAwMFowbTELMAkGA1UEBhMCU0UxEjAQBgNVBAoMCVl1YmljbyBBQjEiMCAGA1UECwwZQXV0aGVudGljYXRvciBBdHRlc3RhdGlvbjEmMCQGA1UEAwwdWXViaWNvIFUyRiBFRSBTZXJpYWwgNjE3MzA4MzQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQZnoecFi233DnuSkKgRhalswn-ygkvdr4JSPltbpXK5MxlzVSgWc-9x8mzGysdbBhEecLAYfQYqpVLWWosHPoXo2wwajAiBgkrBgEEAYLECgIEFTEuMy42LjEuNC4xLjQxNDgyLjEuNzATBgsrBgEEAYLlHAIBAQQEAwIEMDAhBgsrBgEEAYLlHAEBBAQSBBD6K5ncnjlCV4-SSjDSPEEYMAwGA1UdEwEB_wQCMAAwDQYJKoZIhvcNAQELBQADggEBACjrs2f-0djw4onryp_22AdXxg6a5XyxcoybHDjKu72E2SN9qDGsIZSfDy38DDFr_bF1s25joiu7WA6tylKA0HmEDloeJXJiWjv7h2Az2_siqWnJOLic4XE1lAChJS2XAqkSk9VFGelg3SLOiifrBet-ebdQwAL-2QFrcR7JrXRQG9kUy76O2VcSgbdPROsHfOYeywarhalyVSZ-6OOYK_Q_DLIaOC0jXrnkzm2ymMQFQlBAIysrYeEM1wxiFbwDt-lAcbcOEtHEf5ZlWi75nUzlWn8bSx_5FO4TbZ5hIEcUiGRpiIBEMRZlOIm4ZIbZycn_vJOFRTVps0V0S4ygtDc\"]},\"authData\":\"IQkYX2k6AeoaJkH4LVL7ru4KT0fjN03--HCDjeSbDpdBAAAAAAAAAAAAAAAAAAAAAAAAAAAAQLP4zbGAIJF2-iAaUW0bQvgCqA2vSNA3iCGm-91S3ha37_YiJXJDjeWFfnD57wWA6TfjAK7Q3_E_tqM-w4uBytClAQIDJiABIVgg2fTCo1ITbxnJqV2ogkq1zcTVYx68_VvbsL__JTYJEp4iWCDvQEuIB2VXYAeIij7Wq_-0JXtxI1UzJdRQYTy1vJo6Ug\"}";
+
+    try std.testing.expectEqualStrings(expected, json.items);
+}
