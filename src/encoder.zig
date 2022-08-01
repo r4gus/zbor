@@ -12,40 +12,45 @@ const DataItemTag = core.DataItemTag;
 const DataItem = core.DataItem;
 const pair_asc = core.pair_asc;
 
-/// Encode a (nested) DataItem as CBOR byte string.
-pub fn encode(allocator: Allocator, item: *const DataItem) CborError!std.ArrayList(u8) {
+fn encode_2(cbor: anytype, head: u8, v: u64) CborError!void {
+    try cbor.writeByte(head | 25);
+    try cbor.writeByte(@intCast(u8, (v >> 8) & 0xff));
+    try cbor.writeByte(@intCast(u8, v & 0xff));
+}
+
+fn encode_4(cbor: anytype, head: u8, v: u64) CborError!void {
+    try cbor.writeByte(head | 26);
+    try cbor.writeByte(@intCast(u8, (v >> 24) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 16) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 8) & 0xff));
+    try cbor.writeByte(@intCast(u8, v & 0xff));
+}
+
+fn encode_8(cbor: anytype, head: u8, v: u64) CborError!void {
+    try cbor.writeByte(head | 27);
+    try cbor.writeByte(@intCast(u8, (v >> 56) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 48) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 40) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 32) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 24) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 16) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 8) & 0xff));
+    try cbor.writeByte(@intCast(u8, v & 0xff));
+}
+
+/// Same as `encode` but accepts an Allocator and stores the result
+/// in dynamically allocated memory instead of using a Writer.
+/// Caller owns the returned memory and is responsible for freeing it.
+pub fn encodeAlloc(allocator: Allocator, item: *const DataItem) CborError![]const u8 {
     var cbor = std.ArrayList(u8).init(allocator);
-    try encode_(&cbor, item);
-    return cbor;
+    // Only deinit if the encoding fails.
+    errdefer cbor.deinit();
+    try encode(cbor.writer(), item);
+    return cbor.toOwnedSlice();
 }
 
-fn encode_2(cbor: *std.ArrayList(u8), head: u8, v: u64) CborError!void {
-    try cbor.append(head | 25);
-    try cbor.append(@intCast(u8, (v >> 8) & 0xff));
-    try cbor.append(@intCast(u8, v & 0xff));
-}
-
-fn encode_4(cbor: *std.ArrayList(u8), head: u8, v: u64) CborError!void {
-    try cbor.append(head | 26);
-    try cbor.append(@intCast(u8, (v >> 24) & 0xff));
-    try cbor.append(@intCast(u8, (v >> 16) & 0xff));
-    try cbor.append(@intCast(u8, (v >> 8) & 0xff));
-    try cbor.append(@intCast(u8, v & 0xff));
-}
-
-fn encode_8(cbor: *std.ArrayList(u8), head: u8, v: u64) CborError!void {
-    try cbor.append(head | 27);
-    try cbor.append(@intCast(u8, (v >> 56) & 0xff));
-    try cbor.append(@intCast(u8, (v >> 48) & 0xff));
-    try cbor.append(@intCast(u8, (v >> 40) & 0xff));
-    try cbor.append(@intCast(u8, (v >> 32) & 0xff));
-    try cbor.append(@intCast(u8, (v >> 24) & 0xff));
-    try cbor.append(@intCast(u8, (v >> 16) & 0xff));
-    try cbor.append(@intCast(u8, (v >> 8) & 0xff));
-    try cbor.append(@intCast(u8, v & 0xff));
-}
-
-fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
+/// Encode a (nested) DataItem as CBOR byte string.
+pub fn encode(out_stream: anytype, item: *const DataItem) CborError!void {
     // The first byte of a data item encodes its type.
     var head: u8 = 0;
     switch (item.*) {
@@ -84,15 +89,15 @@ fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
             // The representation of any floating-point values are not changed.
             switch (f) {
                 .float16 => |value| {
-                    try encode_2(cbor, head, @intCast(u64, @bitCast(u16, value)));
+                    try encode_2(out_stream, head, @intCast(u64, @bitCast(u16, value)));
                     return;
                 },
                 .float32 => |value| {
-                    try encode_4(cbor, head, @intCast(u64, @bitCast(u32, value)));
+                    try encode_4(out_stream, head, @intCast(u64, @bitCast(u32, value)));
                     return;
                 },
                 .float64 => |value| {
-                    try encode_8(cbor, head, @bitCast(u64, value));
+                    try encode_8(out_stream, head, @bitCast(u64, value));
                     return;
                 },
             }
@@ -102,25 +107,25 @@ fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
 
     switch (v) {
         0x00...0x17 => {
-            try cbor.append(head | @intCast(u8, v));
+            try out_stream.writeByte(head | @intCast(u8, v));
         },
         0x18...0xff => {
-            try cbor.append(head | 24);
-            try cbor.append(@intCast(u8, v));
+            try out_stream.writeByte(head | 24);
+            try out_stream.writeByte(@intCast(u8, v));
         },
-        0x0100...0xffff => try encode_2(cbor, head, v),
-        0x00010000...0xffffffff => try encode_4(cbor, head, v),
-        0x0000000100000000...0xffffffffffffffff => try encode_8(cbor, head, v),
+        0x0100...0xffff => try encode_2(out_stream, head, v),
+        0x00010000...0xffffffff => try encode_4(out_stream, head, v),
+        0x0000000100000000...0xffffffffffffffff => try encode_8(out_stream, head, v),
     }
 
     switch (item.*) {
         .int, .float => {},
-        .bytes => |value| try cbor.appendSlice(value),
-        .text => |value| try cbor.appendSlice(value),
+        .bytes => |value| try out_stream.writeAll(value),
+        .text => |value| try out_stream.writeAll(value),
         .array => |arr| {
             // Encode every data item of the array.
             for (arr) |*itm| {
-                try encode_(cbor, itm);
+                try encode(out_stream, itm);
             }
         },
         .map => |m| {
@@ -130,14 +135,14 @@ fn encode_(cbor: *std.ArrayList(u8), item: *const DataItem) CborError!void {
             var i: usize = 0;
             while (i < m.len) : (i += 1) {
                 // each pair consisting of a key...
-                try encode_(cbor, &m[i].key);
+                try encode(out_stream, &m[i].key);
                 // ...that is immediately followed by a value.
-                try encode_(cbor, &m[i].value);
+                try encode(out_stream, &m[i].value);
             }
         },
         .tag => |t| {
             // Tag content is the single encoded data item that follows the head.
-            try encode_(cbor, t.content);
+            try encode(out_stream, t.content);
         },
         else => unreachable,
     }

@@ -1,4 +1,4 @@
-# zbor
+# zbor - Zig CBOR
 
 The Concise Binary Object Representation (CBOR) is a data format whose design 
 goals include the possibility of extremely small code size, fairly small 
@@ -58,8 +58,9 @@ defer data_item.deinit(allocator);
 
 ### CBOR encoder
 
-The `encode()` function can be used to serialize a `DataItem` into a CBOR
-byte string.
+The `encode` and `encodeAlloc` functions can be used to serialize 
+a `DataItem` into a CBOR byte string. They work similar to
+`std.json.stringify` and `std.json.stringifyAlloc`.
 
 ```zig
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -72,12 +73,12 @@ var di = DataItem.map(allocator, &.{
 });
 defer di.deinit(allocator);
 
-// Encode the CBOR map `{1:2,3:4}`. The function will return a ArrayList on
+// Encode the CBOR map `{1:2,3:4}`. The function will return a byte slice on
 // success or throw an CborError otherwise.
-const cbor = try encode(allocator, &di);
-defer cbor.deinit();
+const cbor = try encodeAlloc(allocator, &di);
+defer allocator.free(cbor);
 
-try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor.items);
+try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor);
 ```
 
 ### DataItem
