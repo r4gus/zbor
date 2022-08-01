@@ -2,12 +2,17 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub const CborError = error{
-    /// Indicates that one of the reserved values 28, 29 or 30 has been used.
+    /// Values are reserved for future additions to the CBOR format.
+    /// In the present version of CBOR, the encoded item is not well-formed.
     ReservedAdditionalInformation,
+    /// Simple values 24..31 currently reserved.
+    ReservedSimpleValue,
+    /// The encoder doesn't support indefinite-length items.
+    IndefiniteLength,
     /// The given CBOR string is malformed.
     Malformed,
     /// A unsupported type has been encounterd.
-    Unsupported,
+    Unassigned,
     OutOfMemory,
 };
 

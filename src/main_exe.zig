@@ -94,8 +94,27 @@ pub fn main() anyerror!void {
         return;
     }
 
-    var di = decode(allocator, buffer.items) catch {
-        try stderr.writeAll("oops...\n");
+    var di = decode(allocator, buffer.items) catch |err| {
+        switch (err) {
+            CborError.ReservedAdditionalInformation => {
+                try stderr.writeAll("error: CBOR data uses additional information that are currently not supported\n");
+            },
+            CborError.ReservedSimpleValue => {
+                try stderr.writeAll("error: simple values 24..31 reserved for future use\n");
+            },
+            CborError.IndefiniteLength => {
+                try stderr.writeAll("error: indefinite-length items not supported\n");
+            },
+            CborError.Malformed => {
+                try stderr.writeAll("error: malformed data\n");
+            },
+            CborError.Unassigned => {
+                try stderr.writeAll("error: simple values 0..19 and 32..255 currently unassigned\n");
+            },
+            CborError.OutOfMemory => {
+                try stderr.writeAll("error: out of memory\n");
+            },
+        }
         return;
     };
     defer di.deinit(allocator);
@@ -119,4 +138,10 @@ pub fn main() anyerror!void {
     // Get command line arguments
     // const args = try std.process.argsAlloc(allocator);
     // defer std.process.argsFree(allocator, args);
+}
+
+fn printDataItem(item: *const DataItem, level: usize, out_stream: anytype) void {
+    _ = item;
+    _ = level;
+    _ = out_stream;
 }

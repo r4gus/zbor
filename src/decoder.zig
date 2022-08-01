@@ -60,10 +60,23 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
             index.* += 8;
         },
         28...30 => {
+            // Values are reserved for future additions to the CBOR format.
+            // In the present version of CBOR, the encoded item is not
+            // well-formed.
             return CborError.ReservedAdditionalInformation;
         },
         else => { // 31 (all other values are impossible)
-            unreachable; // TODO: actually reachable but we pretend for now...
+            switch (mt) {
+                // The encoded item is not well formed.
+                0, 1, 6 => return CborError.Malformed,
+                // The item's length is indefinite (currently
+                // not supported).
+                2, 3, 4, 5 => return CborError.IndefiniteLength,
+                // The byte terminates an indefinite-length item
+                // (currently not supported).
+                7 => return CborError.IndefiniteLength,
+                else => unreachable,
+            }
         },
     }
 
@@ -129,15 +142,16 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
         },
         7 => {
             switch (ai) {
+                0...19 => return CborError.Unassigned,
                 20 => return DataItem{ .simple = SimpleValue.False },
                 21 => return DataItem{ .simple = SimpleValue.True },
                 22 => return DataItem{ .simple = SimpleValue.Null },
                 23 => return DataItem{ .simple = SimpleValue.Undefined },
                 24 => {
                     if (val < 32) {
-                        return CborError.Malformed;
+                        return CborError.ReservedSimpleValue;
                     } else {
-                        return CborError.Unsupported;
+                        return CborError.Unassigned;
                     }
                 },
                 // The following narrowing conversions are fine because the
@@ -145,9 +159,11 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
                 25 => return DataItem{ .float = Float{ .float16 = @bitCast(f16, @intCast(u16, val)) } },
                 26 => return DataItem{ .float = Float{ .float32 = @bitCast(f32, @intCast(u32, val)) } },
                 27 => return DataItem{ .float = Float{ .float64 = @bitCast(f64, val) } },
+                // Reserved, not well-formed
+                28, 29, 30 => return CborError.Malformed,
                 // Break stop code unsupported for the moment.
-                31 => return CborError.Unsupported,
-                else => return CborError.Malformed,
+                31 => return CborError.IndefiniteLength,
+                else => unreachable,
             }
         },
         else => {
