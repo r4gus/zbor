@@ -22,7 +22,6 @@ pub fn decode(allocator: Allocator, data: []const u8) CborError!DataItem {
 // calling function is responsible for deallocating memory.
 fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: bool) CborError!DataItem {
     _ = breakable;
-    _ = allocator;
     const head: u8 = data[index.*];
     index.* += 1;
     const mt: u8 = head >> 5; // the 3 msb represent the major type.
@@ -113,6 +112,7 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
         // MT4: DataItem array, e.g. [], [1, 2, 3], [1, [2, 3], [4, 5]].
         4 => {
             var item = DataItem{ .array = try allocator.alloc(DataItem, @as(usize, val)) };
+            errdefer item.deinit(allocator);
             var i: usize = 0;
             while (i < val) : (i += 1) {
                 // The index will be incremented by the recursive call to decode_.
@@ -123,10 +123,12 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
         // MT5: Map of pairs of DataItem, e.g. {1:2, 3:4}.
         5 => {
             var item = DataItem{ .map = try allocator.alloc(Pair, @as(usize, val)) };
+            errdefer item.deinit(allocator);
             var i: usize = 0;
             while (i < val) : (i += 1) {
                 // The index will be incremented by the recursive call to decode_.
                 const k = try decode_(data, index, allocator, false);
+                errdefer k.deinit(allocator);
                 const v = try decode_(data, index, allocator, false);
                 item.map[i] = Pair{ .key = k, .value = v };
             }
@@ -135,6 +137,7 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
         // MT6: Tagged data item, e.g. 1("a").
         6 => {
             var item = try allocator.create(DataItem);
+            errdefer allocator.destroy(item);
             // The enclosed data item (tag content) is the single encoded data
             // item that follows the head.
             item.* = try decode_(data, index, allocator, false);
