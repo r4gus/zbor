@@ -14,9 +14,9 @@ pub const Float = core.Float;
 pub const SimpleValue = core.SimpleValue;
 pub const DataItemTag = core.DataItemTag;
 pub const DataItem = core.DataItem;
-const pair_asc = core.pair_asc;
 
 pub const encode = encoder.encode;
+pub const encodeAlloc = encoder.encodeAlloc;
 pub const decode = decoder.decode;
 
 test {
