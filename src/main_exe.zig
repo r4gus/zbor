@@ -121,8 +121,7 @@ pub fn main() anyerror!void {
 
     switch (output) {
         .default => {
-            try stderr.writeAll("output format not yet supported; please use `-o json`\n");
-            return;
+            try printDataItem(&di, 0, stdout);
         },
         .json => {
             var json = std.ArrayList(u8).init(allocator);
@@ -140,8 +139,153 @@ pub fn main() anyerror!void {
     // defer std.process.argsFree(allocator, args);
 }
 
-fn printDataItem(item: *const DataItem, level: usize, out_stream: anytype) void {
-    _ = item;
-    _ = level;
-    _ = out_stream;
+fn printDataItem(item: *const DataItem, level: usize, out_stream: anytype) @TypeOf(out_stream).Error!void {
+    try out_stream.writeByteNTimes(' ', level * 2);
+
+    // The first byte of a data item encodes its type.
+    var head: u8 = 0;
+    switch (item.*) {
+        .int => |value| {
+            if (value < 0) head = 0x20;
+        },
+        .bytes => |_| head = 0x40,
+        .text => |_| head = 0x60,
+        .array => |_| head = 0x80,
+        .map => |_| head = 0xa0,
+        .tag => |_| head = 0xc0,
+        .float => |_| head = 0xe0,
+        else => unreachable,
+    }
+
+    // The arguments value represents either a integer, float or size.
+    var v: u64 = 0;
+    switch (item.*) {
+        .int => |value| {
+            if (value < 0)
+                v = @intCast(u64, (-value) - 1)
+            else
+                v = @intCast(u64, value);
+        },
+        // The number of bytes in the byte string is equal to the arugment.
+        .bytes => |value| v = @intCast(u64, value.len),
+        // The number of bytes in the text string is equal to the arugment.
+        .text => |value| v = @intCast(u64, value.len),
+        // The argument is the number of data items in the array.
+        .array => |value| v = @intCast(u64, value.len),
+        // The argument is the number of (k,v) pairs.
+        .map => |value| v = @intCast(u64, value.len),
+        // The argument is the tag.
+        .tag => |value| v = value.number,
+        .float => |f| {
+            // The representation of any floating-point values are not changed.
+            switch (f) {
+                .float16 => |value| {
+                    try out_stream.print("{X} {X} # float2({e})\n", .{ head | 25, @bitCast(u16, value), value });
+                },
+                .float32 => |value| {
+                    try out_stream.print("{X} {X} # float4({e})\n", .{ head | 26, @bitCast(u32, value), value });
+                },
+                .float64 => |value| {
+                    try out_stream.print("{X} {X} # float8({e})\n", .{ head | 27, @bitCast(u64, value), value });
+                },
+            }
+            return;
+        },
+        else => unreachable,
+    }
+
+    switch (v) {
+        0x00...0x17 => head |= @intCast(u8, v),
+        0x18...0xff => head |= 24,
+        0x0100...0xffff => head |= 25,
+        0x00010000...0xffffffff => head |= 26,
+        0x0000000100000000...0xffffffffffffffff => head |= 27,
+    }
+
+    switch (item.*) {
+        .int => |value| {
+            switch (v) {
+                0x00...0x17 => {
+                    try out_stream.print("{X} # integer({d})\n", .{ head, value });
+                },
+                else => {
+                    try out_stream.print("{X} {X} # integer({d})\n", .{ head, v, value });
+                },
+            }
+        },
+        // The number of bytes in the byte string is equal to the arugment.
+        .bytes => |value| {
+            switch (v) {
+                0x00...0x17 => {
+                    try out_stream.print("{X} # bytes({d})\n\n", .{ head, v });
+                },
+                else => {
+                    try out_stream.print("{X} {X} # bytes({d})\n\n", .{ head, v, v });
+                },
+            }
+            try out_stream.print("{s}\n", .{std.fmt.fmtSliceHexUpper(value)});
+        },
+        // The number of bytes in the text string is equal to the arugment.
+        .text => |value| {
+            switch (v) {
+                0x00...0x17 => {
+                    try out_stream.print("{X} # text({d})\n", .{ head, v });
+                },
+                else => {
+                    try out_stream.print("{X} {X} # text({d})\n", .{ head, v, v });
+                },
+            }
+            try out_stream.writeByteNTimes(' ', level * 2 + 2);
+            try out_stream.print("{s} # \"{s}\"\n", .{ std.fmt.fmtSliceHexUpper(value), value });
+        },
+        // The argument is the number of data items in the array.
+        .array => |value| {
+            switch (v) {
+                0x00...0x17 => {
+                    try out_stream.print("{X} # array({d})\n", .{ head, v });
+                },
+                else => {
+                    try out_stream.print("{X} {X} # array({d})\n", .{ head, v, v });
+                },
+            }
+            for (value) |*itm| {
+                try printDataItem(itm, level + 1, out_stream);
+            }
+        },
+        // The argument is the number of (k,v) pairs.
+        .map => |value| {
+            switch (v) {
+                0x00...0x17 => {
+                    try out_stream.print("{X} # map({d})\n", .{ head, v });
+                },
+                else => {
+                    try out_stream.print("{X} {X} # map({d})\n", .{ head, v, v });
+                },
+            }
+            std.sort.sort(Pair, value, {}, pair_asc);
+            var i: usize = 0;
+            while (i < value.len) : (i += 1) {
+                // each pair consisting of a key...
+                try printDataItem(&value[i].key, level + 1, out_stream);
+                // ...that is immediately followed by a value.
+                try printDataItem(&value[i].value, level + 1, out_stream);
+            }
+        },
+        // The argument is the tag.
+        .tag => |value| {
+            switch (v) {
+                0x00...0x17 => {
+                    try out_stream.print("{X} # tag({d})\n", .{ head, v });
+                },
+                else => {
+                    try out_stream.print("{X} {X} # tag({d})\n", .{ head, v, v });
+                },
+            }
+            try printDataItem(value.content, level + 1, out_stream);
+        },
+        .simple => |value| {
+            _ = value;
+        },
+        else => unreachable, // float already handled
+    }
 }

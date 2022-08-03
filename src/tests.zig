@@ -755,6 +755,30 @@ test "MT7: encode f64 -4.1" {
     try std.testing.expectEqualSlices(u8, &.{ 0xfb, 0xc0, 0x10, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66 }, cbor);
 }
 
+test "MT7: encode simple values" {
+    const allocator = std.testing.allocator;
+
+    var di1 = DataItem.True();
+    const cbor1 = try encodeAlloc(allocator, &di1);
+    defer allocator.free(cbor1);
+    try std.testing.expectEqualSlices(u8, &.{0xf5}, cbor1);
+
+    var di2 = DataItem.False();
+    const cbor2 = try encodeAlloc(allocator, &di2);
+    defer allocator.free(cbor2);
+    try std.testing.expectEqualSlices(u8, &.{0xf4}, cbor2);
+
+    var di3 = DataItem.Null();
+    const cbor3 = try encodeAlloc(allocator, &di3);
+    defer allocator.free(cbor3);
+    try std.testing.expectEqualSlices(u8, &.{0xf6}, cbor3);
+
+    var di4 = DataItem.Undefined();
+    const cbor4 = try encodeAlloc(allocator, &di4);
+    defer allocator.free(cbor4);
+    try std.testing.expectEqualSlices(u8, &.{0xf7}, cbor4);
+}
+
 test "MT0,1: DataItem{ .int = 30 } to json" {
     const allocator = std.testing.allocator;
 

@@ -57,13 +57,12 @@ pub fn encode(out_stream: anytype, item: *const DataItem) CborError!void {
         .int => |value| {
             if (value < 0) head = 0x20;
         },
-        .bytes => |_| head = 0x40,
-        .text => |_| head = 0x60,
-        .array => |_| head = 0x80,
-        .map => |_| head = 0xa0,
-        .tag => |_| head = 0xc0,
-        .float => |_| head = 0xe0,
-        else => unreachable,
+        .bytes => head = 0x40,
+        .text => head = 0x60,
+        .array => head = 0x80,
+        .map => head = 0xa0,
+        .tag => head = 0xc0,
+        .float, .simple => head = 0xe0,
     }
 
     // The arguments value represents either a integer, float or size.
@@ -102,7 +101,9 @@ pub fn encode(out_stream: anytype, item: *const DataItem) CborError!void {
                 },
             }
         },
-        else => unreachable,
+        .simple => |value| {
+            v = @enumToInt(value);
+        },
     }
 
     switch (v) {
@@ -119,7 +120,7 @@ pub fn encode(out_stream: anytype, item: *const DataItem) CborError!void {
     }
 
     switch (item.*) {
-        .int, .float => {},
+        .int, .float, .simple => {},
         .bytes => |value| try out_stream.writeAll(value),
         .text => |value| try out_stream.writeAll(value),
         .array => |arr| {
@@ -144,6 +145,5 @@ pub fn encode(out_stream: anytype, item: *const DataItem) CborError!void {
             // Tag content is the single encoded data item that follows the head.
             try encode(out_stream, t.content);
         },
-        else => unreachable,
     }
 }
