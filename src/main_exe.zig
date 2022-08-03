@@ -153,8 +153,7 @@ fn printDataItem(item: *const DataItem, level: usize, out_stream: anytype) @Type
         .array => |_| head = 0x80,
         .map => |_| head = 0xa0,
         .tag => |_| head = 0xc0,
-        .float => |_| head = 0xe0,
-        else => unreachable,
+        .float, .simple => head = 0xe0,
     }
 
     // The arguments value represents either a integer, float or size.
@@ -191,7 +190,9 @@ fn printDataItem(item: *const DataItem, level: usize, out_stream: anytype) @Type
             }
             return;
         },
-        else => unreachable,
+        .simple => |value| {
+            v = @enumToInt(value);
+        },
     }
 
     switch (v) {
@@ -200,6 +201,20 @@ fn printDataItem(item: *const DataItem, level: usize, out_stream: anytype) @Type
         0x0100...0xffff => head |= 25,
         0x00010000...0xffffffff => head |= 26,
         0x0000000100000000...0xffffffffffffffff => head |= 27,
+    }
+
+    switch (item.*) {
+        .bytes, .text, .array, .map, .tag, .simple => {
+            switch (v) {
+                0x00...0x17 => {
+                    try out_stream.print("{X} # {s}({d})\n", .{ head, @tagName(item.*), v });
+                },
+                else => {
+                    try out_stream.print("{X} {X} # {s}({d})\n", .{ head, v, @tagName(item.*), v });
+                },
+            }
+        },
+        else => {},
     }
 
     switch (item.*) {
@@ -215,53 +230,21 @@ fn printDataItem(item: *const DataItem, level: usize, out_stream: anytype) @Type
         },
         // The number of bytes in the byte string is equal to the arugment.
         .bytes => |value| {
-            switch (v) {
-                0x00...0x17 => {
-                    try out_stream.print("{X} # bytes({d})\n\n", .{ head, v });
-                },
-                else => {
-                    try out_stream.print("{X} {X} # bytes({d})\n\n", .{ head, v, v });
-                },
-            }
-            try out_stream.print("{s}\n", .{std.fmt.fmtSliceHexUpper(value)});
+            try out_stream.print("\n{s}\n", .{std.fmt.fmtSliceHexUpper(value)});
         },
         // The number of bytes in the text string is equal to the arugment.
         .text => |value| {
-            switch (v) {
-                0x00...0x17 => {
-                    try out_stream.print("{X} # text({d})\n", .{ head, v });
-                },
-                else => {
-                    try out_stream.print("{X} {X} # text({d})\n", .{ head, v, v });
-                },
-            }
             try out_stream.writeByteNTimes(' ', level * 2 + 2);
             try out_stream.print("{s} # \"{s}\"\n", .{ std.fmt.fmtSliceHexUpper(value), value });
         },
         // The argument is the number of data items in the array.
         .array => |value| {
-            switch (v) {
-                0x00...0x17 => {
-                    try out_stream.print("{X} # array({d})\n", .{ head, v });
-                },
-                else => {
-                    try out_stream.print("{X} {X} # array({d})\n", .{ head, v, v });
-                },
-            }
             for (value) |*itm| {
                 try printDataItem(itm, level + 1, out_stream);
             }
         },
         // The argument is the number of (k,v) pairs.
         .map => |value| {
-            switch (v) {
-                0x00...0x17 => {
-                    try out_stream.print("{X} # map({d})\n", .{ head, v });
-                },
-                else => {
-                    try out_stream.print("{X} {X} # map({d})\n", .{ head, v, v });
-                },
-            }
             std.sort.sort(Pair, value, {}, pair_asc);
             var i: usize = 0;
             while (i < value.len) : (i += 1) {
@@ -273,19 +256,9 @@ fn printDataItem(item: *const DataItem, level: usize, out_stream: anytype) @Type
         },
         // The argument is the tag.
         .tag => |value| {
-            switch (v) {
-                0x00...0x17 => {
-                    try out_stream.print("{X} # tag({d})\n", .{ head, v });
-                },
-                else => {
-                    try out_stream.print("{X} {X} # tag({d})\n", .{ head, v, v });
-                },
-            }
             try printDataItem(value.content, level + 1, out_stream);
         },
-        .simple => |value| {
-            _ = value;
-        },
+        .simple => {},
         else => unreachable, // float already handled
     }
 }
