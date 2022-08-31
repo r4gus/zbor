@@ -107,7 +107,7 @@ pub const DataItemTag = enum { int, bytes, text, array, map, tag, float, simple 
 /// The structure of a DataItem may contain zero, one, or more nested DataItems.
 pub const DataItem = union(DataItemTag) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
-    int: i128,
+    int: i65,
     /// Major type 2: A byte string.
     bytes: []u8,
     /// Major type 3: A text string encoded as utf-8.
@@ -124,7 +124,7 @@ pub const DataItem = union(DataItemTag) {
     simple: SimpleValue,
 
     /// Create a new data item of type int.
-    pub fn int(value: i128) @This() {
+    pub fn int(value: i65) @This() {
         return DataItem{ .int = value };
     }
 
@@ -472,6 +472,48 @@ pub const DataItem = union(DataItemTag) {
         var json = std.ArrayList(u8).init(allocator);
         try std.json.stringify(self, .{}, json.writer());
         return json;
+    }
+
+    /// Parse a json token stream into a (nested) DataItem.
+    pub fn parseJson(allocator: Allocator, tokens: *std.json.TokenStream) !DataItem {
+        _ = allocator;
+
+        const token = (try tokens.next()) orelse return error.UnexpectedEndOfJson;
+
+        switch (token) {
+            .Number => |numberToken| {
+                if (numberToken.is_integer) { // int
+                    const num = std.fmt.parseInt(
+                        i65,
+                        numberToken.slice(tokens.slice, tokens.i - 1),
+                        10, // 0b = 2, 0o = 8, 0x = 16, 10 else
+                    ) catch |err| {
+                        if (err == std.fmt.ParseIntError.Overflow) {
+                            // Integer must be encoded as major type 6, tag
+                            // number 2 (positive) or 3 (negative).
+                            return err;
+                        }
+
+                        return err;
+                    };
+
+                    return DataItem{ .int = num };
+                } else { // float
+                    // TODO: how to choose the smallest representation possible???
+                    const float =
+                        try std.fmt.parseFloat(f64, numberToken.slice(tokens.slice, tokens.i - 1));
+
+                    if (float >= std.math.f16_min and float <= std.math.f16_max) {
+                        return DataItem.float16(@floatCast(f16, float));
+                    } else if (float >= std.math.f32_min and float <= std.math.f32_max) {
+                        return DataItem.float32(@floatCast(f32, float));
+                    } else {
+                        return DataItem.float64(float);
+                    }
+                }
+            },
+            else => return error.UnexpectedToken,
+        }
     }
 };
 

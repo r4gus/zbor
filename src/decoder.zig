@@ -83,12 +83,12 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
     switch (mt) {
         // MT0: Unsigned int, e.g. 1, 10, 23, 25.
         0 => {
-            return DataItem{ .int = @as(i128, val) };
+            return DataItem{ .int = @as(i65, val) };
         },
         // MT1: Signed int, e.g. -1, -10, -12345.
         1 => {
             // The value of the item is -1 minus the argument.
-            return DataItem{ .int = -1 - @as(i128, val) };
+            return DataItem{ .int = -1 - @as(i65, val) };
         },
         // Byte string (mt 2)
         // The number of bytes in the string is equal to the argument (val).

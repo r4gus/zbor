@@ -70,7 +70,7 @@ pub fn encode(out_stream: anytype, item: *const DataItem) CborError!void {
     switch (item.*) {
         .int => |value| {
             if (value < 0)
-                v = @intCast(u64, (-value) - 1)
+                v = @intCast(u64, (-(value + 1)))
             else
                 v = @intCast(u64, value);
         },

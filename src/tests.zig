@@ -25,7 +25,7 @@ fn test_data_item(data: []const u8, expected: DataItem) TestError!void {
     try std.testing.expectEqual(expected, dip);
 }
 
-fn test_data_item_eql(data: []const u8, expected: *DataItem) TestError!void {
+fn test_data_item_eql(data: []const u8, expected: *const DataItem) TestError!void {
     const allocator = std.testing.allocator;
     const dip = try decode(allocator, data);
     defer dip.deinit(allocator);
@@ -91,7 +91,7 @@ test "MT1: decode cbor signed integer value" {
 test "MT2: decode cbor byte string" {
     const allocator = std.testing.allocator;
 
-    try test_data_item(&.{0b01000000}, DataItem{ .bytes = &.{} });
+    try test_data_item_eql(&.{0b01000000}, &DataItem{ .bytes = &.{} });
 
     var di1 = try DataItem.bytes(allocator, &.{10});
     defer di1.deinit(allocator);
@@ -927,3 +927,53 @@ test "serialize WebAuthn attestationObject to json" {
 
     try std.testing.expectEqualStrings(expected, json.items);
 }
+
+test "MT0,1: json to DataItem{ .int = 30 }" {
+    const allocator = std.testing.allocator;
+
+    const j = "30";
+    var s = std.json.TokenStream.init(j);
+    const d = try DataItem.parseJson(allocator, &s);
+    const e = DataItem{ .int = 30 };
+    try std.testing.expectEqual(e, d);
+}
+
+test "MT0,1: json to DataItem{ .int = 0 }" {
+    const allocator = std.testing.allocator;
+
+    const j = "0";
+    var s = std.json.TokenStream.init(j);
+    const d = try DataItem.parseJson(allocator, &s);
+    const e = DataItem{ .int = 0 };
+    try std.testing.expectEqual(e, d);
+}
+
+test "MT0,1: json to DataItem{ .int = 18446744073709551615 }" {
+    const allocator = std.testing.allocator;
+
+    const j = "18446744073709551615";
+    var s = std.json.TokenStream.init(j);
+    const d = try DataItem.parseJson(allocator, &s);
+    const e = DataItem{ .int = 18446744073709551615 };
+    try std.testing.expectEqual(e, d);
+}
+
+test "MT0,1: json to DataItem{ .int = -18446744073709551616 }" {
+    const allocator = std.testing.allocator;
+
+    const j = "-18446744073709551616";
+    var s = std.json.TokenStream.init(j);
+    const d = try DataItem.parseJson(allocator, &s);
+    const e = DataItem{ .int = -18446744073709551616 };
+    try std.testing.expectEqual(e, d);
+}
+
+//test "MT7: json to f16 0.0" {
+//    const allocator = std.testing.allocator;
+//
+//    const j = "0.0";
+//    var s = std.json.TokenStream.init(j);
+//    const d = try DataItem.parseJson(allocator, &s);
+//    const e = DataItem.float16(0.0);
+//    try std.testing.expectEqual(e, d);
+//}
