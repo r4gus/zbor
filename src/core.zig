@@ -475,7 +475,7 @@ pub const DataItem = union(DataItemTag) {
     }
 
     /// Parse a json token stream into a (nested) DataItem.
-    pub fn parseJson(allocator: Allocator, tokens: *std.json.TokenStream) !DataItem {
+    pub fn parseJson(allocator: Allocator, tokens: *std.json.TokenStream) !@This() {
         _ = allocator;
 
         const token = (try tokens.next()) orelse return error.UnexpectedEndOfJson;
@@ -489,9 +489,58 @@ pub const DataItem = union(DataItemTag) {
                         10, // 0b = 2, 0o = 8, 0x = 16, 10 else
                     ) catch |err| {
                         if (err == std.fmt.ParseIntError.Overflow) {
-                            // Integer must be encoded as major type 6, tag
-                            // number 2 (positive) or 3 (negative).
-                            return err;
+                            // Big Ints must be encoded as major type 6, tag
+                            // number 2 (positive) or 3 (negative) in network
+                            // byte order (big-endian) - see RFC8949 §3.4.3
+                            const limb_bits = @typeInfo(std.math.big.Limb).Int.bits;
+
+                            const slice = numberToken.slice(tokens.slice, tokens.i - 1);
+
+                            // Turn the string into a big int
+                            var a = try std.math.big.int.Managed.init(allocator);
+                            defer a.deinit();
+                            var i: usize = 0;
+                            while (i < a.limbs.len) : (i += 1) {
+                                a.limbs[i] = 0;
+                            }
+                            try a.setString(10, slice);
+
+                            var t: u64 = 2;
+                            if (!a.isPositive()) {
+                                t = 3;
+
+                                // For tag number 3, the value of the bignum
+                                // is -1 -n.
+                                var b = try std.math.big.int.Managed.initSet(allocator, 1);
+                                defer b.deinit();
+
+                                try a.add(&a, &b);
+                            }
+
+                            // Allocate memory for the conversion into a byte slice
+                            const limb_bytes = limb_bits / 8;
+                            var b = try allocator.alloc(u8, a.limbs.len * limb_bytes);
+                            defer allocator.free(b);
+
+                            // Turn the big int into a byte slice
+                            var digits_len: usize = 0;
+                            for (a.limbs) |limb| {
+                                var shift: usize = 0;
+                                while (shift < limb_bits) : (shift += 8) {
+                                    b[digits_len] = @intCast(u8, (limb >> @intCast(std.math.big.Log2Limb, shift)) & 0xff);
+                                    digits_len += 1;
+                                }
+                            }
+
+                            // remove leading zeros
+                            while (b[digits_len - 1] == 0) {
+                                digits_len -= 1;
+                            }
+
+                            var x = b[0..digits_len];
+                            std.mem.reverse(u8, x);
+
+                            return try tagged(allocator, t, try bytes(allocator, x));
                         }
 
                         return err;
@@ -499,17 +548,11 @@ pub const DataItem = union(DataItemTag) {
 
                     return DataItem{ .int = num };
                 } else { // float
-                    // TODO: how to choose the smallest representation possible???
+                    // TODO: Find a way to choose the smallest represenation
+                    //       that represents the value (mor or less) exactly.
                     const float =
                         try std.fmt.parseFloat(f64, numberToken.slice(tokens.slice, tokens.i - 1));
-
-                    if (float >= std.math.f16_min and float <= std.math.f16_max) {
-                        return DataItem.float16(@floatCast(f16, float));
-                    } else if (float >= std.math.f32_min and float <= std.math.f32_max) {
-                        return DataItem.float32(@floatCast(f32, float));
-                    } else {
-                        return DataItem.float64(float);
-                    }
+                    return DataItem.float64(float);
                 }
             },
             else => return error.UnexpectedToken,
