@@ -1008,7 +1008,7 @@ test "MT6: bignum -147573952589680980818" {
     try std.testing.expect(e.equal(&d));
 }
 
-test "MT7: json to f16 0.0" {
+test "MT7: json to f64 0.0" {
     const allocator = std.testing.allocator;
 
     const j = "0.0";
@@ -1018,12 +1018,42 @@ test "MT7: json to f16 0.0" {
     try std.testing.expectEqual(e, d);
 }
 
-test "MT7: json to f32 100000.0" {
+test "MT7: json to f64 100000.0" {
     const allocator = std.testing.allocator;
 
     const j = "100000.0";
     var s = std.json.TokenStream.init(j);
     const d = try DataItem.parseJson(allocator, &s);
     const e = DataItem.float64(100000.0);
+    try std.testing.expectEqual(e, d);
+}
+
+test "MT7: json to true" {
+    const allocator = std.testing.allocator;
+
+    const j = "true";
+    var s = std.json.TokenStream.init(j);
+    const d = try DataItem.parseJson(allocator, &s);
+    const e = DataItem.True();
+    try std.testing.expectEqual(e, d);
+}
+
+test "MT7: json to false" {
+    const allocator = std.testing.allocator;
+
+    const j = "false";
+    var s = std.json.TokenStream.init(j);
+    const d = try DataItem.parseJson(allocator, &s);
+    const e = DataItem.False();
+    try std.testing.expectEqual(e, d);
+}
+
+test "MT7: json to null" {
+    const allocator = std.testing.allocator;
+
+    const j = "null";
+    var s = std.json.TokenStream.init(j);
+    const d = try DataItem.parseJson(allocator, &s);
+    const e = DataItem.Null();
     try std.testing.expectEqual(e, d);
 }

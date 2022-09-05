@@ -555,6 +555,9 @@ pub const DataItem = union(DataItemTag) {
                     return DataItem.float64(float);
                 }
             },
+            .True => return DataItem.True(),
+            .False => return DataItem.False(),
+            .Null => return DataItem.Null(),
             else => return error.UnexpectedToken,
         }
     }
