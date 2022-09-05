@@ -1,5 +1,9 @@
 # zbor - Zig CBOR
 
+![GitHub](https://img.shields.io/github/license/r4gus/zbor?style=flat-square)
+![GitHub Workflow Status](https://img.shields.io/github/workflow/status/r4gus/zbor/CI?style=flat-square)
+![GitHub all releases](https://img.shields.io/github/downloads/r4gus/zbor/total?style=flat-square)
+
 The Concise Binary Object Representation (CBOR) is a data format whose design 
 goals include the possibility of extremely small code size, fairly small 
 message size, and extensibility without the need for version negotiation
@@ -89,7 +93,7 @@ which field is active (also see: [Type of a DataItem](#type-of-a-dataitem)).
 
 Each field is associated with one of the major types 0-7:
 
-* `int` - An integer in the range $-2^{64}..2^{64}-1$; defined as `i128` (represents both major types 0 and 1)
+* `int` - An integer in the range $-2^{64}..2^{64}-1$; defined as `i65` (represents both major types 0 and 1)
 * `bytes`- A byte string; defined as `[]u8` (represents major type 2)
 * `text`- A text string; defined as `[]u8` (represents major type 3)
 * `array`- An array of `DataItem`s; defined as `[]DataItem`
