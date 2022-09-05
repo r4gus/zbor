@@ -968,6 +968,45 @@ test "MT0,1: json to DataItem{ .int = -18446744073709551616 }" {
     try std.testing.expectEqual(e, d);
 }
 
+test "MT3: json to text string 1" {
+    const allocator = std.testing.allocator;
+
+    const j = "\"IETF\"";
+    var s = std.json.TokenStream.init(j);
+    const d = try DataItem.parseJson(allocator, &s);
+    defer d.deinit(allocator);
+    const e = try DataItem.text(allocator, "IETF");
+    defer e.deinit(allocator);
+    try std.testing.expectEqualStrings(e.text, d.text);
+    try std.testing.expect(e.equal(&d));
+}
+
+test "MT3: json to text string 2" {
+    const allocator = std.testing.allocator;
+
+    const j = "\"\"";
+    var s = std.json.TokenStream.init(j);
+    const d = try DataItem.parseJson(allocator, &s);
+    defer d.deinit(allocator);
+    const e = try DataItem.text(allocator, &.{});
+    defer e.deinit(allocator);
+    try std.testing.expectEqualStrings(e.text, d.text);
+    try std.testing.expect(e.equal(&d));
+}
+
+test "MT3: json to text string 3" {
+    const allocator = std.testing.allocator;
+
+    const j = "\"a\"";
+    var s = std.json.TokenStream.init(j);
+    const d = try DataItem.parseJson(allocator, &s);
+    defer d.deinit(allocator);
+    const e = try DataItem.text(allocator, "a");
+    defer e.deinit(allocator);
+    try std.testing.expectEqualStrings(e.text, d.text);
+    try std.testing.expect(e.equal(&d));
+}
+
 test "MT6: bignum 2^64" {
     const allocator = std.testing.allocator;
 

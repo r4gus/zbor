@@ -558,6 +558,19 @@ pub const DataItem = union(DataItemTag) {
             .True => return DataItem.True(),
             .False => return DataItem.False(),
             .Null => return DataItem.Null(),
+            .String => |stringToken| {
+                const source_slice = stringToken.slice(tokens.slice, tokens.i - 1);
+
+                switch (stringToken.escapes) {
+                    .None => return try DataItem.text(allocator, source_slice),
+                    .Some => {
+                        const output = try allocator.alloc(u8, stringToken.decodedLength());
+                        errdefer allocator.free(output);
+                        try std.json.unescapeValidString(output, source_slice);
+                        return DataItem{ .text = output };
+                    },
+                }
+            },
             else => return error.UnexpectedToken,
         }
     }
