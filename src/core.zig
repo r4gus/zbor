@@ -476,8 +476,6 @@ pub const DataItem = union(DataItemTag) {
 
     /// Parse a json token stream into a (nested) DataItem.
     pub fn parseJson(allocator: Allocator, tokens: *std.json.TokenStream) !@This() {
-        _ = allocator;
-
         const token = (try tokens.next()) orelse return error.UnexpectedEndOfJson;
 
         switch (token) {
