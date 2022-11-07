@@ -109,13 +109,13 @@ pub const DataItem = union(DataItemTag) {
     /// Major type 0 and 1: An integer in the range -2^64..2^64-1
     int: i65,
     /// Major type 2: A byte string.
-    bytes: []u8,
+    bytes: []const u8,
     /// Major type 3: A text string encoded as utf-8.
-    text: []u8,
+    text: []const u8,
     /// Major type 4: An array of data items.
-    array: []DataItem,
+    array: []const DataItem,
     /// Major type 5: A map of pairs of data items.
-    map: []Pair,
+    map: []const Pair,
     /// Major type 6: A tagged data item.
     tag: Tag,
     /// Major type 7: IEEE 754 Half-, Single-, or Double-Precision float.
@@ -130,30 +130,34 @@ pub const DataItem = union(DataItemTag) {
 
     /// Create a new data item of type byte string.
     pub fn bytes(allocator: Allocator, value: []const u8) CborError!@This() {
-        var di = DataItem{ .bytes = try allocator.alloc(u8, value.len) };
-        std.mem.copy(u8, di.bytes, value);
-        return di;
+        var m = try allocator.alloc(u8, value.len);
+        std.mem.copy(u8, m, value);
+
+        return DataItem{ .bytes = m };
     }
 
     /// Create a new data item of type text string.
     pub fn text(allocator: Allocator, value: []const u8) CborError!@This() {
-        var di = DataItem{ .text = try allocator.alloc(u8, value.len) };
-        std.mem.copy(u8, di.text, value);
-        return di;
+        var m = try allocator.alloc(u8, value.len);
+        std.mem.copy(u8, m, value);
+
+        return DataItem{ .text = m };
     }
 
     /// Create a new data item of type array.
     pub fn array(allocator: Allocator, value: []const DataItem) CborError!@This() {
-        var di = DataItem{ .array = try allocator.alloc(DataItem, value.len) };
-        std.mem.copy(DataItem, di.array, value);
-        return di;
+        var m = try allocator.alloc(DataItem, value.len);
+        std.mem.copy(DataItem, m, value);
+
+        return DataItem{ .array = m };
     }
 
     /// Create a new data item of type map.
     pub fn map(allocator: Allocator, value: []const Pair) CborError!@This() {
-        var di = DataItem{ .map = try allocator.alloc(Pair, value.len) };
-        std.mem.copy(Pair, di.map, value);
-        return di;
+        var m = try allocator.alloc(Pair, value.len);
+        std.mem.copy(Pair, m, value);
+
+        return DataItem{ .map = m };
     }
 
     /// Create a new tagged data item.
@@ -288,7 +292,7 @@ pub const DataItem = union(DataItemTag) {
     ///
     /// Returns null if the DataItem is not an array or if the
     /// given index is out of bounds.
-    pub fn get(self: *@This(), index: usize) ?*DataItem {
+    pub fn get(self: *const @This(), index: usize) ?*const DataItem {
         if (@as(DataItemTag, self.*) != DataItemTag.array) {
             return null;
         }
@@ -304,7 +308,7 @@ pub const DataItem = union(DataItemTag) {
     ///
     /// Retruns null if the DataItem is not a map or if the key couldn't
     /// be found; a pointer to the associated value otherwise.
-    pub fn getValue(self: *@This(), key: *const DataItem) ?*DataItem {
+    pub fn getValue(self: *const @This(), key: *const DataItem) ?*const DataItem {
         if (@as(DataItemTag, self.*) != DataItemTag.map) {
             return null;
         }
@@ -324,7 +328,7 @@ pub const DataItem = union(DataItemTag) {
     ///
     /// Retruns null if the DataItem is not a map or if the key couldn't
     /// be found; a pointer to the associated value otherwise.
-    pub fn getValueByString(self: *@This(), key: []const u8) ?*DataItem {
+    pub fn getValueByString(self: *const @This(), key: []const u8) ?*const DataItem {
         if (@as(DataItemTag, self.*) != DataItemTag.map) {
             return null;
         }

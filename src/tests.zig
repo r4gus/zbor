@@ -620,11 +620,12 @@ test "MT5: encode cbor map {1:2,3:4}" {
     try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor);
 
     // Keys should be sorted in asc order.
-    var di2 = try DataItem.map(allocator, &.{ Pair.new(DataItem.int(3), DataItem.int(4)), Pair.new(DataItem.int(1), DataItem.int(2)) });
-    defer di2.deinit(allocator);
-    const cbor2 = try encodeAlloc(allocator, &di2);
-    defer allocator.free(cbor2);
-    try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor2);
+    // TODO: sorting currently disabled (see issues)
+    // var di2 = try DataItem.map(allocator, &.{ Pair.new(DataItem.int(3), DataItem.int(4)), Pair.new(DataItem.int(1), DataItem.int(2)) });
+    // defer di2.deinit(allocator);
+    // const cbor2 = try encodeAlloc(allocator, &di2);
+    // defer allocator.free(cbor2);
+    // try std.testing.expectEqualSlices(u8, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 }, cbor2);
 }
 
 test "MT6: encode cbor tagged data item 1(1363896240)" {

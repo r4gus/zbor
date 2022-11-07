@@ -131,7 +131,8 @@ pub fn encode(out_stream: anytype, item: *const DataItem) CborError!void {
         },
         .map => |m| {
             // Sort keys lowest to highest (CTAP2 canonical CBOR encoding form)
-            std.sort.sort(Pair, m, {}, pair_asc);
+            // TODO: see issuses
+            //std.sort.sort(Pair, m, {}, pair_asc);
 
             var i: usize = 0;
             while (i < m.len) : (i += 1) {

@@ -95,44 +95,48 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
         2 => {
             if (index.* + @as(usize, val) > data.len) return CborError.Malformed; // Not enough bytes available.
 
-            var item = DataItem{ .bytes = try allocator.alloc(u8, @as(usize, val)) };
-            std.mem.copy(u8, item.bytes, data[index.* .. index.* + @as(usize, val)]);
+            var m = try allocator.alloc(u8, @as(usize, val));
+            std.mem.copy(u8, m, data[index.* .. index.* + @as(usize, val)]);
             index.* += @as(usize, val);
-            return item;
+
+            return DataItem{ .bytes = m };
         },
         // Text string (mt 3)
         3 => {
             if (index.* + @as(usize, val) > data.len) return CborError.Malformed; // Not enough bytes available.
 
-            var item = DataItem{ .text = try allocator.alloc(u8, @as(usize, val)) };
-            std.mem.copy(u8, item.text, data[index.* .. index.* + @as(usize, val)]);
+            var m = try allocator.alloc(u8, @as(usize, val));
+            std.mem.copy(u8, m, data[index.* .. index.* + @as(usize, val)]);
             index.* += @as(usize, val);
-            return item;
+
+            return DataItem{ .text = m };
         },
         // MT4: DataItem array, e.g. [], [1, 2, 3], [1, [2, 3], [4, 5]].
         4 => {
-            var item = DataItem{ .array = try allocator.alloc(DataItem, @as(usize, val)) };
-            errdefer item.deinit(allocator);
+            var m = try allocator.alloc(DataItem, @as(usize, val));
+            errdefer allocator.free(m);
             var i: usize = 0;
             while (i < val) : (i += 1) {
                 // The index will be incremented by the recursive call to decode_.
-                item.array[i] = try decode_(data, index, allocator, false);
+                m[i] = try decode_(data, index, allocator, false);
             }
-            return item;
+
+            return DataItem{ .array = m };
         },
         // MT5: Map of pairs of DataItem, e.g. {1:2, 3:4}.
         5 => {
-            var item = DataItem{ .map = try allocator.alloc(Pair, @as(usize, val)) };
-            errdefer item.deinit(allocator);
+            var m = try allocator.alloc(Pair, @as(usize, val));
+            errdefer allocator.free(m);
             var i: usize = 0;
             while (i < val) : (i += 1) {
                 // The index will be incremented by the recursive call to decode_.
                 const k = try decode_(data, index, allocator, false);
                 errdefer k.deinit(allocator);
                 const v = try decode_(data, index, allocator, false);
-                item.map[i] = Pair{ .key = k, .value = v };
+                m[i] = Pair{ .key = k, .value = v };
             }
-            return item;
+
+            return DataItem{ .map = m };
         },
         // MT6: Tagged data item, e.g. 1("a").
         6 => {

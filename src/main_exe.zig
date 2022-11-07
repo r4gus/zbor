@@ -245,7 +245,7 @@ fn printDataItem(item: *const DataItem, level: usize, out_stream: anytype) @Type
         },
         // The argument is the number of (k,v) pairs.
         .map => |value| {
-            std.sort.sort(Pair, value, {}, pair_asc);
+            //std.sort.sort(Pair, value, {}, pair_asc);
             var i: usize = 0;
             while (i < value.len) : (i += 1) {
                 // each pair consisting of a key...
