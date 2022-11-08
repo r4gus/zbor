@@ -5,6 +5,7 @@ const testing = std.testing;
 const core = @import("core.zig");
 const encoder = @import("encoder.zig");
 const decoder = @import("decoder.zig");
+const parser = @import("parse.zig");
 
 pub const CborError = core.CborError;
 pub const Pair = core.Pair;
@@ -18,6 +19,7 @@ pub const DataItem = core.DataItem;
 pub const encode = encoder.encode;
 pub const encodeAlloc = encoder.encodeAlloc;
 pub const decode = decoder.decode;
+pub const parse = parser.parse;
 
 test {
     const tests = @import("tests.zig");
@@ -26,4 +28,5 @@ test {
     _ = encoder;
     _ = decoder;
     _ = tests;
+    _ = parser;
 }
