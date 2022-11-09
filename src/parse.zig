@@ -89,10 +89,22 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                     for (v) |kv| {
                         var found = false;
 
-                        if (!kv.key.isText()) continue;
+                        if (!kv.key.isText() and !kv.key.isInt()) continue;
 
                         inline for (structInfo.fields) |field, i| {
-                            if (std.mem.eql(u8, field.name, kv.key.text)) {
+                            var match: bool = false;
+
+                            if (kv.key.isInt()) {
+                                const allocator = options.allocator orelse return ParseError.AllocatorRequired;
+
+                                const x = try std.fmt.allocPrint(allocator, "{d}", .{kv.key.int});
+                                defer allocator.free(x);
+                                match = std.mem.eql(u8, field.name, x);
+                            } else {
+                                match = std.mem.eql(u8, field.name, kv.key.text);
+                            }
+
+                            if (match) {
                                 if (fields_seen[i]) {
                                     switch (options.duplicate_field_behavior) {
                                         .UseFirst => {
@@ -342,6 +354,27 @@ test "parse struct: 6 (duplicate field error)" {
     defer di.deinit(allocator);
 
     try std.testing.expectError(ParseError.DuplicateCborField, parse(Config, di, .{}));
+}
+
+test "parse struct: 7" {
+    const allocator = std.testing.allocator;
+
+    const Config = struct {
+        @"1": struct { @"1": u8, @"2": u8 },
+        @"2": u64,
+    };
+
+    const di = try DataItem.map(allocator, &.{ Pair.new(DataItem.int(1), try DataItem.map(allocator, &.{
+        Pair.new(DataItem.int(1), DataItem.int(1)),
+        Pair.new(DataItem.int(2), DataItem.int(42)),
+    })), Pair.new(DataItem.int(2), DataItem.int(9999)) });
+    defer di.deinit(allocator);
+
+    const c = try parse(Config, di, .{ .allocator = allocator });
+
+    try std.testing.expectEqual(c.@"2", 9999);
+    try std.testing.expectEqual(c.@"1".@"1", 1);
+    try std.testing.expectEqual(c.@"1".@"2", 42);
 }
 
 test "parse optional value" {

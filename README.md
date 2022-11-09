@@ -348,6 +348,15 @@ const config = try parse(Config, di, .{});
 _ = config; // do something
 ```
 
+If you have a CBOR map with integers as keys, you can use `@\"<nr>\"`, e.g.:
+
+```zig
+const Config = struct {
+    @"1": struct { @"1": u8, @"2": u8 },
+    @"2": u64,
+};
+```
+
 Supported types are `bool`, `float`, `int`, `struct`, `array` and types are allowed to be optional.
 
 ## CTAP2 canonical CBOR encoding
