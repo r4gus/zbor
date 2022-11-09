@@ -24,7 +24,7 @@ used to decode CBOR data.
 - CBOR decoder
 - CBOR encoder
 - CBOR to JSON serialization
-- JSON to CBOR serialization (comming soon)
+- CBOR to Zig parser
 
 A CBOR byte string is decoded into a (nested) `DataItem` data structure, which 
 can be inspected and manipulated.
@@ -315,7 +315,40 @@ try std.testing.expectEqualStrings("{\"a\":1,\"b\":[2,3]}", string.items);
 
 ### JSON to DataItem
 
-Comming soon...
+Comming... when its done
+
+### Dataitem to Zig
+
+One can parse CBOR into a struct and other Zig types.
+
+```zig
+const cbor = @import("zbor");
+
+// {
+//   "vals": {
+//     "testing": 1,
+//     "production": 42,
+//   },
+//   "uptime": 9999
+// }
+const payload = "\xa2\x64\x76\x61\x6c\x73\xa2\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x6a\x70\x72\x6f\x64\x75\x63\x74\x69\x6f\x6e\x18\x2a\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f";
+
+const Config = struct {
+    vals: struct { testing: u8, production: u8 },
+    uptime: u64,
+};
+
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
+
+var data_item = try cbor.decode(allocator, payload);
+defer data_item.deinit(allocator);
+
+const config = try parse(Config, di, .{});
+_ = config; // do something
+```
+
+Supported types are `bool`, `float`, `int`, `struct`, `array` and types are allowed to be optional.
 
 ## CTAP2 canonical CBOR encoding
 
@@ -324,7 +357,7 @@ as possible.
 
 * Integers are encoded as small as possible.
     * 0 to 23 and -1 to -24 must be expressed in the same byte as the major type;
-    * 24 to 255 and -25 to -256 must be expressed only with an additional uint8_t;
+    * 24 to 255 and -25 to -256 must be expressed only with an additional uint8\_t;
     * 256 to 65535 and -257 to -65536 must be expressed only with an additional uint16\_t;
     * 65536 to 4294967295 and -65537 to -4294967296 must be expressed only with an additional uint32\_t.
 * The representations of any floating-point values are not changed.
@@ -413,7 +446,7 @@ E5A1E2572625A3BFB876033DBFB22A969C938B89CE171359400A1252D9702A91293D54519E960DD
 09129E225820EF404B880765576007888A3ED6ABFFB4257B7123553325D450613CB5BC9A3A52
 ```
 
-## Project status
+## Supported types
 
 ### Supported types by decoder
 
