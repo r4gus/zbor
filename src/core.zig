@@ -1,6 +1,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+pub const Options = struct {
+    allocator: ?Allocator = null,
+};
+
 pub const CborError = error{
     /// Values are reserved for future additions to the CBOR format.
     /// In the present version of CBOR, the encoded item is not well-formed.
@@ -129,35 +133,47 @@ pub const DataItem = union(DataItemTag) {
     }
 
     /// Create a new data item of type byte string.
-    pub fn bytes(allocator: Allocator, value: []const u8) CborError!@This() {
-        var m = try allocator.alloc(u8, value.len);
-        std.mem.copy(u8, m, value);
-
-        return DataItem{ .bytes = m };
+    pub fn bytes(value: []const u8, options: Options) CborError!@This() {
+        if (options.allocator) |a| {
+            var m = try a.alloc(u8, value.len);
+            std.mem.copy(u8, m, value);
+            return DataItem{ .bytes = m };
+        } else {
+            return DataItem{ .bytes = value };
+        }
     }
 
     /// Create a new data item of type text string.
-    pub fn text(allocator: Allocator, value: []const u8) CborError!@This() {
-        var m = try allocator.alloc(u8, value.len);
-        std.mem.copy(u8, m, value);
-
-        return DataItem{ .text = m };
+    pub fn text(value: []const u8, options: Options) CborError!@This() {
+        if (options.allocator) |a| {
+            var m = try a.alloc(u8, value.len);
+            std.mem.copy(u8, m, value);
+            return DataItem{ .text = m };
+        } else {
+            return DataItem{ .text = value };
+        }
     }
 
     /// Create a new data item of type array.
-    pub fn array(allocator: Allocator, value: []const DataItem) CborError!@This() {
-        var m = try allocator.alloc(DataItem, value.len);
-        std.mem.copy(DataItem, m, value);
-
-        return DataItem{ .array = m };
+    pub fn array(value: []const DataItem, options: Options) CborError!@This() {
+        if (options.allocator) |a| {
+            var m = try a.alloc(DataItem, value.len);
+            std.mem.copy(DataItem, m, value);
+            return DataItem{ .array = m };
+        } else {
+            return DataItem{ .array = value };
+        }
     }
 
     /// Create a new data item of type map.
-    pub fn map(allocator: Allocator, value: []const Pair) CborError!@This() {
-        var m = try allocator.alloc(Pair, value.len);
-        std.mem.copy(Pair, m, value);
-
-        return DataItem{ .map = m };
+    pub fn map(value: []const Pair, options: Options) CborError!@This() {
+        if (options.allocator) |a| {
+            var m = try a.alloc(Pair, value.len);
+            std.mem.copy(Pair, m, value);
+            return DataItem{ .map = m };
+        } else {
+            return DataItem{ .map = value };
+        }
     }
 
     /// Create a new tagged data item.
@@ -206,14 +222,14 @@ pub const DataItem = union(DataItemTag) {
     /// The bignum is represented in network byte order (big endian, i.e. the
     /// lowest memory address holds the most significant byte).
     pub fn unsignedBignum(allocator: Allocator, value: []const u8) CborError!@This() {
-        return try DataItem.tagged(allocator, 2, try DataItem.bytes(allocator, value));
+        return try DataItem.tagged(allocator, 2, try DataItem.bytes(value, .{ .allocator = allocator }));
     }
 
     /// Create a signed bignum (tag = 3, type = byte string).
     /// The bignum is represented in network byte order (big endian, i.e. the
     /// lowest memory address holds the most significant byte).
     pub fn signedBignum(allocator: Allocator, value: []const u8) CborError!@This() {
-        return try DataItem.tagged(allocator, 3, try DataItem.bytes(allocator, value));
+        return try DataItem.tagged(allocator, 3, try DataItem.bytes(value, .{ .allocator = allocator }));
     }
 
     /// Recursively free all allocated memory.
@@ -542,7 +558,7 @@ pub const DataItem = union(DataItemTag) {
                             var x = b[0..digits_len];
                             std.mem.reverse(u8, x);
 
-                            return try tagged(allocator, t, try bytes(allocator, x));
+                            return try tagged(allocator, t, try bytes(x, .{ .allocator = allocator }));
                         }
 
                         return err;
@@ -564,7 +580,7 @@ pub const DataItem = union(DataItemTag) {
                 const source_slice = stringToken.slice(tokens.slice, tokens.i - 1);
 
                 switch (stringToken.escapes) {
-                    .None => return try DataItem.text(allocator, source_slice),
+                    .None => return try DataItem.text(source_slice, .{ .allocator = allocator }),
                     .Some => {
                         const output = try allocator.alloc(u8, stringToken.decodedLength());
                         errdefer allocator.free(output);

@@ -94,10 +94,10 @@ which field is active (also see: [Type of a DataItem](#type-of-a-dataitem)).
 Each field is associated with one of the major types 0-7:
 
 * `int` - An integer in the range $-2^{64}..2^{64}-1$; defined as `i65` (represents both major types 0 and 1)
-* `bytes`- A byte string; defined as `[]u8` (represents major type 2)
-* `text`- A text string; defined as `[]u8` (represents major type 3)
-* `array`- An array of `DataItem`s; defined as `[]DataItem`
-* `map`- A map of (key, value) pairs; defined as `[]Pair`
+* `bytes`- A byte string; defined as `[]const u8` (represents major type 2)
+* `text`- A text string; defined as `[]const u8` (represents major type 3)
+* `array`- An array of `DataItem`s; defined as `[]const DataItem`
+* `map`- A map of (key, value) pairs; defined as `[]const Pair`
 * `tag` - A tagged data item; defined as `Tag`
 * `float` - A 16-, 32- or 64-bit floating-point value; defined as `Float`
 * `simple` - A simple value; defined as `SimpleValue`
@@ -105,6 +105,13 @@ Each field is associated with one of the major types 0-7:
     * `True`
     * `Null`
     * `Undefined`
+
+#### Options
+
+Some helper functions (`bytes()`, `text()`, `array()` and `map()`) take a `Options`
+struct as an argument instead of a `Allocator`. If you want to reference data
+directly (without allocating any extra memory on the head) just pass `.{}` as the
+last argument, otherwise specify an allocator, e.g `.{ .allocator = allocator }`.
 
 #### Type of a DataItem
 
@@ -138,7 +145,7 @@ The following code defines a new bytes `DataItem`:
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
-const di = try DataItem.bytes(allocator, &.{0x1, 0x2, 0x3, 0x4, 0x5});
+const di = try DataItem.bytes(&.{0x1, 0x2, 0x3, 0x4, 0x5}, .{ .allocator = allocator });
 // The DataItem doesn't store the used allocator so one must
 // provide it to deinit().
 defer di.deinit(allocator);
@@ -156,7 +163,7 @@ A new text string can created using the following code:
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
-const di = try DataItem.text(allocator, "IETF");
+const di = try DataItem.text("IETF", .{ .allocator = allocator });
 // The DataItem doesn't store the used allocator so one must
 // provide it to deinit().
 defer di.deinit(allocator);
@@ -177,7 +184,7 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
 // Create an array of two data items of type int (mt 0)
-const di = try DataItem.array(allocator, &.{DataItem.int(1), DataItem.int(2)});
+const di = try DataItem.array(&.{DataItem.int(1), DataItem.int(2)}, .{ .allocator = allocator });
 // The DataItem doesn't store the used allocator so one must
 // provide it to deinit().
 defer di.deinit(allocator);
@@ -210,7 +217,7 @@ pub const Pair = struct { key: DataItem, value: DataItem };
 
 You can create a new pair using the `new()` function:
 ```zig
-const p = Pair.new(try DataItem.text(allocator, "a"), DataItem.int(2)); // "a":2
+const p = Pair.new(try DataItem.text("a", .{}), DataItem.int(2)); // "a":2
 ```
 
 A new map can be created using the following code:
@@ -220,10 +227,10 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
 // Create an map: {1:2,3:4}
-var di = try DataItem.map(allocator, &.{
+var di = try DataItem.map(&.{
     Pair.new(DataItem.int(1), DataItem.int(2)), // 1:2
     Pair.new(DataItem.int(3), DataItem.int(4))  // 3:4
-});
+}, .{ .allocator = allocator });
 // The DataItem doesn't store the used allocator so one must
 // provide it to deinit().
 defer di.deinit(allocator);

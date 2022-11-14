@@ -46,14 +46,14 @@ test "DataItem.equal test" {
 
     var allocator = std.testing.allocator;
 
-    var di5 = try DataItem.bytes(allocator, &.{10});
+    var di5 = try DataItem.bytes(&.{10}, .{ .allocator = allocator });
     defer di5.deinit(allocator);
 
     try std.testing.expect(!di5.equal(&di1));
     try std.testing.expect(!di1.equal(&di5));
     try std.testing.expect(di5.equal(&di5));
 
-    var di6 = try DataItem.bytes(allocator, &.{10});
+    var di6 = try DataItem.bytes(&.{10}, .{ .allocator = allocator });
     defer di6.deinit(allocator);
 
     try std.testing.expect(di5.equal(&di6));
@@ -93,11 +93,11 @@ test "MT2: decode cbor byte string" {
 
     try test_data_item_eql(&.{0b01000000}, &DataItem{ .bytes = &.{} });
 
-    var di1 = try DataItem.bytes(allocator, &.{10});
+    var di1 = try DataItem.bytes(&.{10}, .{ .allocator = allocator });
     defer di1.deinit(allocator);
     try test_data_item_eql(&.{ 0b01000001, 0x0a }, &di1);
 
-    var di2 = try DataItem.bytes(allocator, &.{ 10, 11, 12, 13, 14 });
+    var di2 = try DataItem.bytes(&.{ 10, 11, 12, 13, 14 }, .{ .allocator = allocator });
     defer di2.deinit(allocator);
     try test_data_item_eql(&.{ 0b01000101, 0x0a, 0xb, 0xc, 0xd, 0xe }, &di2);
 
@@ -108,23 +108,23 @@ test "MT2: decode cbor byte string" {
 test "MT3: decode cbor text string" {
     const allocator = std.testing.allocator;
 
-    try test_data_item(&.{0x60}, try DataItem.text(allocator, &.{}));
+    try test_data_item(&.{0x60}, try DataItem.text(&.{}, .{ .allocator = allocator }));
 
-    const exp1 = try DataItem.text(allocator, "a");
+    const exp1 = try DataItem.text("a", .{ .allocator = allocator });
     defer exp1.deinit(allocator);
     const di1 = try decode(allocator, &.{ 0x61, 0x61 });
     defer di1.deinit(allocator);
     try std.testing.expectEqualSlices(u8, exp1.text, di1.text);
     try std.testing.expect(exp1.equal(&di1));
 
-    const exp2 = try DataItem.text(allocator, "IETF");
+    const exp2 = try DataItem.text("IETF", .{ .allocator = allocator });
     defer exp2.deinit(allocator);
     const di2 = try decode(allocator, &.{ 0x64, 0x49, 0x45, 0x54, 0x46 });
     defer di2.deinit(allocator);
     try std.testing.expectEqualSlices(u8, exp2.text, di2.text);
     try std.testing.expect(exp2.equal(&di2));
 
-    const exp3 = try DataItem.text(allocator, "\"\\");
+    const exp3 = try DataItem.text("\"\\", .{ .allocator = allocator });
     defer exp3.deinit(allocator);
     const di3 = try decode(allocator, &.{ 0x62, 0x22, 0x5c });
     defer di3.deinit(allocator);
@@ -141,25 +141,25 @@ test "MT3: decode cbor text string" {
 test "MT4: decode cbor array" {
     const allocator = std.testing.allocator;
 
-    const exp1 = try DataItem.array(allocator, &.{});
+    const exp1 = try DataItem.array(&.{}, .{ .allocator = allocator });
     defer exp1.deinit(allocator);
     const di1 = try decode(allocator, &.{0x80});
     defer di1.deinit(allocator);
     try std.testing.expect(exp1.equal(&di1));
 
-    const exp2 = try DataItem.array(allocator, &.{ DataItem.int(1), DataItem.int(2), DataItem.int(3) });
+    const exp2 = try DataItem.array(&.{ DataItem.int(1), DataItem.int(2), DataItem.int(3) }, .{ .allocator = allocator });
     defer exp2.deinit(allocator);
     const di2 = try decode(allocator, &.{ 0x83, 0x01, 0x02, 0x03 });
     defer di2.deinit(allocator);
     try std.testing.expect(exp2.equal(&di2));
 
-    const exp3 = try DataItem.array(allocator, &.{ DataItem.int(1), try DataItem.array(allocator, &.{ DataItem.int(2), DataItem.int(3) }), try DataItem.array(allocator, &.{ DataItem.int(4), DataItem.int(5) }) });
+    const exp3 = try DataItem.array(&.{ DataItem.int(1), try DataItem.array(&.{ DataItem.int(2), DataItem.int(3) }, .{ .allocator = allocator }), try DataItem.array(&.{ DataItem.int(4), DataItem.int(5) }, .{ .allocator = allocator }) }, .{ .allocator = allocator });
     defer exp3.deinit(allocator);
     const di3 = try decode(allocator, &.{ 0x83, 0x01, 0x82, 0x02, 0x03, 0x82, 0x04, 0x05 });
     defer di3.deinit(allocator);
     try std.testing.expect(exp3.equal(&di3));
 
-    const exp4 = try DataItem.array(allocator, &.{ DataItem.int(1), DataItem.int(2), DataItem.int(3), DataItem.int(4), DataItem.int(5), DataItem.int(6), DataItem.int(7), DataItem.int(8), DataItem.int(9), DataItem.int(10), DataItem.int(11), DataItem.int(12), DataItem.int(13), DataItem.int(14), DataItem.int(15), DataItem.int(16), DataItem.int(17), DataItem.int(18), DataItem.int(19), DataItem.int(20), DataItem.int(21), DataItem.int(22), DataItem.int(23), DataItem.int(24), DataItem.int(25) });
+    const exp4 = try DataItem.array(&.{ DataItem.int(1), DataItem.int(2), DataItem.int(3), DataItem.int(4), DataItem.int(5), DataItem.int(6), DataItem.int(7), DataItem.int(8), DataItem.int(9), DataItem.int(10), DataItem.int(11), DataItem.int(12), DataItem.int(13), DataItem.int(14), DataItem.int(15), DataItem.int(16), DataItem.int(17), DataItem.int(18), DataItem.int(19), DataItem.int(20), DataItem.int(21), DataItem.int(22), DataItem.int(23), DataItem.int(24), DataItem.int(25) }, .{ .allocator = allocator });
     defer exp4.deinit(allocator);
     const di4 = try decode(allocator, &.{ 0x98, 0x19, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x18, 0x18, 0x19 });
     defer di4.deinit(allocator);
@@ -176,7 +176,7 @@ test "MT4: decode cbor array" {
 test "MT5: decode empty cbor map" {
     const allocator = std.testing.allocator;
 
-    const exp1 = try DataItem.map(allocator, &.{});
+    const exp1 = try DataItem.map(&.{}, .{ .allocator = allocator });
     defer exp1.deinit(allocator);
     const di1 = try decode(allocator, &.{0xa0});
     defer di1.deinit(allocator);
@@ -186,7 +186,7 @@ test "MT5: decode empty cbor map" {
 test "MT5: decode cbor map {1:2,3:4}" {
     const allocator = std.testing.allocator;
 
-    const exp1 = try DataItem.map(allocator, &.{ Pair.new(DataItem.int(1), DataItem.int(2)), Pair.new(DataItem.int(3), DataItem.int(4)) });
+    const exp1 = try DataItem.map(&.{ Pair.new(DataItem.int(1), DataItem.int(2)), Pair.new(DataItem.int(3), DataItem.int(4)) }, .{ .allocator = allocator });
     defer exp1.deinit(allocator);
     const di1 = try decode(allocator, &.{ 0xa2, 0x01, 0x02, 0x03, 0x04 });
     defer di1.deinit(allocator);
@@ -196,7 +196,7 @@ test "MT5: decode cbor map {1:2,3:4}" {
 test "MT5: decode cbor map {\"a\":1,\"b\":[2,3]}" {
     const allocator = std.testing.allocator;
 
-    const exp1 = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "a"), DataItem.int(1)), Pair.new(try DataItem.text(allocator, "b"), try DataItem.array(allocator, &.{ DataItem.int(2), DataItem.int(3) })) });
+    const exp1 = try DataItem.map(&.{ Pair.new(try DataItem.text("a", .{ .allocator = allocator }), DataItem.int(1)), Pair.new(try DataItem.text("b", .{ .allocator = allocator }), try DataItem.array(&.{ DataItem.int(2), DataItem.int(3) }, .{ .allocator = allocator })) }, .{ .allocator = allocator });
     defer exp1.deinit(allocator);
     const di1 = try decode(allocator, &.{ 0xa2, 0x61, 0x61, 0x01, 0x61, 0x62, 0x82, 0x02, 0x03 });
     defer di1.deinit(allocator);
@@ -206,7 +206,7 @@ test "MT5: decode cbor map {\"a\":1,\"b\":[2,3]}" {
 test "MT5: decode cbor map within array [\"a\",{\"b\":\"c\"}]" {
     const allocator = std.testing.allocator;
 
-    const exp1 = try DataItem.array(allocator, &.{ try DataItem.text(allocator, "a"), try DataItem.map(allocator, &.{Pair.new(try DataItem.text(allocator, "b"), try DataItem.text(allocator, "c"))}) });
+    const exp1 = try DataItem.array(&.{ try DataItem.text("a", .{ .allocator = allocator }), try DataItem.map(&.{Pair.new(try DataItem.text("b", .{ .allocator = allocator }), try DataItem.text("c", .{ .allocator = allocator }))}, .{ .allocator = allocator }) }, .{ .allocator = allocator });
     defer exp1.deinit(allocator);
     const di1 = try decode(allocator, &.{ 0x82, 0x61, 0x61, 0xa1, 0x61, 0x62, 0x61, 0x63 });
     defer di1.deinit(allocator);
@@ -216,7 +216,7 @@ test "MT5: decode cbor map within array [\"a\",{\"b\":\"c\"}]" {
 test "MT5: decode cbor map of text pairs" {
     const allocator = std.testing.allocator;
 
-    const exp1 = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "a"), try DataItem.text(allocator, "A")), Pair.new(try DataItem.text(allocator, "b"), try DataItem.text(allocator, "B")), Pair.new(try DataItem.text(allocator, "c"), try DataItem.text(allocator, "C")), Pair.new(try DataItem.text(allocator, "d"), try DataItem.text(allocator, "D")), Pair.new(try DataItem.text(allocator, "e"), try DataItem.text(allocator, "E")) });
+    const exp1 = try DataItem.map(&.{ Pair.new(try DataItem.text("a", .{ .allocator = allocator }), try DataItem.text("A", .{ .allocator = allocator })), Pair.new(try DataItem.text("b", .{ .allocator = allocator }), try DataItem.text("B", .{ .allocator = allocator })), Pair.new(try DataItem.text("c", .{ .allocator = allocator }), try DataItem.text("C", .{ .allocator = allocator })), Pair.new(try DataItem.text("d", .{ .allocator = allocator }), try DataItem.text("D", .{ .allocator = allocator })), Pair.new(try DataItem.text("e", .{ .allocator = allocator }), try DataItem.text("E", .{ .allocator = allocator })) }, .{ .allocator = allocator });
     defer exp1.deinit(allocator);
     const di1 = try decode(allocator, &.{ 0xa5, 0x61, 0x61, 0x61, 0x41, 0x61, 0x62, 0x61, 0x42, 0x61, 0x63, 0x61, 0x43, 0x61, 0x64, 0x61, 0x44, 0x61, 0x65, 0x61, 0x45 });
     defer di1.deinit(allocator);
@@ -236,7 +236,7 @@ test "MT6: decode cbor tagged data item 1(1363896240)" {
 test "MT6: decode cbor tagged data item 32(\"http://www.example.com\")" {
     const allocator = std.testing.allocator;
 
-    const exp1 = try DataItem.tagged(allocator, 32, try DataItem.text(allocator, "http://www.example.com"));
+    const exp1 = try DataItem.tagged(allocator, 32, try DataItem.text("http://www.example.com", .{ .allocator = allocator }));
     defer exp1.deinit(allocator);
     const di1 = try decode(allocator, &.{ 0xd8, 0x20, 0x76, 0x68, 0x74, 0x74, 0x70, 0x3a, 0x2f, 0x2f, 0x77, 0x77, 0x77, 0x2e, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d });
     defer di1.deinit(allocator);
@@ -517,25 +517,25 @@ test "MT1: encode cbor signed integer value" {
 test "MT2: encode cbor byte string" {
     const allocator = std.testing.allocator;
 
-    var di1 = try DataItem.bytes(allocator, &.{});
+    var di1 = try DataItem.bytes(&.{}, .{ .allocator = allocator });
     defer di1.deinit(allocator);
     const cbor1 = try encodeAlloc(allocator, &di1);
     defer allocator.free(cbor1);
     try std.testing.expectEqualSlices(u8, &.{0b01000000}, cbor1);
 
-    var di2 = try DataItem.bytes(allocator, &.{10});
+    var di2 = try DataItem.bytes(&.{10}, .{ .allocator = allocator });
     defer di2.deinit(allocator);
     const cbor2 = try encodeAlloc(allocator, &di2);
     defer allocator.free(cbor2);
     try std.testing.expectEqualSlices(u8, &.{ 0x41, 0x0a }, cbor2);
 
-    var di3 = try DataItem.bytes(allocator, &.{ 10, 11, 12, 13, 14 });
+    var di3 = try DataItem.bytes(&.{ 10, 11, 12, 13, 14 }, .{ .allocator = allocator });
     defer di3.deinit(allocator);
     const cbor3 = try encodeAlloc(allocator, &di3);
     defer allocator.free(cbor3);
     try std.testing.expectEqualSlices(u8, &.{ 0x45, 0x0a, 0xb, 0xc, 0xd, 0xe }, cbor3);
 
-    var di4 = try DataItem.bytes(allocator, &.{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 });
+    var di4 = try DataItem.bytes(&.{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 }, .{ .allocator = allocator });
     defer di4.deinit(allocator);
     const cbor4 = try encodeAlloc(allocator, &di4);
     defer allocator.free(cbor4);
@@ -545,25 +545,25 @@ test "MT2: encode cbor byte string" {
 test "MT3: encode cbor text string" {
     const allocator = std.testing.allocator;
 
-    var di1 = try DataItem.text(allocator, &.{});
+    var di1 = try DataItem.text(&.{}, .{ .allocator = allocator });
     defer di1.deinit(allocator);
     const cbor1 = try encodeAlloc(allocator, &di1);
     defer allocator.free(cbor1);
     try std.testing.expectEqualSlices(u8, &.{0x60}, cbor1);
 
-    var di2 = try DataItem.text(allocator, "a");
+    var di2 = try DataItem.text("a", .{ .allocator = allocator });
     defer di2.deinit(allocator);
     const cbor2 = try encodeAlloc(allocator, &di2);
     defer allocator.free(cbor2);
     try std.testing.expectEqualSlices(u8, &.{ 0x61, 0x61 }, cbor2);
 
-    var di3 = try DataItem.text(allocator, "IETF");
+    var di3 = try DataItem.text("IETF", .{ .allocator = allocator });
     defer di3.deinit(allocator);
     const cbor3 = try encodeAlloc(allocator, &di3);
     defer allocator.free(cbor3);
     try std.testing.expectEqualSlices(u8, &.{ 0x64, 0x49, 0x45, 0x54, 0x46 }, cbor3);
 
-    var di4 = try DataItem.text(allocator, "\"\\");
+    var di4 = try DataItem.text("\"\\", .{ .allocator = allocator });
     defer di4.deinit(allocator);
     const cbor4 = try encodeAlloc(allocator, &di4);
     defer allocator.free(cbor4);
@@ -575,25 +575,25 @@ test "MT3: encode cbor text string" {
 test "MT4: encode cbor array" {
     const allocator = std.testing.allocator;
 
-    var di1 = try DataItem.array(allocator, &.{});
+    var di1 = try DataItem.array(&.{}, .{ .allocator = allocator });
     defer di1.deinit(allocator);
     const cbor1 = try encodeAlloc(allocator, &di1);
     defer allocator.free(cbor1);
     try std.testing.expectEqualSlices(u8, &.{0x80}, cbor1);
 
-    var di2 = try DataItem.array(allocator, &.{ DataItem.int(1), DataItem.int(2), DataItem.int(3) });
+    var di2 = try DataItem.array(&.{ DataItem.int(1), DataItem.int(2), DataItem.int(3) }, .{ .allocator = allocator });
     defer di2.deinit(allocator);
     const cbor2 = try encodeAlloc(allocator, &di2);
     defer allocator.free(cbor2);
     try std.testing.expectEqualSlices(u8, &.{ 0x83, 0x01, 0x02, 0x03 }, cbor2);
 
-    const di3 = try DataItem.array(allocator, &.{ DataItem.int(1), try DataItem.array(allocator, &.{ DataItem.int(2), DataItem.int(3) }), try DataItem.array(allocator, &.{ DataItem.int(4), DataItem.int(5) }) });
+    const di3 = try DataItem.array(&.{ DataItem.int(1), try DataItem.array(&.{ DataItem.int(2), DataItem.int(3) }, .{ .allocator = allocator }), try DataItem.array(&.{ DataItem.int(4), DataItem.int(5) }, .{ .allocator = allocator }) }, .{ .allocator = allocator });
     defer di3.deinit(allocator);
     const cbor3 = try encodeAlloc(allocator, &di3);
     defer allocator.free(cbor3);
     try std.testing.expectEqualSlices(u8, &.{ 0x83, 0x01, 0x82, 0x02, 0x03, 0x82, 0x04, 0x05 }, cbor3);
 
-    const di4 = try DataItem.array(allocator, &.{ DataItem.int(1), DataItem.int(2), DataItem.int(3), DataItem.int(4), DataItem.int(5), DataItem.int(6), DataItem.int(7), DataItem.int(8), DataItem.int(9), DataItem.int(10), DataItem.int(11), DataItem.int(12), DataItem.int(13), DataItem.int(14), DataItem.int(15), DataItem.int(16), DataItem.int(17), DataItem.int(18), DataItem.int(19), DataItem.int(20), DataItem.int(21), DataItem.int(22), DataItem.int(23), DataItem.int(24), DataItem.int(25) });
+    const di4 = try DataItem.array(&.{ DataItem.int(1), DataItem.int(2), DataItem.int(3), DataItem.int(4), DataItem.int(5), DataItem.int(6), DataItem.int(7), DataItem.int(8), DataItem.int(9), DataItem.int(10), DataItem.int(11), DataItem.int(12), DataItem.int(13), DataItem.int(14), DataItem.int(15), DataItem.int(16), DataItem.int(17), DataItem.int(18), DataItem.int(19), DataItem.int(20), DataItem.int(21), DataItem.int(22), DataItem.int(23), DataItem.int(24), DataItem.int(25) }, .{ .allocator = allocator });
     defer di4.deinit(allocator);
     const cbor4 = try encodeAlloc(allocator, &di4);
     defer allocator.free(cbor4);
@@ -603,7 +603,7 @@ test "MT4: encode cbor array" {
 test "MT5: encode empty cbor map" {
     const allocator = std.testing.allocator;
 
-    var di = try DataItem.map(allocator, &.{});
+    var di = try DataItem.map(&.{}, .{ .allocator = allocator });
     defer di.deinit(allocator);
     const cbor = try encodeAlloc(allocator, &di);
     defer allocator.free(cbor);
@@ -613,7 +613,7 @@ test "MT5: encode empty cbor map" {
 test "MT5: encode cbor map {1:2,3:4}" {
     const allocator = std.testing.allocator;
 
-    var di = try DataItem.map(allocator, &.{ Pair.new(DataItem.int(1), DataItem.int(2)), Pair.new(DataItem.int(3), DataItem.int(4)) });
+    var di = try DataItem.map(&.{ Pair.new(DataItem.int(1), DataItem.int(2)), Pair.new(DataItem.int(3), DataItem.int(4)) }, .{ .allocator = allocator });
     defer di.deinit(allocator);
     const cbor = try encodeAlloc(allocator, &di);
     defer allocator.free(cbor);
@@ -641,7 +641,7 @@ test "MT6: encode cbor tagged data item 1(1363896240)" {
 test "MT6: encode cbor tagged data item 32(\"http://www.example.com\")" {
     const allocator = std.testing.allocator;
 
-    var di = try DataItem.tagged(allocator, 32, try DataItem.text(allocator, "http://www.example.com"));
+    var di = try DataItem.tagged(allocator, 32, try DataItem.text("http://www.example.com", .{ .allocator = allocator }));
     defer di.deinit(allocator);
     const cbor = try encodeAlloc(allocator, &di);
     defer allocator.free(cbor);
@@ -795,7 +795,7 @@ test "MT0,1: DataItem{ .int = 30 } to json" {
 test "MT2: DataItem to json" {
     const allocator = std.testing.allocator;
 
-    const di = try DataItem.bytes(allocator, &.{ 0x95, 0x28, 0xe0, 0x8f, 0x32, 0xda, 0x3d, 0x36, 0x83, 0xc4, 0x6a, 0x1c, 0x36, 0x58, 0xb4, 0x86, 0x47, 0x2b });
+    const di = try DataItem.bytes(&.{ 0x95, 0x28, 0xe0, 0x8f, 0x32, 0xda, 0x3d, 0x36, 0x83, 0xc4, 0x6a, 0x1c, 0x36, 0x58, 0xb4, 0x86, 0x47, 0x2b }, .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     var string = std.ArrayList(u8).init(allocator);
@@ -808,7 +808,7 @@ test "MT2: DataItem to json" {
 test "MT3: DataItem to json" {
     const allocator = std.testing.allocator;
 
-    const di = try DataItem.text(allocator, "fido-u2f");
+    const di = try DataItem.text("fido-u2f", .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     var string = std.ArrayList(u8).init(allocator);
@@ -821,7 +821,7 @@ test "MT3: DataItem to json" {
 test "MT4: DataItem to json" {
     const allocator = std.testing.allocator;
 
-    const di = try DataItem.array(allocator, &.{ DataItem.int(1), DataItem.int(2), DataItem.int(3) });
+    const di = try DataItem.array(&.{ DataItem.int(1), DataItem.int(2), DataItem.int(3) }, .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     var string = std.ArrayList(u8).init(allocator);
@@ -834,7 +834,7 @@ test "MT4: DataItem to json" {
 test "MT5: DataItem to json" {
     const allocator = std.testing.allocator;
 
-    const di = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "a"), DataItem.int(1)), Pair.new(try DataItem.text(allocator, "b"), try DataItem.array(allocator, &.{ DataItem.int(2), DataItem.int(3) })) });
+    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("a", .{ .allocator = allocator }), DataItem.int(1)), Pair.new(try DataItem.text("b", .{ .allocator = allocator }), try DataItem.array(&.{ DataItem.int(2), DataItem.int(3) }, .{ .allocator = allocator })) }, .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     var string = std.ArrayList(u8).init(allocator);
@@ -851,9 +851,9 @@ test "MT6: BigNum and other tagged values to json" {
     defer di1.deinit(allocator);
     const di2 = try DataItem.signedBignum(allocator, &.{ 0xf6, 0x53, 0xd8, 0xf5, 0x55, 0x8b, 0xf2, 0x49, 0x1d, 0x90, 0x96, 0x13, 0x44, 0x8d, 0xd1, 0xd3 });
     defer di2.deinit(allocator);
-    const di3 = try DataItem.tagged(allocator, 22, try DataItem.bytes(allocator, &.{ 0xf6, 0x53, 0xd8, 0xf5, 0x55, 0x8b, 0xf2, 0x49, 0x1d, 0x90, 0x96, 0x13, 0x44, 0x8d, 0xd1, 0xd3 }));
+    const di3 = try DataItem.tagged(allocator, 22, try DataItem.bytes(&.{ 0xf6, 0x53, 0xd8, 0xf5, 0x55, 0x8b, 0xf2, 0x49, 0x1d, 0x90, 0x96, 0x13, 0x44, 0x8d, 0xd1, 0xd3 }, .{ .allocator = allocator }));
     defer di3.deinit(allocator);
-    const di4 = try DataItem.tagged(allocator, 23, try DataItem.bytes(allocator, "abcd"));
+    const di4 = try DataItem.tagged(allocator, 23, try DataItem.bytes("abcd", .{ .allocator = allocator }));
     defer di4.deinit(allocator);
 
     const json1 = try di1.toJson(allocator);
@@ -976,7 +976,7 @@ test "MT3: json to text string 1" {
     var s = std.json.TokenStream.init(j);
     const d = try DataItem.parseJson(allocator, &s);
     defer d.deinit(allocator);
-    const e = try DataItem.text(allocator, "IETF");
+    const e = try DataItem.text("IETF", .{ .allocator = allocator });
     defer e.deinit(allocator);
     try std.testing.expectEqualStrings(e.text, d.text);
     try std.testing.expect(e.equal(&d));
@@ -989,7 +989,7 @@ test "MT3: json to text string 2" {
     var s = std.json.TokenStream.init(j);
     const d = try DataItem.parseJson(allocator, &s);
     defer d.deinit(allocator);
-    const e = try DataItem.text(allocator, &.{});
+    const e = try DataItem.text(&.{}, .{ .allocator = allocator });
     defer e.deinit(allocator);
     try std.testing.expectEqualStrings(e.text, d.text);
     try std.testing.expect(e.equal(&d));
@@ -1002,7 +1002,7 @@ test "MT3: json to text string 3" {
     var s = std.json.TokenStream.init(j);
     const d = try DataItem.parseJson(allocator, &s);
     defer d.deinit(allocator);
-    const e = try DataItem.text(allocator, "a");
+    const e = try DataItem.text("a", .{ .allocator = allocator });
     defer e.deinit(allocator);
     try std.testing.expectEqualStrings(e.text, d.text);
     try std.testing.expect(e.equal(&d));
@@ -1015,7 +1015,7 @@ test "MT6: bignum 2^64" {
     var s = std.json.TokenStream.init(j);
     const d = try DataItem.parseJson(allocator, &s);
     defer d.deinit(allocator);
-    const e = try DataItem.tagged(allocator, 2, try DataItem.bytes(allocator, &.{ 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }));
+    const e = try DataItem.tagged(allocator, 2, try DataItem.bytes(&.{ 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, .{ .allocator = allocator }));
     defer e.deinit(allocator);
     //try std.testing.expectEqual(e, d);
     try std.testing.expect(d.isTagged());
@@ -1031,7 +1031,7 @@ test "MT6: bignum 147573952589680980818" {
     var s = std.json.TokenStream.init(j);
     const d = try DataItem.parseJson(allocator, &s);
     defer d.deinit(allocator);
-    const e = try DataItem.tagged(allocator, 2, try DataItem.bytes(allocator, &.{ 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x45, 0xB3, 0x52 }));
+    const e = try DataItem.tagged(allocator, 2, try DataItem.bytes(&.{ 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x45, 0xB3, 0x52 }, .{ .allocator = allocator }));
     defer e.deinit(allocator);
     try std.testing.expect(e.equal(&d));
 }
@@ -1043,7 +1043,7 @@ test "MT6: bignum -147573952589680980818" {
     var s = std.json.TokenStream.init(j);
     const d = try DataItem.parseJson(allocator, &s);
     defer d.deinit(allocator);
-    const e = try DataItem.tagged(allocator, 3, try DataItem.bytes(allocator, &.{ 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x45, 0xB3, 0x51 }));
+    const e = try DataItem.tagged(allocator, 3, try DataItem.bytes(&.{ 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x45, 0xB3, 0x51 }, .{ .allocator = allocator }));
     defer e.deinit(allocator);
     try std.testing.expect(e.equal(&d));
 }

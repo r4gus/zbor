@@ -16,12 +16,11 @@ const DataItem = core.DataItem;
 /// The caller is responsible for deallocation, e.g. `defer data_item.deinit()`.
 pub fn decode(allocator: Allocator, data: []const u8) CborError!DataItem {
     var index: usize = 0;
-    return decode_(data, &index, allocator, false);
+    return decode_(data, &index, allocator);
 }
 
 // calling function is responsible for deallocating memory.
-fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: bool) CborError!DataItem {
-    _ = breakable;
+fn decode_(data: []const u8, index: *usize, allocator: Allocator) CborError!DataItem {
     const head: u8 = data[index.*];
     index.* += 1;
     const mt: u8 = head >> 5; // the 3 msb represent the major type.
@@ -118,7 +117,7 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
             var i: usize = 0;
             while (i < val) : (i += 1) {
                 // The index will be incremented by the recursive call to decode_.
-                m[i] = try decode_(data, index, allocator, false);
+                m[i] = try decode_(data, index, allocator);
             }
 
             return DataItem{ .array = m };
@@ -130,9 +129,9 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
             var i: usize = 0;
             while (i < val) : (i += 1) {
                 // The index will be incremented by the recursive call to decode_.
-                const k = try decode_(data, index, allocator, false);
+                const k = try decode_(data, index, allocator);
                 errdefer k.deinit(allocator);
-                const v = try decode_(data, index, allocator, false);
+                const v = try decode_(data, index, allocator);
                 m[i] = Pair{ .key = k, .value = v };
             }
 
@@ -144,7 +143,7 @@ fn decode_(data: []const u8, index: *usize, allocator: Allocator, breakable: boo
             errdefer allocator.destroy(item);
             // The enclosed data item (tag content) is the single encoded data
             // item that follows the head.
-            item.* = try decode_(data, index, allocator, false);
+            item.* = try decode_(data, index, allocator);
             return DataItem{ .tag = Tag{ .number = val, .content = item } };
         },
         7 => {

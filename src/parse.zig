@@ -252,10 +252,10 @@ test "parse struct: 1" {
         uptime: u64,
     };
 
-    const di = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "vals"), try DataItem.map(allocator, &.{
-        Pair.new(try DataItem.text(allocator, "testing"), DataItem.int(1)),
-        Pair.new(try DataItem.text(allocator, "production"), DataItem.int(42)),
-    })), Pair.new(try DataItem.text(allocator, "uptime"), DataItem.int(9999)) });
+    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("vals", .{ .allocator = allocator }), try DataItem.map(&.{
+        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(1)),
+        Pair.new(try DataItem.text("production", .{ .allocator = allocator }), DataItem.int(42)),
+    }, .{ .allocator = allocator })), Pair.new(try DataItem.text("uptime", .{ .allocator = allocator }), DataItem.int(9999)) }, .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     const c = try parse(Config, di, .{});
@@ -273,9 +273,9 @@ test "parse struct: 2 (optional missing field)" {
         uptime: u64,
     };
 
-    const di = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "vals"), try DataItem.map(allocator, &.{
-        Pair.new(try DataItem.text(allocator, "testing"), DataItem.int(1)),
-    })), Pair.new(try DataItem.text(allocator, "uptime"), DataItem.int(9999)) });
+    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("vals", .{ .allocator = allocator }), try DataItem.map(&.{
+        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(1)),
+    }, .{ .allocator = allocator })), Pair.new(try DataItem.text("uptime", .{ .allocator = allocator }), DataItem.int(9999)) }, .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     const c = try parse(Config, di, .{});
@@ -291,9 +291,9 @@ test "parse struct: 3 (missing field)" {
         uptime: u64,
     };
 
-    const di = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "vals"), try DataItem.map(allocator, &.{
-        Pair.new(try DataItem.text(allocator, "testing"), DataItem.int(1)),
-    })), Pair.new(try DataItem.text(allocator, "uptime"), DataItem.int(9999)) });
+    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("vals", .{ .allocator = allocator }), try DataItem.map(&.{
+        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(1)),
+    }, .{ .allocator = allocator })), Pair.new(try DataItem.text("uptime", .{ .allocator = allocator }), DataItem.int(9999)) }, .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     try std.testing.expectError(ParseError.MissingField, parse(Config, di, .{}));
@@ -307,10 +307,10 @@ test "parse struct: 4 (unknown field)" {
         uptime: u64,
     };
 
-    const di = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "vals"), try DataItem.map(allocator, &.{
-        Pair.new(try DataItem.text(allocator, "testing"), DataItem.int(1)),
-        Pair.new(try DataItem.text(allocator, "production"), DataItem.int(42)),
-    })), Pair.new(try DataItem.text(allocator, "uptime"), DataItem.int(9999)) });
+    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("vals", .{ .allocator = allocator }), try DataItem.map(&.{
+        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(1)),
+        Pair.new(try DataItem.text("production", .{ .allocator = allocator }), DataItem.int(42)),
+    }, .{ .allocator = allocator })), Pair.new(try DataItem.text("uptime", .{ .allocator = allocator }), DataItem.int(9999)) }, .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     try std.testing.expectError(ParseError.UnknownField, parse(Config, di, .{ .ignore_unknown_fields = false }));
@@ -324,11 +324,11 @@ test "parse struct: 5 (duplicate field use first)" {
         uptime: u64,
     };
 
-    const di = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "vals"), try DataItem.map(allocator, &.{
-        Pair.new(try DataItem.text(allocator, "testing"), DataItem.int(1)),
-        Pair.new(try DataItem.text(allocator, "production"), DataItem.int(42)),
-        Pair.new(try DataItem.text(allocator, "testing"), DataItem.int(7)),
-    })), Pair.new(try DataItem.text(allocator, "uptime"), DataItem.int(9999)) });
+    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("vals", .{ .allocator = allocator }), try DataItem.map(&.{
+        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(1)),
+        Pair.new(try DataItem.text("production", .{ .allocator = allocator }), DataItem.int(42)),
+        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(7)),
+    }, .{ .allocator = allocator })), Pair.new(try DataItem.text("uptime", .{ .allocator = allocator }), DataItem.int(9999)) }, .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     const c = try parse(Config, di, .{ .duplicate_field_behavior = .UseFirst });
@@ -346,11 +346,11 @@ test "parse struct: 6 (duplicate field error)" {
         uptime: u64,
     };
 
-    const di = try DataItem.map(allocator, &.{ Pair.new(try DataItem.text(allocator, "vals"), try DataItem.map(allocator, &.{
-        Pair.new(try DataItem.text(allocator, "testing"), DataItem.int(1)),
-        Pair.new(try DataItem.text(allocator, "production"), DataItem.int(42)),
-        Pair.new(try DataItem.text(allocator, "testing"), DataItem.int(7)),
-    })), Pair.new(try DataItem.text(allocator, "uptime"), DataItem.int(9999)) });
+    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("vals", .{ .allocator = allocator }), try DataItem.map(&.{
+        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(1)),
+        Pair.new(try DataItem.text("production", .{ .allocator = allocator }), DataItem.int(42)),
+        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(7)),
+    }, .{ .allocator = allocator })), Pair.new(try DataItem.text("uptime", .{ .allocator = allocator }), DataItem.int(9999)) }, .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     try std.testing.expectError(ParseError.DuplicateCborField, parse(Config, di, .{}));
@@ -364,10 +364,10 @@ test "parse struct: 7" {
         @"2": u64,
     };
 
-    const di = try DataItem.map(allocator, &.{ Pair.new(DataItem.int(1), try DataItem.map(allocator, &.{
+    const di = try DataItem.map(&.{ Pair.new(DataItem.int(1), try DataItem.map(&.{
         Pair.new(DataItem.int(1), DataItem.int(1)),
         Pair.new(DataItem.int(2), DataItem.int(42)),
-    })), Pair.new(DataItem.int(2), DataItem.int(9999)) });
+    }, .{ .allocator = allocator })), Pair.new(DataItem.int(2), DataItem.int(9999)) }, .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     const c = try parse(Config, di, .{ .allocator = allocator });
@@ -390,7 +390,7 @@ test "parse array: 1" {
     const allocator = std.testing.allocator;
 
     const e = [5]u8{ 1, 2, 3, 4, 5 };
-    const di = try DataItem.array(allocator, &.{ DataItem.int(1), DataItem.int(2), DataItem.int(3), DataItem.int(4), DataItem.int(5) });
+    const di = try DataItem.array(&.{ DataItem.int(1), DataItem.int(2), DataItem.int(3), DataItem.int(4), DataItem.int(5) }, .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     const x = try parse([5]u8, di, .{});
@@ -402,7 +402,7 @@ test "parse array: 2" {
     const allocator = std.testing.allocator;
 
     const e = [5]?u8{ 1, null, 3, null, 5 };
-    const di = try DataItem.array(allocator, &.{ DataItem.int(1), DataItem.Null(), DataItem.int(3), DataItem.Null(), DataItem.int(5) });
+    const di = try DataItem.array(&.{ DataItem.int(1), DataItem.Null(), DataItem.int(3), DataItem.Null(), DataItem.int(5) }, .{ .allocator = allocator });
     defer di.deinit(allocator);
 
     const x = try parse([5]?u8, di, .{});
@@ -432,14 +432,14 @@ test "parse slice" {
     const allocator = std.testing.allocator;
 
     var e1: []const u8 = &.{ 1, 2, 3, 4, 5 };
-    const di1 = try DataItem.bytes(allocator, &.{ 1, 2, 3, 4, 5 });
+    const di1 = try DataItem.bytes(&.{ 1, 2, 3, 4, 5 }, .{ .allocator = allocator });
     defer di1.deinit(allocator);
     const c1 = try parse([]const u8, di1, .{ .allocator = allocator });
     defer allocator.free(c1);
     try std.testing.expectEqualSlices(u8, e1, c1);
 
     var e2: []const u8 = &.{ 1, 2, 3, 4, 5 };
-    const di2 = try DataItem.array(allocator, &.{ DataItem.int(1), DataItem.int(2), DataItem.int(3), DataItem.int(4), DataItem.int(5) });
+    const di2 = try DataItem.array(&.{ DataItem.int(1), DataItem.int(2), DataItem.int(3), DataItem.int(4), DataItem.int(5) }, .{ .allocator = allocator });
     defer di2.deinit(allocator);
     const c2 = try parse([]const u8, di2, .{ .allocator = allocator });
     defer allocator.free(c2);
