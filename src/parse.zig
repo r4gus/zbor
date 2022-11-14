@@ -11,6 +11,7 @@ const SimpleValue = core.SimpleValue;
 const DataItemTag = core.DataItemTag;
 const DataItem = core.DataItem;
 const decode = @import("decoder.zig").decode;
+const encoder = @import("encoder.zig");
 
 pub const ParseError = error{
     UnexpectedItem,
@@ -21,6 +22,11 @@ pub const ParseError = error{
     MissingField,
     AllocatorRequired,
     Overflow,
+    OutOfMemory,
+};
+
+pub const StringifyError = error{
+    UnsupportedItem,
     OutOfMemory,
 };
 
@@ -212,6 +218,132 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
     }
 }
 
+pub const StringifyOptions = struct {
+    skip_null_fields: bool = true,
+    slice_as_text: bool = true,
+};
+
+pub fn stringify(
+    value: anytype,
+    options: StringifyOptions,
+    out: anytype,
+) StringifyError!void {
+    const T = @TypeOf(value);
+    var head: u8 = 0;
+    switch (@typeInfo(T)) {
+        .Int, .ComptimeInt => head = if (value < 0) 0x20 else 0,
+        .Float, .ComptimeFloat, .Bool, .Null => head = 0xe0,
+        .Array => head = 0x80,
+        .Struct => head = 0xa0, // Struct becomes a Map.
+        .Optional => {}, // <- This value will be ignored.
+        .Pointer => |ptr_info| switch (ptr_info.size) {
+            .Slice => {
+                if (ptr_info.child == u8) {
+                    if (options.slice_as_text and std.unicode.utf8ValidateSlice(value)) {
+                        head = 0x60;
+                    } else {
+                        head = 0x40;
+                    }
+                } else {
+                    head = 0x80;
+                }
+            },
+            .One => {
+                try stringify(value.*, options, out);
+                return;
+            },
+            else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
+        },
+        else => {
+            return .UnsupportedItem;
+        }, // TODO: add remaining options
+    }
+
+    var v: u64 = switch (@typeInfo(T)) {
+        .Int, .ComptimeInt => @intCast(u64, if (value < 0) -(value + 1) else value),
+        .Float, .ComptimeFloat => {
+            // TODO: implement
+            // TODO: Encode as small as possible!
+            // TODO: Handle values that cant fit in u64 (->tagged)
+            return;
+        },
+        .Bool => if (value) 21 else 20,
+        .Null => 22,
+        .Struct => |S| @intCast(u64, S.fields.len),
+        .Optional => {
+            if (value) |payload| {
+                try stringify(payload, options, out);
+                return;
+            } else {
+                try stringify(null, options, out);
+                return;
+            }
+        },
+        .Pointer => |ptr_info| switch (ptr_info.size) {
+            .Slice => @intCast(u64, value.len),
+            else => {},
+        },
+        else => unreachable, // caught by the first check
+    };
+
+    switch (v) {
+        0x00...0x17 => {
+            try out.writeByte(head | @intCast(u8, v));
+        },
+        0x18...0xff => {
+            try out.writeByte(head | 24);
+            try out.writeByte(@intCast(u8, v));
+        },
+        0x0100...0xffff => try encoder.encode_2(out, head, v),
+        0x00010000...0xffffffff => try encoder.encode_4(out, head, v),
+        0x0000000100000000...0xffffffffffffffff => try encoder.encode_8(out, head, v),
+    }
+
+    switch (@typeInfo(T)) {
+        .Int, .ComptimeInt, .Float, .ComptimeFloat, .Bool, .Null => {},
+        .Struct => |S| {
+            inline for (S.fields) |Field| {
+                // don't include void fields
+                if (Field.field_type == void) continue;
+
+                // dont't include (optional) null fields
+                if (@typeInfo(Field.field_type) == .Optional) {
+                    if (options.skip_null_fields) {
+                        if (@field(value, Field.name) == null) {
+                            continue;
+                        }
+                    }
+                }
+
+                try stringify(Field.name, options, out); // key
+                try stringify(@field(value, Field.name), options, out); // value
+            }
+        },
+        .Pointer => |ptr_info| switch (ptr_info.size) {
+            .Slice => {
+                if (ptr_info.child == u8) {
+                    try out.writeAll(value);
+                } else {
+                    for (value) |x| {
+                        try stringify(x, options, out);
+                    }
+                }
+            },
+            else => {},
+        },
+        else => unreachable, // caught by the previous check
+    }
+}
+
+fn testStringify(e: []const u8, v: anytype, o: StringifyOptions) !void {
+    const allocator = std.testing.allocator;
+    var str = std.ArrayList(u8).init(allocator);
+    defer str.deinit();
+
+    try stringify(v, o, str.writer());
+    try std.testing.expectEqualSlices(u8, e, str.items);
+}
+
 test "parse boolean" {
     const t = DataItem.True();
     const f = DataItem.False();
@@ -236,12 +368,43 @@ test "parse float" {
     try std.testing.expectApproxEqRel(try parse(f64, f3, .{}), -12.06, 0.01);
 }
 
+test "stringify float" {
+    // TODO
+}
+
 test "parse int" {
     const i_1 = DataItem.int(255);
     const i_2 = DataItem.int(256);
 
     try std.testing.expectEqual(try parse(u8, i_1, .{}), 255);
     try std.testing.expectError(ParseError.Overflow, parse(u8, i_2, .{}));
+}
+
+test "stringify int" {
+    try testStringify("\x00", 0, .{});
+    try testStringify("\x01", 1, .{});
+    try testStringify("\x0a", 10, .{});
+    try testStringify("\x17", 23, .{});
+    try testStringify("\x18\x18", 24, .{});
+    try testStringify("\x18\x19", 25, .{});
+    try testStringify("\x18\x64", 100, .{});
+    try testStringify("\x18\x7b", 123, .{});
+    try testStringify("\x19\x03\xe8", 1000, .{});
+    try testStringify("\x19\x04\xd2", 1234, .{});
+    try testStringify("\x1a\x00\x01\xe2\x40", 123456, .{});
+    try testStringify("\x1a\x00\x0f\x42\x40", 1000000, .{});
+    try testStringify("\x1b\x00\x00\x00\x02\xdf\xdc\x1c\x34", 12345678900, .{});
+    try testStringify("\x1b\x00\x00\x00\xe8\xd4\xa5\x10\x00", 1000000000000, .{});
+    try testStringify("\x1b\xff\xff\xff\xff\xff\xff\xff\xff", 18446744073709551615, .{});
+
+    try testStringify("\x20", -1, .{});
+    try testStringify("\x22", -3, .{});
+    try testStringify("\x38\x63", -100, .{});
+    try testStringify("\x39\x01\xf3", -500, .{});
+    try testStringify("\x39\x03\xe7", -1000, .{});
+    try testStringify("\x3a\x00\x0f\x3d\xdc", -998877, .{});
+    try testStringify("\x3b\x00\x00\x00\x02\x53\x60\xa2\xce", -9988776655, .{});
+    try testStringify("\x3b\xff\xff\xff\xff\xff\xff\xff\xff", -18446744073709551616, .{});
 }
 
 test "parse struct: 1" {
@@ -386,6 +549,14 @@ test "parse optional value" {
     try std.testing.expectEqual(e2, try parse(?u32, DataItem.Undefined(), .{}));
 }
 
+test "stringify optional value" {
+    const e1: ?u32 = 1234;
+    const e2: ?u32 = null;
+
+    try testStringify("\xf6", e2, .{});
+    try testStringify("\x19\x04\xd2", e1, .{});
+}
+
 test "parse array: 1" {
     const allocator = std.testing.allocator;
 
@@ -465,3 +636,64 @@ test "parse from payload" {
     try std.testing.expectEqual(config.vals.testing, 1);
     try std.testing.expectEqual(config.vals.production, 42);
 }
+
+test "stringify simple value" {
+    try testStringify("\xf4", false, .{});
+    try testStringify("\xf5", true, .{});
+    try testStringify("\xf6", null, .{});
+}
+
+test "stringify pointer" {
+    const x1: u32 = 1234;
+    const x1p: *const u32 = &x1;
+    const x2 = -18446744073709551616;
+    const x2p = &x2;
+
+    try testStringify("\x19\x04\xd2", x1p, .{});
+    try testStringify("\x3b\xff\xff\xff\xff\xff\xff\xff\xff", x2p, .{});
+}
+
+test "stringify slice" {
+    const s1: []const u8 = "a";
+    try testStringify("\x61\x61", s1, .{});
+
+    const s2: []const u8 = "IETF";
+    try testStringify("\x64\x49\x45\x54\x46", s2, .{});
+
+    const s3: []const u8 = "\"\\";
+    try testStringify("\x62\x22\x5c", s3, .{});
+
+    const b1: []const u8 = &.{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 };
+    try testStringify(&.{ 0x58, 0x19, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 }, b1, .{ .slice_as_text = false });
+
+    const b2: []const u8 = "\x10\x11\x12\x13\x14";
+    try testStringify("\x45\x10\x11\x12\x13\x14", b2, .{ .slice_as_text = false });
+}
+
+test "stringify struct: 1" {
+    const Info = struct {
+        versions: []const []const u8,
+    };
+
+    const i = Info{
+        .versions = &.{"FIDO_2_0"},
+    };
+
+    try testStringify("\xa1\x68\x76\x65\x72\x73\x69\x6f\x6e\x73\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30", i, .{});
+}
+
+//test "stringify struct: 2" {
+//    const Info = struct {
+//        @"1": []const []const u8,
+//        @"2": []const []const u8,
+//        @"3": []const u8,
+//    };
+//
+//    const i = Info{
+//        .@"1" = &.{"FIDO_2_0"},
+//        .@"2" = &.{},
+//        .@"3" = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f",
+//    };
+//
+//    try testStringify("\xa1\x68\x76\x65\x72\x73\x69\x6f\x6e\x73\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30", i, .{});
+//}

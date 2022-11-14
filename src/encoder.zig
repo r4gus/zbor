@@ -12,13 +12,13 @@ const DataItemTag = core.DataItemTag;
 const DataItem = core.DataItem;
 const pair_asc = core.pair_asc;
 
-fn encode_2(cbor: anytype, head: u8, v: u64) CborError!void {
+pub fn encode_2(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(head | 25);
     try cbor.writeByte(@intCast(u8, (v >> 8) & 0xff));
     try cbor.writeByte(@intCast(u8, v & 0xff));
 }
 
-fn encode_4(cbor: anytype, head: u8, v: u64) CborError!void {
+pub fn encode_4(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(head | 26);
     try cbor.writeByte(@intCast(u8, (v >> 24) & 0xff));
     try cbor.writeByte(@intCast(u8, (v >> 16) & 0xff));
@@ -26,7 +26,7 @@ fn encode_4(cbor: anytype, head: u8, v: u64) CborError!void {
     try cbor.writeByte(@intCast(u8, v & 0xff));
 }
 
-fn encode_8(cbor: anytype, head: u8, v: u64) CborError!void {
+pub fn encode_8(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(head | 27);
     try cbor.writeByte(@intCast(u8, (v >> 56) & 0xff));
     try cbor.writeByte(@intCast(u8, (v >> 48) & 0xff));
