@@ -15,6 +15,7 @@ pub const Float = core.Float;
 pub const SimpleValue = core.SimpleValue;
 pub const DataItemTag = core.DataItemTag;
 pub const DataItem = core.DataItem;
+pub const Options = core.Options;
 
 pub const encode = encoder.encode;
 pub const encodeAlloc = encoder.encodeAlloc;
