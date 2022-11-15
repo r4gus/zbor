@@ -11,8 +11,14 @@ pub const Type = enum {
     ByteString,
     TextString,
     Array,
-    UnsignedBignum,
+    Map,
+    False,
+    True,
+    Null,
+    Simple,
     Undefined,
+    UnsignedBignum,
+    Unknown,
 
     pub fn fromByte(b: u8) @This() {
         return switch (b) {
@@ -21,8 +27,14 @@ pub const Type = enum {
             0x40...0x5b => .ByteString,
             0x60...0x7b => .TextString,
             0x80...0x9b => .Array,
+            0xa0...0xbb => .Map,
+            0xf4 => .False,
+            0xf5 => .True,
+            0xf6 => .Null,
+            0xf7 => .Undefined,
+            0xe0...0xf3, 0xf8 => .Simple,
             0xc2 => .UnsignedBignum, // TODO: implement
-            else => .Undefined,
+            else => .Unknown,
         };
     }
 };
@@ -82,6 +94,56 @@ pub const DataItem = struct {
             .i = 0,
         };
     }
+
+    pub fn map(self: @This()) ?MapIterator {
+        if (self.data[0] > 0xbb or self.data[0] < 0xa0) return null;
+
+        var begin: usize = 0;
+        var len = if (additionalInfo(self.data, &begin)) |v| @intCast(usize, v) else return null;
+
+        return MapIterator{
+            .data = self.data[begin..],
+            .len = len,
+            .count = 0,
+            .i = 0,
+        };
+    }
+
+    pub fn simple(self: @This()) ?u8 {
+        return switch (self.data[0]) {
+            0xe0...0xf3 => self.data[0] & 0x1f,
+            0xf8 => self.data[1],
+            else => null,
+        };
+    }
+};
+
+pub const Pair = struct {
+    key: DataItem,
+    value: DataItem,
+};
+
+pub const MapIterator = struct {
+    data: []const u8,
+    len: usize,
+    count: usize,
+    i: usize,
+
+    pub fn next(self: *@This()) ?Pair {
+        if (self.count >= self.len) return null;
+        var new_i: usize = self.i;
+
+        if (burn(self.data, &new_i) == null) return null;
+        const k = DataItem.new(self.data[self.i..new_i]);
+        self.i = new_i;
+
+        if (burn(self.data, &new_i) == null) return null;
+        const v = DataItem.new(self.data[self.i..new_i]);
+        self.i = new_i;
+
+        self.count += 1;
+        return Pair{ .key = k, .value = v };
+    }
 };
 
 pub const ArrayIterator = struct {
@@ -93,17 +155,8 @@ pub const ArrayIterator = struct {
     pub fn next(self: *@This()) ?DataItem {
         if (self.count >= self.len) return null;
 
-        var offset: usize = 0;
-        var len = if (additionalInfo(self.data[self.i..], &offset)) |v| @intCast(usize, v) else return null;
-
-        const new_i: usize = switch (self.data[self.i]) {
-            0x00...0x1b => offset + self.i,
-            0x20...0x3b => offset + self.i,
-            0x40...0x5b => offset + len + self.i,
-            0x60...0x7b => offset + len + self.i,
-            0x80...0x9b => jumpArray(self.data, self.i),
-            else => return null,
-        };
+        var new_i: usize = self.i;
+        if (burn(self.data, &new_i) == null) return null;
 
         const tmp = self.data[self.i..new_i];
         self.i = new_i;
@@ -112,52 +165,69 @@ pub const ArrayIterator = struct {
     }
 };
 
-fn jumpArray(data: []const u8, i: usize) usize {
+/// Move the index `i` to the beginning of the next data item.
+fn burn(data: []const u8, i: *usize) ?void {
     var offset: usize = 0;
-    const v = if (additionalInfo(data[i..], &offset)) |v| @intCast(usize, v) else unreachable;
-    offset += i;
-
-    var x: usize = 0;
-    while (x < v) : (x += 1) {
-        burn(data, &offset);
-    }
-
-    return offset;
-}
-
-fn burn(data: []const u8, i: *usize) void {
-    var offset: usize = 0;
-    const len = if (additionalInfo(data[i.*..], &offset)) |v| @intCast(usize, v) else unreachable;
+    const len = if (additionalInfo(data[i.*..], &offset)) |v| @intCast(usize, v) else return null;
 
     switch (data[i.*]) {
         0x00...0x1b => i.* += offset,
         0x20...0x3b => i.* += offset,
         0x40...0x5b => i.* += offset + len,
         0x60...0x7b => i.* += offset + len,
-        0x80...0x9b => i.* += jumpArray(data, i.*),
-        else => unreachable,
+        0x80...0x9b => {
+            i.* += offset;
+            var x: usize = 0;
+            while (x < len) : (x += 1) {
+                if (burn(data, i) == null) {
+                    return null;
+                }
+            }
+        },
+        0xa0...0xbb => {
+            i.* += offset;
+            var x: usize = 0;
+            while (x < len) : (x += 1) {
+                // this is NOT redundant!!!
+                if (burn(data, i) == null or burn(data, i) == null) {
+                    return null;
+                }
+            }
+        },
+        0xe0...0xfb => i.* += offset,
+        else => return null,
     }
 }
 
+/// Return the additional information of the given data item.
+///
+/// Pass a reference to `l` if you want to know where the
+/// actual data begins (|head| + |additional information|).
 fn additionalInfo(data: []const u8, l: ?*usize) ?u64 {
+    if (data.len < 1) return null;
+
     switch (data[0] & 0x1f) {
         0x00...0x17 => {
             if (l != null) l.?.* = 1;
             return @intCast(u64, data[0] & 0x1f);
         },
         0x18 => {
+            if (data.len < 2) return null;
             if (l != null) l.?.* = 2;
             return @intCast(u64, data[1]);
         },
         0x19 => {
+            if (data.len < 3) return null;
             if (l != null) l.?.* = 3;
             return @intCast(u64, unsigned_16(data[1..3]));
         },
         0x1a => {
+            if (data.len < 5) return null;
             if (l != null) l.?.* = 5;
             return @intCast(u64, unsigned_32(data[1..5]));
         },
         0x1b => {
+            if (data.len < 9) return null;
             if (l != null) l.?.* = 9;
             return @intCast(u64, unsigned_64(data[1..9]));
         },
@@ -310,4 +380,70 @@ test "deserialize array" {
     try std.testing.expectEqual(ai4_2.next().?.unsigned().?, 5);
     try std.testing.expectEqual(ai4_2.next(), null);
     try std.testing.expectEqual(ai4.next(), null);
+}
+
+test "deserialize map" {
+    const di1 = DataItem.new("\xa0");
+    try std.testing.expectEqual(Type.Map, di1.getType());
+    var ai1 = di1.map().?;
+    try std.testing.expectEqual(ai1.next(), null);
+    try std.testing.expectEqual(ai1.next(), null);
+
+    const di2 = DataItem.new("\xa2\x01\x02\x03\x04");
+    try std.testing.expectEqual(Type.Map, di2.getType());
+    var ai2 = di2.map().?;
+    const kv1 = ai2.next().?;
+    try std.testing.expectEqual(kv1.key.unsigned().?, 1);
+    try std.testing.expectEqual(kv1.value.unsigned().?, 2);
+    const kv2 = ai2.next().?;
+    try std.testing.expectEqual(kv2.key.unsigned().?, 3);
+    try std.testing.expectEqual(kv2.value.unsigned().?, 4);
+    try std.testing.expectEqual(ai2.next(), null);
+
+    const di3 = DataItem.new("\xa2\x61\x61\x01\x61\x62\x82\x02\x03");
+    try std.testing.expectEqual(Type.Map, di3.getType());
+    var ai3 = di3.map().?;
+    const kv1_2 = ai3.next().?;
+    try std.testing.expectEqualStrings("a", kv1_2.key.textString().?);
+    try std.testing.expectEqual(kv1_2.value.unsigned().?, 1);
+    const kv2_2 = ai3.next().?;
+    try std.testing.expectEqualStrings("b", kv2_2.key.textString().?);
+    var ai3_1 = kv2_2.value.array().?;
+    try std.testing.expectEqual(ai3_1.next().?.unsigned().?, 2);
+    try std.testing.expectEqual(ai3_1.next().?.unsigned().?, 3);
+    try std.testing.expectEqual(ai3_1.next(), null);
+    try std.testing.expectEqual(ai3.next(), null);
+}
+
+test "deserialize other" {
+    const di1 = DataItem.new("\x82\x61\x61\xa1\x61\x62\x61\x63");
+    try std.testing.expectEqual(Type.Array, di1.getType());
+    var ai1 = di1.array().?;
+    try std.testing.expectEqualStrings("a", ai1.next().?.textString().?);
+    var m1 = ai1.next().?.map().?;
+    var kv1 = m1.next().?;
+    try std.testing.expectEqualStrings("b", kv1.key.textString().?);
+    try std.testing.expectEqualStrings("c", kv1.value.textString().?);
+}
+
+test "deserialize simple" {
+    const di1 = DataItem.new("\xf4");
+    try std.testing.expectEqual(Type.False, di1.getType());
+
+    const di2 = DataItem.new("\xf5");
+    try std.testing.expectEqual(Type.True, di2.getType());
+
+    const di3 = DataItem.new("\xf6");
+    try std.testing.expectEqual(Type.Null, di3.getType());
+
+    const di4 = DataItem.new("\xf7");
+    try std.testing.expectEqual(Type.Undefined, di4.getType());
+
+    const di5 = DataItem.new("\xf0");
+    try std.testing.expectEqual(Type.Simple, di5.getType());
+    try std.testing.expectEqual(di5.simple().?, 16);
+
+    const di6 = DataItem.new("\xf8\xff");
+    try std.testing.expectEqual(Type.Simple, di6.getType());
+    try std.testing.expectEqual(di6.simple().?, 255);
 }
