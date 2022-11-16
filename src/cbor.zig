@@ -1,13 +1,9 @@
 const std = @import("std");
 
-pub const Error = error{
-    Malformed,
-    TypeMismatch,
-};
+pub const Error = error{ Malformed, TypeMismatch, UnsupportedType };
 
 pub const Type = enum {
-    Unsigned,
-    Negative,
+    Int,
     ByteString,
     TextString,
     Array,
@@ -15,15 +11,16 @@ pub const Type = enum {
     False,
     True,
     Null,
-    Simple,
     Undefined,
+    Simple,
+    Tagged,
+    Float,
     UnsignedBignum,
     Unknown,
 
     pub fn fromByte(b: u8) @This() {
         return switch (b) {
-            0x00...0x1b => .Unsigned,
-            0x20...0x3b => .Negative,
+            0x00...0x3b => .Int,
             0x40...0x5b => .ByteString,
             0x60...0x7b => .TextString,
             0x80...0x9b => .Array,
@@ -33,7 +30,8 @@ pub const Type = enum {
             0xf6 => .Null,
             0xf7 => .Undefined,
             0xe0...0xf3, 0xf8 => .Simple,
-            0xc2 => .UnsignedBignum, // TODO: implement
+            0xc0...0xdb => .Tagged,
+            0xf9...0xfb => .Float,
             else => .Unknown,
         };
     }
@@ -50,19 +48,14 @@ pub const DataItem = struct {
         return Type.fromByte(self.data[0]);
     }
 
-    pub fn unsigned(self: @This()) ?u64 {
-        if (self.data[0] > 0x1b) return null;
-
-        return additionalInfo(self.data, null);
-    }
-
-    pub fn negative(self: @This()) ?i65 {
-        if (self.data[0] > 0x3b or self.data[0] < 0x20) return null;
-
-        return switch (self.data[0]) {
-            0x20...0x3b => -@intCast(i65, additionalInfo(self.data, null).?) - 1,
-            else => null,
-        };
+    pub fn int(self: @This()) ?i65 {
+        if (self.data[0] <= 0x1b and self.data[0] >= 0x00) {
+            return @intCast(i65, if (additionalInfo(self.data, null)) |v| v else return null);
+        } else if (self.data[0] <= 0x3b and self.data[0] >= 0x20) {
+            return -@intCast(i65, if (additionalInfo(self.data, null)) |v| v else return null) - 1;
+        } else {
+            return null;
+        }
     }
 
     pub fn byteString(self: @This()) ?[]const u8 {
@@ -116,6 +109,35 @@ pub const DataItem = struct {
             else => null,
         };
     }
+
+    pub fn float(self: @This()) ?f64 {
+        if (self.data[0] > 0xfb or self.data[0] < 0xf9) return null;
+
+        if (additionalInfo(self.data, null)) |v| {
+            return switch (self.data[0]) {
+                0xf9 => @floatCast(f64, @bitCast(f16, @intCast(u16, v))),
+                0xfa => @floatCast(f64, @bitCast(f32, @intCast(u32, v))),
+                0xfb => @bitCast(f64, v),
+                else => unreachable,
+            };
+        } else {
+            return null;
+        }
+    }
+
+    pub fn tagged(self: @This()) ?Tag {
+        if (self.data[0] > 0xdb or self.data[0] < 0xc0) return null;
+
+        var begin: usize = 0;
+        var nr = if (additionalInfo(self.data, &begin)) |v| v else return null;
+
+        return Tag{ .nr = nr, .content = DataItem.new(self.data[begin..]) };
+    }
+};
+
+pub const Tag = struct {
+    nr: u64,
+    content: DataItem,
 };
 
 pub const Pair = struct {
@@ -194,6 +216,10 @@ fn burn(data: []const u8, i: *usize) ?void {
                 }
             }
         },
+        0xc0...0xdb => {
+            i.* += offset;
+            if (burn(data, i) == null) return null;
+        },
         0xe0...0xfb => i.* += offset,
         else => return null,
     }
@@ -235,76 +261,102 @@ fn additionalInfo(data: []const u8, l: ?*usize) ?u64 {
     }
 }
 
-fn unsigned_16(data: []const u8) u16 {
+pub fn unsigned_16(data: []const u8) u16 {
     return @intCast(u16, data[0]) << 8 | @intCast(u16, data[1]);
 }
 
-fn unsigned_32(data: []const u8) u32 {
+pub fn unsigned_32(data: []const u8) u32 {
     return @intCast(u32, data[0]) << 24 | @intCast(u32, data[1]) << 16 | @intCast(u32, data[2]) << 8 | @intCast(u32, data[3]);
 }
 
-fn unsigned_64(data: []const u8) u64 {
+pub fn unsigned_64(data: []const u8) u64 {
     return @intCast(u64, data[0]) << 56 | @intCast(u64, data[1]) << 48 | @intCast(u64, data[2]) << 40 | @intCast(u64, data[3]) << 32 | @intCast(u64, data[4]) << 24 | @intCast(u64, data[5]) << 16 | @intCast(u64, data[6]) << 8 | @intCast(u64, data[7]);
+}
+
+pub fn encode_2(cbor: anytype, head: u8, v: u64) !void {
+    try cbor.writeByte(head | 25);
+    try cbor.writeByte(@intCast(u8, (v >> 8) & 0xff));
+    try cbor.writeByte(@intCast(u8, v & 0xff));
+}
+
+pub fn encode_4(cbor: anytype, head: u8, v: u64) !void {
+    try cbor.writeByte(head | 26);
+    try cbor.writeByte(@intCast(u8, (v >> 24) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 16) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 8) & 0xff));
+    try cbor.writeByte(@intCast(u8, v & 0xff));
+}
+
+pub fn encode_8(cbor: anytype, head: u8, v: u64) !void {
+    try cbor.writeByte(head | 27);
+    try cbor.writeByte(@intCast(u8, (v >> 56) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 48) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 40) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 32) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 24) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 16) & 0xff));
+    try cbor.writeByte(@intCast(u8, (v >> 8) & 0xff));
+    try cbor.writeByte(@intCast(u8, v & 0xff));
 }
 
 test "deserialize unsigned" {
     const di1 = DataItem.new("\x00");
-    try std.testing.expectEqual(Type.Unsigned, di1.getType());
-    try std.testing.expectEqual(di1.unsigned().?, 0);
+    try std.testing.expectEqual(Type.Int, di1.getType());
+    try std.testing.expectEqual(di1.int().?, 0);
 
     const di2 = DataItem.new("\x01");
-    try std.testing.expectEqual(Type.Unsigned, di2.getType());
-    try std.testing.expectEqual(di2.unsigned().?, 1);
+    try std.testing.expectEqual(Type.Int, di2.getType());
+    try std.testing.expectEqual(di2.int().?, 1);
 
     const di3 = DataItem.new("\x17");
-    try std.testing.expectEqual(Type.Unsigned, di3.getType());
-    try std.testing.expectEqual(di3.unsigned().?, 23);
+    try std.testing.expectEqual(Type.Int, di3.getType());
+    try std.testing.expectEqual(di3.int().?, 23);
 
     const di4 = DataItem.new("\x18\x18");
-    try std.testing.expectEqual(Type.Unsigned, di4.getType());
-    try std.testing.expectEqual(di4.unsigned().?, 24);
+    try std.testing.expectEqual(Type.Int, di4.getType());
+    try std.testing.expectEqual(di4.int().?, 24);
 
     const di5 = DataItem.new("\x18\x64");
-    try std.testing.expectEqual(Type.Unsigned, di5.getType());
-    try std.testing.expectEqual(di5.unsigned().?, 100);
+    try std.testing.expectEqual(Type.Int, di5.getType());
+    try std.testing.expectEqual(di5.int().?, 100);
 
     const di6 = DataItem.new("\x19\x03\xe8");
-    try std.testing.expectEqual(Type.Unsigned, di6.getType());
-    try std.testing.expectEqual(di6.unsigned().?, 1000);
+    try std.testing.expectEqual(Type.Int, di6.getType());
+    try std.testing.expectEqual(di6.int().?, 1000);
 
     const di7 = DataItem.new("\x1a\x00\x0f\x42\x40");
-    try std.testing.expectEqual(Type.Unsigned, di7.getType());
-    try std.testing.expectEqual(di7.unsigned().?, 1000000);
+    try std.testing.expectEqual(Type.Int, di7.getType());
+    try std.testing.expectEqual(di7.int().?, 1000000);
 
     const di8 = DataItem.new("\x1b\x00\x00\x00\xe8\xd4\xa5\x10\x00");
-    try std.testing.expectEqual(Type.Unsigned, di8.getType());
-    try std.testing.expectEqual(di8.unsigned().?, 1000000000000);
+    try std.testing.expectEqual(Type.Int, di8.getType());
+    try std.testing.expectEqual(di8.int().?, 1000000000000);
 
     const di9 = DataItem.new("\x1b\xff\xff\xff\xff\xff\xff\xff\xff");
-    try std.testing.expectEqual(Type.Unsigned, di9.getType());
-    try std.testing.expectEqual(di9.unsigned().?, 18446744073709551615);
+    try std.testing.expectEqual(Type.Int, di9.getType());
+    try std.testing.expectEqual(di9.int().?, 18446744073709551615);
 }
 
 test "deserialize negative" {
     const di1 = DataItem.new("\x20");
-    try std.testing.expectEqual(Type.Negative, di1.getType());
-    try std.testing.expectEqual(di1.negative().?, -1);
+    try std.testing.expectEqual(Type.Int, di1.getType());
+    try std.testing.expectEqual(di1.int().?, -1);
 
     const di2 = DataItem.new("\x29");
-    try std.testing.expectEqual(Type.Negative, di2.getType());
-    try std.testing.expectEqual(di2.negative().?, -10);
+    try std.testing.expectEqual(Type.Int, di2.getType());
+    try std.testing.expectEqual(di2.int().?, -10);
 
     const di3 = DataItem.new("\x38\x63");
-    try std.testing.expectEqual(Type.Negative, di3.getType());
-    try std.testing.expectEqual(di3.negative().?, -100);
+    try std.testing.expectEqual(Type.Int, di3.getType());
+    try std.testing.expectEqual(di3.int().?, -100);
 
     const di6 = DataItem.new("\x39\x03\xe7");
-    try std.testing.expectEqual(Type.Negative, di6.getType());
-    try std.testing.expectEqual(di6.negative().?, -1000);
+    try std.testing.expectEqual(Type.Int, di6.getType());
+    try std.testing.expectEqual(di6.int().?, -1000);
 
     const di9 = DataItem.new("\x3b\xff\xff\xff\xff\xff\xff\xff\xff");
-    try std.testing.expectEqual(Type.Negative, di9.getType());
-    try std.testing.expectEqual(di9.negative().?, -18446744073709551616);
+    try std.testing.expectEqual(Type.Int, di9.getType());
+    try std.testing.expectEqual(di9.int().?, -18446744073709551616);
 }
 
 test "deserialize byte string" {
@@ -353,9 +405,9 @@ test "deserialize array" {
     const di2 = DataItem.new("\x83\x01\x02\x03");
     try std.testing.expectEqual(Type.Array, di2.getType());
     var ai2 = di2.array().?;
-    try std.testing.expectEqual(ai2.next().?.unsigned().?, 1);
-    try std.testing.expectEqual(ai2.next().?.unsigned().?, 2);
-    try std.testing.expectEqual(ai2.next().?.unsigned().?, 3);
+    try std.testing.expectEqual(ai2.next().?.int().?, 1);
+    try std.testing.expectEqual(ai2.next().?.int().?, 2);
+    try std.testing.expectEqual(ai2.next().?.int().?, 3);
     try std.testing.expectEqual(ai2.next(), null);
 
     const di3 = DataItem.new("\x98\x19\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19");
@@ -363,21 +415,21 @@ test "deserialize array" {
     var ai3 = di3.array().?;
     var i: u64 = 1;
     while (i <= 25) : (i += 1) {
-        try std.testing.expectEqual(ai3.next().?.unsigned().?, i);
+        try std.testing.expectEqual(ai3.next().?.int().?, i);
     }
     try std.testing.expectEqual(ai3.next(), null);
 
     const di4 = DataItem.new("\x83\x01\x82\x02\x03\x82\x04\x05");
     try std.testing.expectEqual(Type.Array, di4.getType());
     var ai4 = di4.array().?;
-    try std.testing.expectEqual(ai4.next().?.unsigned().?, 1);
+    try std.testing.expectEqual(ai4.next().?.int().?, 1);
     var ai4_1 = ai4.next().?.array().?;
-    try std.testing.expectEqual(ai4_1.next().?.unsigned().?, 2);
-    try std.testing.expectEqual(ai4_1.next().?.unsigned().?, 3);
+    try std.testing.expectEqual(ai4_1.next().?.int().?, 2);
+    try std.testing.expectEqual(ai4_1.next().?.int().?, 3);
     try std.testing.expectEqual(ai4_1.next(), null);
     var ai4_2 = ai4.next().?.array().?;
-    try std.testing.expectEqual(ai4_2.next().?.unsigned().?, 4);
-    try std.testing.expectEqual(ai4_2.next().?.unsigned().?, 5);
+    try std.testing.expectEqual(ai4_2.next().?.int().?, 4);
+    try std.testing.expectEqual(ai4_2.next().?.int().?, 5);
     try std.testing.expectEqual(ai4_2.next(), null);
     try std.testing.expectEqual(ai4.next(), null);
 }
@@ -393,11 +445,11 @@ test "deserialize map" {
     try std.testing.expectEqual(Type.Map, di2.getType());
     var ai2 = di2.map().?;
     const kv1 = ai2.next().?;
-    try std.testing.expectEqual(kv1.key.unsigned().?, 1);
-    try std.testing.expectEqual(kv1.value.unsigned().?, 2);
+    try std.testing.expectEqual(kv1.key.int().?, 1);
+    try std.testing.expectEqual(kv1.value.int().?, 2);
     const kv2 = ai2.next().?;
-    try std.testing.expectEqual(kv2.key.unsigned().?, 3);
-    try std.testing.expectEqual(kv2.value.unsigned().?, 4);
+    try std.testing.expectEqual(kv2.key.int().?, 3);
+    try std.testing.expectEqual(kv2.value.int().?, 4);
     try std.testing.expectEqual(ai2.next(), null);
 
     const di3 = DataItem.new("\xa2\x61\x61\x01\x61\x62\x82\x02\x03");
@@ -405,12 +457,12 @@ test "deserialize map" {
     var ai3 = di3.map().?;
     const kv1_2 = ai3.next().?;
     try std.testing.expectEqualStrings("a", kv1_2.key.textString().?);
-    try std.testing.expectEqual(kv1_2.value.unsigned().?, 1);
+    try std.testing.expectEqual(kv1_2.value.int().?, 1);
     const kv2_2 = ai3.next().?;
     try std.testing.expectEqualStrings("b", kv2_2.key.textString().?);
     var ai3_1 = kv2_2.value.array().?;
-    try std.testing.expectEqual(ai3_1.next().?.unsigned().?, 2);
-    try std.testing.expectEqual(ai3_1.next().?.unsigned().?, 3);
+    try std.testing.expectEqual(ai3_1.next().?.int().?, 2);
+    try std.testing.expectEqual(ai3_1.next().?.int().?, 3);
     try std.testing.expectEqual(ai3_1.next(), null);
     try std.testing.expectEqual(ai3.next(), null);
 }
@@ -446,4 +498,29 @@ test "deserialize simple" {
     const di6 = DataItem.new("\xf8\xff");
     try std.testing.expectEqual(Type.Simple, di6.getType());
     try std.testing.expectEqual(di6.simple().?, 255);
+}
+
+test "deserialize float" {
+    const di1 = DataItem.new("\xfb\x3f\xf1\x99\x99\x99\x99\x99\x9a");
+    try std.testing.expectEqual(Type.Float, di1.getType());
+    try std.testing.expectApproxEqAbs(di1.float().?, 1.1, 0.000000001);
+
+    const di2 = DataItem.new("\xf9\x3e\x00");
+    try std.testing.expectEqual(Type.Float, di2.getType());
+    try std.testing.expectApproxEqAbs(di2.float().?, 1.5, 0.000000001);
+
+    const di3 = DataItem.new("\xf9\x80\x00");
+    try std.testing.expectEqual(Type.Float, di3.getType());
+    try std.testing.expectApproxEqAbs(di3.float().?, -0.0, 0.000000001);
+
+    const di4 = DataItem.new("\xfb\x7e\x37\xe4\x3c\x88\x00\x75\x9c");
+    try std.testing.expectEqual(Type.Float, di4.getType());
+    try std.testing.expectApproxEqAbs(di4.float().?, 1.0e+300, 0.000000001);
+}
+
+test "deserialize tagged" {
+    const di1 = DataItem.new("\xc0\x74\x32\x30\x31\x33\x2d\x30\x33\x2d\x32\x31\x54\x32\x30\x3a\x30\x34\x3a\x30\x30\x5a");
+    try std.testing.expectEqual(Type.Tagged, di1.getType());
+    const t1 = di1.tagged().?;
+    try std.testing.expectEqual(t1.nr, 0);
 }

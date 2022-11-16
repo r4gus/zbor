@@ -1,17 +1,20 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const core = @import("core.zig");
-const CborError = core.CborError;
-const Pair = core.Pair;
-const Tag = core.Tag;
-const FloatTag = core.FloatTag;
-const Float = core.Float;
-const SimpleValue = core.SimpleValue;
-const DataItemTag = core.DataItemTag;
-const DataItem = core.DataItem;
-const decode = @import("decoder.zig").decode;
-const encoder = @import("encoder.zig");
+const cbor = @import("cbor.zig");
+const Error = cbor.Error;
+const Type = cbor.Type;
+const DataItem = cbor.DataItem;
+const Tag = cbor.Tag;
+const Pair = cbor.Pair;
+const MapIterator = cbor.MapIterator;
+const ArrayIterator = cbor.ArrayIterator;
+const unsigned_16 = cbor.unsigned_16;
+const unsigned_32 = cbor.unsigned_32;
+const unsigned_64 = cbor.unsigned_64;
+const encode_2 = cbor.encode_2;
+const encode_4 = cbor.encode_4;
+const encode_8 = cbor.encode_8;
 
 pub const ParseError = error{
     UnexpectedItem,
@@ -23,6 +26,7 @@ pub const ParseError = error{
     AllocatorRequired,
     Overflow,
     OutOfMemory,
+    Malformed,
 };
 
 pub const StringifyError = error{
@@ -44,32 +48,22 @@ pub const ParseOptions = struct {
 pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError!T {
     switch (@typeInfo(T)) {
         .Bool => {
-            switch (item) {
-                .simple => |v| {
-                    return switch (v) {
-                        SimpleValue.True => true,
-                        SimpleValue.False => false,
-                        else => ParseError.UnexpectedItemValue,
-                    };
-                },
-                else => return ParseError.UnexpectedItem,
-            }
+            return switch (item.getType()) {
+                .False => false,
+                .True => true,
+                else => ParseError.UnexpectedItem,
+            };
         },
         .Float, .ComptimeFloat => {
-            switch (item) {
-                .float => |v| {
-                    return switch (v) {
-                        .float16 => |x| @floatCast(T, x),
-                        .float32 => |x| @floatCast(T, x),
-                        .float64 => |x| @floatCast(T, x),
-                    };
-                },
-                else => return ParseError.UnexpectedItem,
-            }
+            return switch (item.getType()) {
+                .Float => if (item.float()) |x| @floatCast(T, x) else return ParseError.Malformed,
+                else => ParseError.UnexpectedItem,
+            };
         },
         .Int, .ComptimeInt => {
-            switch (item) {
-                .int => |v| {
+            switch (item.getType()) {
+                .Int => {
+                    const v = if (item.int()) |x| x else return ParseError.Malformed;
                     if (v > std.math.maxInt(T) or v < std.math.minInt(T))
                         return ParseError.Overflow;
 
@@ -79,35 +73,35 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
             }
         },
         .Optional => |optionalInfo| {
-            switch (item) {
-                .simple => |v| {
-                    return if (v == SimpleValue.Null or v == SimpleValue.Undefined) null else try parse(optionalInfo.child, item, options);
-                },
-                else => return try parse(optionalInfo.child, item, options),
-            }
+            return switch (item.getType()) {
+                .Null, .Undefined => null,
+                else => try parse(optionalInfo.child, item, options),
+            };
         },
         .Struct => |structInfo| {
-            switch (item) {
-                .map => |v| {
+            switch (item.getType()) {
+                .Map => {
                     var r: T = undefined;
                     var fields_seen = [_]bool{false} ** structInfo.fields.len;
 
-                    for (v) |kv| {
+                    var v = if (item.map()) |x| x else return ParseError.Malformed;
+                    while (v.next()) |kv| {
                         var found = false;
 
-                        if (!kv.key.isText() and !kv.key.isInt()) continue;
+                        if (kv.key.getType() != .TextString and kv.key.getType() != .Int) continue;
 
                         inline for (structInfo.fields) |field, i| {
                             var match: bool = false;
 
-                            if (kv.key.isInt()) {
-                                const allocator = options.allocator orelse return ParseError.AllocatorRequired;
+                            switch (kv.key.getType()) {
+                                .Int => {
+                                    const allocator = options.allocator orelse return ParseError.AllocatorRequired;
 
-                                const x = try std.fmt.allocPrint(allocator, "{d}", .{kv.key.int});
-                                defer allocator.free(x);
-                                match = std.mem.eql(u8, field.name, x);
-                            } else {
-                                match = std.mem.eql(u8, field.name, kv.key.text);
+                                    const x = try std.fmt.allocPrint(allocator, "{d}", .{if (kv.key.int()) |x| x else return ParseError.Malformed});
+                                    defer allocator.free(x);
+                                    match = std.mem.eql(u8, field.name, x);
+                                },
+                                else => match = std.mem.eql(u8, field.name, if (kv.key.textString()) |x| x else return ParseError.Malformed),
                             }
 
                             if (match) {
@@ -149,13 +143,14 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
             }
         },
         .Array => |arrayInfo| {
-            switch (item) {
-                .array => |v| {
+            switch (item.getType()) {
+                .Array => {
+                    var v = if (item.array()) |x| x else return ParseError.Malformed;
                     var r: T = undefined;
                     var i: usize = 0;
 
                     while (i < r.len) : (i += 1) {
-                        r[i] = try parse(arrayInfo.child, v[i], options);
+                        r[i] = try parse(arrayInfo.child, if (v.next()) |x| x else return ParseError.Malformed, options);
                     }
 
                     return r;
@@ -175,8 +170,9 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                     return r;
                 },
                 .Slice => {
-                    switch (item) {
-                        .bytes, .text => |v| {
+                    switch (item.getType()) {
+                        .ByteString => {
+                            const v = if (item.byteString()) |x| x else return ParseError.Malformed;
                             if (ptrInfo.child != u8) {
                                 return ParseError.UnexpectedItem;
                             }
@@ -186,14 +182,26 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                             std.mem.copy(ptrInfo.child, r[0..], v[0..]);
                             return r;
                         },
-                        .array => |v| {
+                        .TextString => {
+                            const v = if (item.textString()) |x| x else return ParseError.Malformed;
+                            if (ptrInfo.child != u8) {
+                                return ParseError.UnexpectedItem;
+                            }
+
+                            var r: []ptrInfo.child = try allocator.alloc(ptrInfo.child, v.len);
+                            errdefer allocator.free(r);
+                            std.mem.copy(ptrInfo.child, r[0..], v[0..]);
+                            return r;
+                        },
+                        .Array => {
+                            var v = if (item.array()) |x| x else return ParseError.Malformed;
                             var arraylist = std.ArrayList(ptrInfo.child).init(allocator);
                             errdefer {
                                 // TODO: take care of children
                                 arraylist.deinit();
                             }
 
-                            for (v) |elem| {
+                            while (v.next()) |elem| {
                                 try arraylist.ensureUnusedCapacity(1);
                                 const x = try parse(ptrInfo.child, elem, options);
                                 arraylist.appendAssumeCapacity(x);
@@ -294,9 +302,9 @@ pub fn stringify(
             try out.writeByte(head | 24);
             try out.writeByte(@intCast(u8, v));
         },
-        0x0100...0xffff => try encoder.encode_2(out, head, v),
-        0x00010000...0xffffffff => try encoder.encode_4(out, head, v),
-        0x0000000100000000...0xffffffffffffffff => try encoder.encode_8(out, head, v),
+        0x0100...0xffff => try encode_2(out, head, v),
+        0x00010000...0xffffffff => try encode_4(out, head, v),
+        0x0000000100000000...0xffffffffffffffff => try encode_8(out, head, v),
     }
 
     switch (@typeInfo(T)) {
@@ -315,8 +323,26 @@ pub fn stringify(
                     }
                 }
 
-                try stringify(Field.name, options, out); // key
-                try stringify(@field(value, Field.name), options, out); // value
+                var child_options = options;
+                var l = Field.name.len;
+                if (Field.name.len >= 3) {
+                    if (Field.name[l - 2] == '_') {
+                        if (Field.name[l - 1] == 'b') {
+                            l -= 2;
+                            child_options.slice_as_text = false;
+                        } else if (Field.name[l - 1] == 'b') {
+                            l -= 2;
+                            child_options.slice_as_text = true;
+                        }
+                    }
+                }
+
+                if (s2n(Field.name[0..l])) |nr| { // int key
+                    try stringify(nr, options, out); // key
+                } else { // str key
+                    try stringify(Field.name[0..l], options, out); // key
+                }
+                try stringify(@field(value, Field.name), child_options, out); // value
             }
         },
         .Pointer => |ptr_info| switch (ptr_info.size) {
@@ -335,31 +361,46 @@ pub fn stringify(
     }
 }
 
+fn s2n(s: []const u8) ?usize {
+    if (s.len < 1) return null;
+
+    var x: usize = 0;
+
+    for (s) |c| {
+        if (c > 57 or c < 48) return null;
+        x *= 10;
+        x += @intCast(usize, c - 48);
+    }
+
+    return x;
+}
+
 fn testStringify(e: []const u8, v: anytype, o: StringifyOptions) !void {
     const allocator = std.testing.allocator;
     var str = std.ArrayList(u8).init(allocator);
     defer str.deinit();
 
     try stringify(v, o, str.writer());
+    //std.log.err("{any}", .{str.items});
     try std.testing.expectEqualSlices(u8, e, str.items);
 }
 
 test "parse boolean" {
-    const t = DataItem.True();
-    const f = DataItem.False();
-    const u = DataItem.Undefined();
-    const i = DataItem.int(11);
+    const t = DataItem.new("\xf5");
+    const f = DataItem.new("\xf4");
+    const u = DataItem.new("\xf7");
+    const i = DataItem.new("\x0b");
 
     try std.testing.expectEqual(true, try parse(bool, t, .{}));
     try std.testing.expectEqual(false, try parse(bool, f, .{}));
-    try std.testing.expectError(ParseError.UnexpectedItemValue, parse(bool, u, .{}));
+    try std.testing.expectError(ParseError.UnexpectedItem, parse(bool, u, .{}));
     try std.testing.expectError(ParseError.UnexpectedItem, parse(bool, i, .{}));
 }
 
 test "parse float" {
-    const f1 = DataItem.float16(1.1);
-    const f2 = DataItem.float32(7.3511);
-    const f3 = DataItem.float64(-12.06);
+    const f1 = DataItem.new("\xfb\x3f\xf1\x99\x99\x99\x99\x99\x9a");
+    const f2 = DataItem.new("\xFB\x40\x1D\x67\x86\xC2\x26\x80\x9D");
+    const f3 = DataItem.new("\xFB\xC0\x28\x1E\xB8\x51\xEB\x85\x1F");
 
     try std.testing.expectApproxEqRel(try parse(f16, f1, .{}), 1.1, 0.01);
     try std.testing.expectApproxEqRel(try parse(f16, f2, .{}), 7.3511, 0.01);
@@ -373,8 +414,8 @@ test "stringify float" {
 }
 
 test "parse int" {
-    const i_1 = DataItem.int(255);
-    const i_2 = DataItem.int(256);
+    const i_1 = DataItem.new("\x18\xff");
+    const i_2 = DataItem.new("\x19\x01\x00");
 
     try std.testing.expectEqual(try parse(u8, i_1, .{}), 255);
     try std.testing.expectError(ParseError.Overflow, parse(u8, i_2, .{}));
@@ -408,18 +449,12 @@ test "stringify int" {
 }
 
 test "parse struct: 1" {
-    const allocator = std.testing.allocator;
-
     const Config = struct {
         vals: struct { testing: u8, production: u8 },
         uptime: u64,
     };
 
-    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("vals", .{ .allocator = allocator }), try DataItem.map(&.{
-        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(1)),
-        Pair.new(try DataItem.text("production", .{ .allocator = allocator }), DataItem.int(42)),
-    }, .{ .allocator = allocator })), Pair.new(try DataItem.text("uptime", .{ .allocator = allocator }), DataItem.int(9999)) }, .{ .allocator = allocator });
-    defer di.deinit(allocator);
+    const di = DataItem.new("\xa2\x64\x76\x61\x6c\x73\xa2\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x6a\x70\x72\x6f\x64\x75\x63\x74\x69\x6f\x6e\x18\x2a\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f");
 
     const c = try parse(Config, di, .{});
 
@@ -429,17 +464,12 @@ test "parse struct: 1" {
 }
 
 test "parse struct: 2 (optional missing field)" {
-    const allocator = std.testing.allocator;
-
     const Config = struct {
         vals: struct { testing: u8, production: ?u8 },
         uptime: u64,
     };
 
-    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("vals", .{ .allocator = allocator }), try DataItem.map(&.{
-        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(1)),
-    }, .{ .allocator = allocator })), Pair.new(try DataItem.text("uptime", .{ .allocator = allocator }), DataItem.int(9999)) }, .{ .allocator = allocator });
-    defer di.deinit(allocator);
+    const di = DataItem.new("\xa2\x64\x76\x61\x6c\x73\xa1\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f");
 
     const c = try parse(Config, di, .{});
 
@@ -447,76 +477,25 @@ test "parse struct: 2 (optional missing field)" {
 }
 
 test "parse struct: 3 (missing field)" {
-    const allocator = std.testing.allocator;
-
     const Config = struct {
         vals: struct { testing: u8, production: u8 },
         uptime: u64,
     };
 
-    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("vals", .{ .allocator = allocator }), try DataItem.map(&.{
-        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(1)),
-    }, .{ .allocator = allocator })), Pair.new(try DataItem.text("uptime", .{ .allocator = allocator }), DataItem.int(9999)) }, .{ .allocator = allocator });
-    defer di.deinit(allocator);
+    const di = DataItem.new("\xa2\x64\x76\x61\x6c\x73\xa1\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f");
 
     try std.testing.expectError(ParseError.MissingField, parse(Config, di, .{}));
 }
 
 test "parse struct: 4 (unknown field)" {
-    const allocator = std.testing.allocator;
-
     const Config = struct {
         vals: struct { testing: u8 },
         uptime: u64,
     };
 
-    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("vals", .{ .allocator = allocator }), try DataItem.map(&.{
-        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(1)),
-        Pair.new(try DataItem.text("production", .{ .allocator = allocator }), DataItem.int(42)),
-    }, .{ .allocator = allocator })), Pair.new(try DataItem.text("uptime", .{ .allocator = allocator }), DataItem.int(9999)) }, .{ .allocator = allocator });
-    defer di.deinit(allocator);
+    const di = DataItem.new("\xa2\x64\x76\x61\x6c\x73\xa2\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x6a\x70\x72\x6f\x64\x75\x63\x74\x69\x6f\x6e\x18\x2a\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f");
 
     try std.testing.expectError(ParseError.UnknownField, parse(Config, di, .{ .ignore_unknown_fields = false }));
-}
-
-test "parse struct: 5 (duplicate field use first)" {
-    const allocator = std.testing.allocator;
-
-    const Config = struct {
-        vals: struct { testing: u8, production: u8 },
-        uptime: u64,
-    };
-
-    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("vals", .{ .allocator = allocator }), try DataItem.map(&.{
-        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(1)),
-        Pair.new(try DataItem.text("production", .{ .allocator = allocator }), DataItem.int(42)),
-        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(7)),
-    }, .{ .allocator = allocator })), Pair.new(try DataItem.text("uptime", .{ .allocator = allocator }), DataItem.int(9999)) }, .{ .allocator = allocator });
-    defer di.deinit(allocator);
-
-    const c = try parse(Config, di, .{ .duplicate_field_behavior = .UseFirst });
-
-    try std.testing.expectEqual(c.uptime, 9999);
-    try std.testing.expectEqual(c.vals.testing, 1);
-    try std.testing.expectEqual(c.vals.production, 42);
-}
-
-test "parse struct: 6 (duplicate field error)" {
-    const allocator = std.testing.allocator;
-
-    const Config = struct {
-        vals: struct { testing: u8, production: u8 },
-        uptime: u64,
-    };
-
-    const di = try DataItem.map(&.{ Pair.new(try DataItem.text("vals", .{ .allocator = allocator }), try DataItem.map(&.{
-        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(1)),
-        Pair.new(try DataItem.text("production", .{ .allocator = allocator }), DataItem.int(42)),
-        Pair.new(try DataItem.text("testing", .{ .allocator = allocator }), DataItem.int(7)),
-    }, .{ .allocator = allocator })), Pair.new(try DataItem.text("uptime", .{ .allocator = allocator }), DataItem.int(9999)) }, .{ .allocator = allocator });
-    defer di.deinit(allocator);
-
-    try std.testing.expectError(ParseError.DuplicateCborField, parse(Config, di, .{}));
 }
 
 test "parse struct: 7" {
@@ -527,11 +506,7 @@ test "parse struct: 7" {
         @"2": u64,
     };
 
-    const di = try DataItem.map(&.{ Pair.new(DataItem.int(1), try DataItem.map(&.{
-        Pair.new(DataItem.int(1), DataItem.int(1)),
-        Pair.new(DataItem.int(2), DataItem.int(42)),
-    }, .{ .allocator = allocator })), Pair.new(DataItem.int(2), DataItem.int(9999)) }, .{ .allocator = allocator });
-    defer di.deinit(allocator);
+    const di = DataItem.new("\xA2\x01\xA2\x01\x01\x02\x18\x2A\x02\x19\x27\x0F");
 
     const c = try parse(Config, di, .{ .allocator = allocator });
 
@@ -544,9 +519,9 @@ test "parse optional value" {
     const e1: ?u32 = 1234;
     const e2: ?u32 = null;
 
-    try std.testing.expectEqual(e1, try parse(?u32, DataItem.int(1234), .{}));
-    try std.testing.expectEqual(e2, try parse(?u32, DataItem.Null(), .{}));
-    try std.testing.expectEqual(e2, try parse(?u32, DataItem.Undefined(), .{}));
+    try std.testing.expectEqual(e1, try parse(?u32, DataItem.new("\x19\x04\xD2"), .{}));
+    try std.testing.expectEqual(e2, try parse(?u32, DataItem.new("\xf6"), .{}));
+    try std.testing.expectEqual(e2, try parse(?u32, DataItem.new("\xf7"), .{}));
 }
 
 test "stringify optional value" {
@@ -558,11 +533,8 @@ test "stringify optional value" {
 }
 
 test "parse array: 1" {
-    const allocator = std.testing.allocator;
-
     const e = [5]u8{ 1, 2, 3, 4, 5 };
-    const di = try DataItem.array(&.{ DataItem.int(1), DataItem.int(2), DataItem.int(3), DataItem.int(4), DataItem.int(5) }, .{ .allocator = allocator });
-    defer di.deinit(allocator);
+    const di = DataItem.new("\x85\x01\x02\x03\x04\x05");
 
     const x = try parse([5]u8, di, .{});
 
@@ -570,11 +542,8 @@ test "parse array: 1" {
 }
 
 test "parse array: 2" {
-    const allocator = std.testing.allocator;
-
     const e = [5]?u8{ 1, null, 3, null, 5 };
-    const di = try DataItem.array(&.{ DataItem.int(1), DataItem.Null(), DataItem.int(3), DataItem.Null(), DataItem.int(5) }, .{ .allocator = allocator });
-    defer di.deinit(allocator);
+    const di = DataItem.new("\x85\x01\xF6\x03\xF6\x05");
 
     const x = try parse([5]?u8, di, .{});
 
@@ -586,14 +555,14 @@ test "parse pointer" {
 
     const e1_1: u32 = 1234;
     const e1: *const u32 = &e1_1;
-    const di1 = DataItem.int(1234);
+    const di1 = DataItem.new("\x19\x04\xD2");
     const c1 = try parse(*const u32, di1, .{ .allocator = allocator });
     defer allocator.destroy(c1);
     try std.testing.expectEqual(e1.*, c1.*);
 
     var e2_1: u32 = 1234;
     const e2: *u32 = &e2_1;
-    const di2 = DataItem.int(1234);
+    const di2 = DataItem.new("\x19\x04\xD2");
     const c2 = try parse(*u32, di2, .{ .allocator = allocator });
     defer allocator.destroy(c2);
     try std.testing.expectEqual(e2.*, c2.*);
@@ -603,38 +572,16 @@ test "parse slice" {
     const allocator = std.testing.allocator;
 
     var e1: []const u8 = &.{ 1, 2, 3, 4, 5 };
-    const di1 = try DataItem.bytes(&.{ 1, 2, 3, 4, 5 }, .{ .allocator = allocator });
-    defer di1.deinit(allocator);
+    const di1 = DataItem.new("\x45\x01\x02\x03\x04\x05");
     const c1 = try parse([]const u8, di1, .{ .allocator = allocator });
     defer allocator.free(c1);
     try std.testing.expectEqualSlices(u8, e1, c1);
 
-    var e2: []const u8 = &.{ 1, 2, 3, 4, 5 };
-    const di2 = try DataItem.array(&.{ DataItem.int(1), DataItem.int(2), DataItem.int(3), DataItem.int(4), DataItem.int(5) }, .{ .allocator = allocator });
-    defer di2.deinit(allocator);
-    const c2 = try parse([]const u8, di2, .{ .allocator = allocator });
+    var e2 = [5]u8{ 1, 2, 3, 4, 5 };
+    const di2 = DataItem.new("\x45\x01\x02\x03\x04\x05");
+    const c2 = try parse([]u8, di2, .{ .allocator = allocator });
     defer allocator.free(c2);
-    try std.testing.expectEqualSlices(u8, e2, c2);
-}
-
-test "parse from payload" {
-    const allocator = std.testing.allocator;
-
-    const payload = "\xa2\x64\x76\x61\x6c\x73\xa2\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x6a\x70\x72\x6f\x64\x75\x63\x74\x69\x6f\x6e\x18\x2a\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f";
-
-    const Config = struct {
-        vals: struct { testing: u8, production: u8 },
-        uptime: u64,
-    };
-
-    var data_item = try decode(allocator, payload);
-    defer data_item.deinit(allocator);
-
-    const config = try parse(Config, data_item, .{});
-
-    try std.testing.expectEqual(config.uptime, 9999);
-    try std.testing.expectEqual(config.vals.testing, 1);
-    try std.testing.expectEqual(config.vals.production, 42);
+    try std.testing.expectEqualSlices(u8, e2[0..], c2);
 }
 
 test "stringify simple value" {
@@ -682,18 +629,30 @@ test "stringify struct: 1" {
     try testStringify("\xa1\x68\x76\x65\x72\x73\x69\x6f\x6e\x73\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30", i, .{});
 }
 
-//test "stringify struct: 2" {
-//    const Info = struct {
-//        @"1": []const []const u8,
-//        @"2": []const []const u8,
-//        @"3": []const u8,
-//    };
-//
-//    const i = Info{
-//        .@"1" = &.{"FIDO_2_0"},
-//        .@"2" = &.{},
-//        .@"3" = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f",
-//    };
-//
-//    try testStringify("\xa1\x68\x76\x65\x72\x73\x69\x6f\x6e\x73\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30", i, .{});
-//}
+test "stringify struct: 2" {
+    const Info = struct {
+        @"1": []const []const u8,
+    };
+
+    const i = Info{
+        .@"1" = &.{"FIDO_2_0"},
+    };
+
+    try testStringify("\xa1\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30", i, .{});
+}
+
+test "stringify struct: 3" {
+    const Info = struct {
+        @"1": []const []const u8,
+        @"2": []const []const u8,
+        @"3_b": []const u8,
+    };
+
+    const i = Info{
+        .@"1" = &.{"FIDO_2_0"},
+        .@"2" = &.{},
+        .@"3_b" = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f",
+    };
+
+    try testStringify("\xa3\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f", i, .{});
+}
