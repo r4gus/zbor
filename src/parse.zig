@@ -93,6 +93,7 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
 
                         inline for (structInfo.fields) |field, i| {
                             var match: bool = false;
+                            const name = if (field.name.len >= 3 and field.name[field.name.len - 2] == '_' and (field.name[field.name.len - 1] == 'b' or field.name[field.name.len - 1] == 't')) field.name[0 .. field.name.len - 2] else field.name;
 
                             switch (kv.key.getType()) {
                                 .Int => {
@@ -100,9 +101,9 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
 
                                     const x = try std.fmt.allocPrint(allocator, "{d}", .{if (kv.key.int()) |x| x else return ParseError.Malformed});
                                     defer allocator.free(x);
-                                    match = std.mem.eql(u8, field.name, x);
+                                    match = std.mem.eql(u8, name, x);
                                 },
-                                else => match = std.mem.eql(u8, field.name, if (kv.key.string()) |x| x else return ParseError.Malformed),
+                                else => match = std.mem.eql(u8, name, if (kv.key.string()) |x| x else return ParseError.Malformed),
                             }
 
                             if (match) {
@@ -701,4 +702,35 @@ test "stringify struct: 4" {
     };
 
     try testStringify("\xa4\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x04\xa4\x64\x70\x6c\x61\x74\xf5\x62\x72\x6b\xf5\x62\x75\x70\xf5\x62\x75\x76\xf4", i, .{});
+}
+
+test "parse struct: 5" {
+    const allocator = std.testing.allocator;
+
+    const di = DataItem.new("\xa4\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x04\xa4\x64\x70\x6c\x61\x74\xf5\x62\x72\x6b\xf5\x62\x75\x70\xf5\x62\x75\x76\xf4");
+
+    const Info = struct {
+        @"1": []const []const u8,
+        @"2": []const []const u8,
+        @"3_b": []const u8,
+        @"4": struct {
+            plat: bool,
+            rk: bool,
+            clientPin: ?bool,
+            up: bool,
+            uv: ?bool,
+        },
+        @"5": ?u64,
+        @"6": ?[]const u64,
+    };
+
+    const i = try parse(Info, di, .{ .allocator = allocator });
+    defer {
+        allocator.free(i.@"1"[0]);
+        allocator.free(i.@"1");
+        allocator.free(i.@"2");
+        allocator.free(i.@"3_b");
+    }
+
+    try std.testing.expectEqualStrings("FIDO_2_0", i.@"1"[0]);
 }

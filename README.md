@@ -118,3 +118,12 @@ const x = try parse([5]u8, di, .{});
 
 try std.testing.expectEqualSlices(u8, e[0..], x[0..]);
 ```
+
+The parser might require an allocator, which you can provide with `.{.allocator = <your allocator>}`.
+You're responsible for freeing all allocated memory!
+
+#### Field names
+
+If you want to serialize a specific field of a struct as byte string use the `_b` postfix for your field
+name, e.g. `struct { id_b: []const u8 }`. You can also use `_t` for text strings. The postfix will be
+ignored by the serializer.
