@@ -17,6 +17,7 @@ const encode_4 = cbor.encode_4;
 const encode_8 = cbor.encode_8;
 
 pub const ParseError = error{
+    UnsupportedType,
     UnexpectedItem,
     UnexpectedItemValue,
     InvalidKeyType,
@@ -219,10 +220,10 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                         else => return ParseError.UnexpectedItem,
                     }
                 },
-                else => unreachable,
+                else => return Error.UnsupportedType,
             }
         },
-        else => unreachable,
+        else => return Error.UnsupportedType,
     }
 }
 
@@ -267,17 +268,37 @@ pub fn stringify(
         }, // TODO: add remaining options
     }
 
-    var v: u64 = switch (@typeInfo(T)) {
-        .Int, .ComptimeInt => @intCast(u64, if (value < 0) -(value + 1) else value),
+    var v: u64 = 0;
+    switch (@typeInfo(T)) {
+        .Int, .ComptimeInt => v = @intCast(u64, if (value < 0) -(value + 1) else value),
         .Float, .ComptimeFloat => {
             // TODO: implement
             // TODO: Encode as small as possible!
             // TODO: Handle values that cant fit in u64 (->tagged)
             return;
         },
-        .Bool => if (value) 21 else 20,
-        .Null => 22,
-        .Struct => |S| @intCast(u64, S.fields.len),
+        .Bool => v = if (value) 21 else 20,
+        .Null => v = 22,
+        .Struct => |S| {
+            inline for (S.fields) |Field| {
+                // don't include void fields
+                if (Field.field_type == void) continue;
+
+                // dont't include (optional) null fields
+                var emit_field = true;
+                if (@typeInfo(Field.field_type) == .Optional) {
+                    if (options.skip_null_fields) {
+                        if (@field(value, Field.name) == null) {
+                            emit_field = false;
+                        }
+                    }
+                }
+
+                if (emit_field) {
+                    v += 1;
+                }
+            }
+        },
         .Optional => {
             if (value) |payload| {
                 try stringify(payload, options, out);
@@ -287,12 +308,12 @@ pub fn stringify(
                 return;
             }
         },
-        .Pointer => |ptr_info| switch (ptr_info.size) {
+        .Pointer => |ptr_info| v = switch (ptr_info.size) {
             .Slice => @intCast(u64, value.len),
             else => {},
         },
         else => unreachable, // caught by the first check
-    };
+    }
 
     switch (v) {
         0x00...0x17 => {
@@ -315,34 +336,37 @@ pub fn stringify(
                 if (Field.field_type == void) continue;
 
                 // dont't include (optional) null fields
+                var emit_field = true;
                 if (@typeInfo(Field.field_type) == .Optional) {
                     if (options.skip_null_fields) {
                         if (@field(value, Field.name) == null) {
-                            continue;
+                            emit_field = false;
                         }
                     }
                 }
 
-                var child_options = options;
-                var l = Field.name.len;
-                if (Field.name.len >= 3) {
-                    if (Field.name[l - 2] == '_') {
-                        if (Field.name[l - 1] == 'b') {
-                            l -= 2;
-                            child_options.slice_as_text = false;
-                        } else if (Field.name[l - 1] == 'b') {
-                            l -= 2;
-                            child_options.slice_as_text = true;
+                if (emit_field) {
+                    var child_options = options;
+                    var l = Field.name.len;
+                    if (Field.name.len >= 3) {
+                        if (Field.name[l - 2] == '_') {
+                            if (Field.name[l - 1] == 'b') {
+                                l -= 2;
+                                child_options.slice_as_text = false;
+                            } else if (Field.name[l - 1] == 'b') {
+                                l -= 2;
+                                child_options.slice_as_text = true;
+                            }
                         }
                     }
-                }
 
-                if (s2n(Field.name[0..l])) |nr| { // int key
-                    try stringify(nr, options, out); // key
-                } else { // str key
-                    try stringify(Field.name[0..l], options, out); // key
+                    if (s2n(Field.name[0..l])) |nr| { // int key
+                        try stringify(nr, options, out); // key
+                    } else { // str key
+                        try stringify(Field.name[0..l], options, out); // key
+                    }
+                    try stringify(@field(value, Field.name), child_options, out); // value
                 }
-                try stringify(@field(value, Field.name), child_options, out); // value
             }
         },
         .Pointer => |ptr_info| switch (ptr_info.size) {
@@ -381,7 +405,6 @@ fn testStringify(e: []const u8, v: anytype, o: StringifyOptions) !void {
     defer str.deinit();
 
     try stringify(v, o, str.writer());
-    //std.log.err("{any}", .{str.items});
     try std.testing.expectEqualSlices(u8, e, str.items);
 }
 
@@ -655,4 +678,34 @@ test "stringify struct: 3" {
     };
 
     try testStringify("\xa3\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f", i, .{});
+}
+
+test "stringify struct: 4" {
+    const Info = struct {
+        @"1": []const []const u8,
+        @"2": []const []const u8,
+        @"3_b": []const u8,
+        @"4": struct {
+            plat: bool,
+            rk: bool,
+            clientPin: ?bool,
+            up: bool,
+            uv: ?bool,
+        },
+    };
+
+    const i = Info{
+        .@"1" = &.{"FIDO_2_0"},
+        .@"2" = &.{},
+        .@"3_b" = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f",
+        .@"4" = .{
+            .plat = true,
+            .rk = true,
+            .clientPin = null,
+            .up = true,
+            .uv = false,
+        },
+    };
+
+    try testStringify("\xa4\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x04\xa4\x64\x70\x6c\x61\x74\xf5\x62\x72\x6b\xf5\x62\x75\x70\xf5\x62\x75\x76\xf4", i, .{});
 }
