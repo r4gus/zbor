@@ -58,19 +58,13 @@ pub const DataItem = struct {
         }
     }
 
-    pub fn byteString(self: @This()) ?[]const u8 {
-        if (self.data[0] > 0x5b or self.data[0] < 0x40) return null;
+    pub fn string(self: @This()) ?[]const u8 {
+        if (!(self.data[0] <= 0x5b and self.data[0] >= 0x40) and !(self.data[0] <= 0x7b and self.data[0] >= 0x60)) return null;
 
         var begin: usize = 0;
         var len = if (additionalInfo(self.data, &begin)) |v| @intCast(usize, v) else return null;
-        return self.data[begin .. begin + len];
-    }
 
-    pub fn textString(self: @This()) ?[]const u8 {
-        if (self.data[0] > 0x7b or self.data[0] < 0x60) return null;
-
-        var begin: usize = 0;
-        var len = if (additionalInfo(self.data, &begin)) |v| @intCast(usize, v) else return null;
+        if (@intCast(u65, begin) + @intCast(u65, len) > self.data.len) return null;
         return self.data[begin .. begin + len];
     }
 
@@ -80,8 +74,12 @@ pub const DataItem = struct {
         var begin: usize = 0;
         var len = if (additionalInfo(self.data, &begin)) |v| @intCast(usize, v) else return null;
 
+        // Get to the end of the array
+        var end: usize = 0;
+        if (burn(self.data, &end) == null) return null;
+
         return ArrayIterator{
-            .data = self.data[begin..],
+            .data = self.data[begin..end],
             .len = len,
             .count = 0,
             .i = 0,
@@ -94,8 +92,12 @@ pub const DataItem = struct {
         var begin: usize = 0;
         var len = if (additionalInfo(self.data, &begin)) |v| @intCast(usize, v) else return null;
 
+        // Get to the end of the map
+        var end: usize = 0;
+        if (burn(self.data, &end) == null) return null;
+
         return MapIterator{
-            .data = self.data[begin..],
+            .data = self.data[begin..end],
             .len = len,
             .count = 0,
             .i = 0,
@@ -362,37 +364,37 @@ test "deserialize negative" {
 test "deserialize byte string" {
     const di1 = DataItem.new("\x40");
     try std.testing.expectEqual(Type.ByteString, di1.getType());
-    try std.testing.expectEqualSlices(u8, di1.byteString().?, "");
+    try std.testing.expectEqualSlices(u8, di1.string().?, "");
 
     const di2 = DataItem.new("\x44\x01\x02\x03\x04");
     try std.testing.expectEqual(Type.ByteString, di2.getType());
-    try std.testing.expectEqualSlices(u8, di2.byteString().?, "\x01\x02\x03\x04");
+    try std.testing.expectEqualSlices(u8, di2.string().?, "\x01\x02\x03\x04");
 }
 
 test "deserialize text string" {
     const di1 = DataItem.new("\x60");
     try std.testing.expectEqual(Type.TextString, di1.getType());
-    try std.testing.expectEqualStrings(di1.textString().?, "");
+    try std.testing.expectEqualStrings(di1.string().?, "");
 
     const di2 = DataItem.new("\x61\x61");
     try std.testing.expectEqual(Type.TextString, di2.getType());
-    try std.testing.expectEqualStrings(di2.textString().?, "a");
+    try std.testing.expectEqualStrings(di2.string().?, "a");
 
     const di3 = DataItem.new("\x64\x49\x45\x54\x46");
     try std.testing.expectEqual(Type.TextString, di3.getType());
-    try std.testing.expectEqualStrings(di3.textString().?, "IETF");
+    try std.testing.expectEqualStrings(di3.string().?, "IETF");
 
     const di4 = DataItem.new("\x62\x22\x5c");
     try std.testing.expectEqual(Type.TextString, di4.getType());
-    try std.testing.expectEqualStrings(di4.textString().?, "\"\\");
+    try std.testing.expectEqualStrings(di4.string().?, "\"\\");
 
     const di5 = DataItem.new("\x62\xc3\xbc");
     try std.testing.expectEqual(Type.TextString, di5.getType());
-    try std.testing.expectEqualStrings(di5.textString().?, "ü");
+    try std.testing.expectEqualStrings(di5.string().?, "ü");
 
     const di6 = DataItem.new("\x63\xe6\xb0\xb4");
     try std.testing.expectEqual(Type.TextString, di6.getType());
-    try std.testing.expectEqualStrings(di6.textString().?, "水");
+    try std.testing.expectEqualStrings(di6.string().?, "水");
 }
 
 test "deserialize array" {
@@ -456,10 +458,10 @@ test "deserialize map" {
     try std.testing.expectEqual(Type.Map, di3.getType());
     var ai3 = di3.map().?;
     const kv1_2 = ai3.next().?;
-    try std.testing.expectEqualStrings("a", kv1_2.key.textString().?);
+    try std.testing.expectEqualStrings("a", kv1_2.key.string().?);
     try std.testing.expectEqual(kv1_2.value.int().?, 1);
     const kv2_2 = ai3.next().?;
-    try std.testing.expectEqualStrings("b", kv2_2.key.textString().?);
+    try std.testing.expectEqualStrings("b", kv2_2.key.string().?);
     var ai3_1 = kv2_2.value.array().?;
     try std.testing.expectEqual(ai3_1.next().?.int().?, 2);
     try std.testing.expectEqual(ai3_1.next().?.int().?, 3);
@@ -471,11 +473,11 @@ test "deserialize other" {
     const di1 = DataItem.new("\x82\x61\x61\xa1\x61\x62\x61\x63");
     try std.testing.expectEqual(Type.Array, di1.getType());
     var ai1 = di1.array().?;
-    try std.testing.expectEqualStrings("a", ai1.next().?.textString().?);
+    try std.testing.expectEqualStrings("a", ai1.next().?.string().?);
     var m1 = ai1.next().?.map().?;
     var kv1 = m1.next().?;
-    try std.testing.expectEqualStrings("b", kv1.key.textString().?);
-    try std.testing.expectEqualStrings("c", kv1.value.textString().?);
+    try std.testing.expectEqualStrings("b", kv1.key.string().?);
+    try std.testing.expectEqualStrings("c", kv1.value.string().?);
 }
 
 test "deserialize simple" {
@@ -523,4 +525,60 @@ test "deserialize tagged" {
     try std.testing.expectEqual(Type.Tagged, di1.getType());
     const t1 = di1.tagged().?;
     try std.testing.expectEqual(t1.nr, 0);
+}
+
+test "definite-length strings with short data" {
+    const di1 = DataItem.new("\x41");
+    try std.testing.expectEqual(Type.ByteString, di1.getType());
+    try std.testing.expectEqual(di1.string(), null);
+
+    const di2 = DataItem.new("\x61");
+    try std.testing.expectEqual(Type.TextString, di2.getType());
+    try std.testing.expectEqual(di2.string(), null);
+
+    const di3 = DataItem.new("\x5a\xff\xff\xff\xff\x00");
+    try std.testing.expectEqual(Type.ByteString, di3.getType());
+    try std.testing.expectEqual(di3.string(), null);
+
+    const di4 = DataItem.new("\x5b\xff\xff\xff\xff\xff\xff\xff\xff\x01\x02\x03");
+    try std.testing.expectEqual(Type.ByteString, di4.getType());
+    try std.testing.expectEqual(di4.string(), null);
+
+    const di5 = DataItem.new("\x7a\xff\xff\xff\xff\x00");
+    try std.testing.expectEqual(Type.TextString, di5.getType());
+    try std.testing.expectEqual(di5.string(), null);
+
+    const di6 = DataItem.new("\x7b\x7f\xff\xff\xff\xff\xff\xff\xff\x01\x02\x03");
+    try std.testing.expectEqual(Type.TextString, di6.getType());
+    try std.testing.expectEqual(di6.string(), null);
+}
+
+test "definite-length maps and arrays not closed with enough items" {
+    const di1 = DataItem.new("\x81");
+    try std.testing.expectEqual(Type.Array, di1.getType());
+    try std.testing.expectEqual(di1.array(), null);
+
+    const di2 = DataItem.new("\x81\x81\x81\x81\x81\x81\x81\x81\x81");
+    try std.testing.expectEqual(Type.Array, di2.getType());
+    try std.testing.expectEqual(di2.array(), null);
+
+    const di3 = DataItem.new("\x82\x00");
+    try std.testing.expectEqual(Type.Array, di3.getType());
+    try std.testing.expectEqual(di3.array(), null);
+
+    const di4 = DataItem.new("\xa1");
+    try std.testing.expectEqual(Type.Map, di4.getType());
+    try std.testing.expectEqual(di4.map(), null);
+
+    const di5 = DataItem.new("\xa2\x01\x02");
+    try std.testing.expectEqual(Type.Map, di5.getType());
+    try std.testing.expectEqual(di5.map(), null);
+
+    const di6 = DataItem.new("\xa1\x00");
+    try std.testing.expectEqual(Type.Map, di6.getType());
+    try std.testing.expectEqual(di6.map(), null);
+
+    const di7 = DataItem.new("\xa2\x00\x00\x00");
+    try std.testing.expectEqual(Type.Map, di7.getType());
+    try std.testing.expectEqual(di7.map(), null);
 }

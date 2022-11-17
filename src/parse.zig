@@ -102,7 +102,7 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                                     defer allocator.free(x);
                                     match = std.mem.eql(u8, field.name, x);
                                 },
-                                else => match = std.mem.eql(u8, field.name, if (kv.key.textString()) |x| x else return ParseError.Malformed),
+                                else => match = std.mem.eql(u8, field.name, if (kv.key.string()) |x| x else return ParseError.Malformed),
                             }
 
                             if (match) {
@@ -172,19 +172,8 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                 },
                 .Slice => {
                     switch (item.getType()) {
-                        .ByteString => {
-                            const v = if (item.byteString()) |x| x else return ParseError.Malformed;
-                            if (ptrInfo.child != u8) {
-                                return ParseError.UnexpectedItem;
-                            }
-
-                            var r: []ptrInfo.child = try allocator.alloc(ptrInfo.child, v.len);
-                            errdefer allocator.free(r);
-                            std.mem.copy(ptrInfo.child, r[0..], v[0..]);
-                            return r;
-                        },
-                        .TextString => {
-                            const v = if (item.textString()) |x| x else return ParseError.Malformed;
+                        .ByteString, .TextString => {
+                            const v = if (item.string()) |x| x else return ParseError.Malformed;
                             if (ptrInfo.child != u8) {
                                 return ParseError.UnexpectedItem;
                             }

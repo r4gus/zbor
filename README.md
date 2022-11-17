@@ -65,8 +65,7 @@ All getter functions return either a value or `null`. You can use a pattern like
 
 The following getter functions are supported:
 * `int` - returns `?i65`
-* `byteString` - returns `?[]const u8`
-* `textString` - returns `?[]const u8`
+* `string` - returns `?[]const u8`
 * `array` - returns `?ArrayIterator`
 * `map` - returns `?MapIterator`
 * `simple` - returns `?u8`
