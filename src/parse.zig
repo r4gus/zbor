@@ -21,6 +21,7 @@ pub const ParseError = error{
     UnexpectedItem,
     UnexpectedItemValue,
     InvalidKeyType,
+    InvalidEnumTag,
     DuplicateCborField,
     UnknownField,
     MissingField,
@@ -78,6 +79,24 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                 .Null, .Undefined => null,
                 else => try parse(optionalInfo.child, item, options),
             };
+        },
+        .Enum => |enumInfo| {
+            switch (item.getType()) {
+                .Int => {
+                    const v = if (item.int()) |x| x else return ParseError.Malformed;
+                    return try std.meta.intToEnum(T, v);
+                },
+                .TextString => {
+                    const v = if (item.string()) |x| x else return ParseError.Malformed;
+                    inline for (enumInfo.fields) |field| {
+                        if (cmp(field.name, v)) {
+                            return @field(T, field.name);
+                        }
+                    }
+                    return ParseError.InvalidEnumTag;
+                },
+                else => return ParseError.UnexpectedItem,
+            }
         },
         .Struct => |structInfo| {
             switch (item.getType()) {
@@ -220,6 +239,7 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
 pub const StringifyOptions = struct {
     skip_null_fields: bool = true,
     slice_as_text: bool = true,
+    enum_as_text: bool = true,
 };
 
 pub fn stringify(
@@ -252,6 +272,9 @@ pub fn stringify(
                 return;
             },
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
+        },
+        .Enum => {
+            if (options.enum_as_text) head = 0x60 else head = 0;
         },
         else => {
             return .UnsupportedItem;
@@ -296,6 +319,18 @@ pub fn stringify(
             } else {
                 try stringify(null, options, out);
                 return;
+            }
+        },
+        .Enum => |enumInfo| {
+            if (options.enum_as_text) {
+                const tmp = @intCast(usize, @enumToInt(value));
+                inline for (enumInfo.fields) |field| {
+                    if (field.value == tmp) {
+                        v = @intCast(u64, field.name.len);
+                    }
+                }
+            } else {
+                v = @intCast(u64, @enumToInt(value));
             }
         },
         .Pointer => |ptr_info| v = switch (ptr_info.size) {
@@ -371,6 +406,16 @@ pub fn stringify(
             },
             else => {},
         },
+        .Enum => |enumInfo| {
+            if (options.enum_as_text) {
+                const tmp = @enumToInt(value);
+                inline for (enumInfo.fields) |field| {
+                    if (field.value == tmp) {
+                        try out.writeAll(field.name);
+                    }
+                }
+            }
+        },
         else => unreachable, // caught by the previous check
     }
 }
@@ -387,6 +432,16 @@ fn s2n(s: []const u8) ?usize {
     }
 
     return x;
+}
+
+fn cmp(l: []const u8, r: []const u8) bool {
+    if (l.len != r.len) return false;
+
+    var i: usize = 0;
+    while (i < l.len) : (i += 1) {
+        if (l[i] != r[i]) return false;
+    }
+    return true;
 }
 
 fn testStringify(e: []const u8, v: anytype, o: StringifyOptions) !void {
@@ -733,4 +788,67 @@ test "parse struct: 5" {
     }
 
     try std.testing.expectEqualStrings("FIDO_2_0", i.@"1"[0]);
+}
+
+test "stringify enum: 1" {
+    const Level = enum(u8) {
+        high = 7,
+        low = 11,
+    };
+
+    const allocator = std.testing.allocator;
+    var str = std.ArrayList(u8).init(allocator);
+    defer str.deinit();
+
+    const high = Level.high;
+    const low = Level.low;
+
+    try testStringify("\x07", high, .{ .enum_as_text = false });
+    try testStringify("\x0b", low, .{ .enum_as_text = false });
+}
+
+test "stringify enum: 2" {
+    const Level = enum(u8) {
+        high = 7,
+        low = 11,
+    };
+
+    const allocator = std.testing.allocator;
+    var str = std.ArrayList(u8).init(allocator);
+    defer str.deinit();
+
+    try testStringify("\x64\x68\x69\x67\x68", Level.high, .{});
+    try testStringify("\x63\x6C\x6F\x77", Level.low, .{});
+}
+
+test "parse enum: 1" {
+    const Level = enum(u8) {
+        high = 7,
+        low = 11,
+    };
+
+    const di1 = DataItem.new("\x64\x68\x69\x67\x68");
+    const di2 = DataItem.new("\x63\x6C\x6F\x77");
+
+    const x1 = try parse(Level, di1, .{});
+    const x2 = try parse(Level, di2, .{});
+
+    try std.testing.expectEqual(Level.high, x1);
+    try std.testing.expectEqual(Level.low, x2);
+}
+
+test "parse enum: 2" {
+    const Level = enum(u8) {
+        high = 7,
+        low = 11,
+    };
+
+    const di1 = DataItem.new("\x07");
+    const di2 = DataItem.new("\x0b");
+
+    const x1 = try parse(Level, di1, .{});
+    const x2 = try parse(Level, di2, .{});
+
+    try std.testing.expectEqual(Level.high, x1);
+    try std.testing.expectEqual(Level.low, x2);
 }
