@@ -391,7 +391,7 @@ pub fn stringify(
                             if (Field.name[l - 1] == 'b') {
                                 l -= 2;
                                 child_options.slice_as_text = false;
-                            } else if (Field.name[l - 1] == 'b') {
+                            } else if (Field.name[l - 1] == 't') {
                                 l -= 2;
                                 child_options.slice_as_text = true;
                             }
