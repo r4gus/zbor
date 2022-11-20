@@ -286,6 +286,20 @@ pub fn stringify(
         .Enum => {
             if (options.enum_as_text) head = 0x60 else head = 0;
         },
+        .Union => {
+            const info = @typeInfo(T).Union;
+            if (info.tag_type) |UnionTagType| {
+                inline for (info.fields) |u_field| {
+                    if (value == @field(UnionTagType, u_field.name)) {
+                        try stringify(@field(value, u_field.name), options, out);
+                        break;
+                    }
+                }
+                return;
+            } else {
+                @compileError("Unable to stringify untagged union '" ++ @typeName(T) ++ "'");
+            }
+        },
         else => {
             return .UnsupportedItem;
         }, // TODO: add remaining options
@@ -403,6 +417,7 @@ pub fn stringify(
                     } else { // str key
                         try stringify(Field.name[0..l], options, out); // key
                     }
+
                     try stringify(@field(value, Field.name), child_options, out); // value
                 }
             }
@@ -442,7 +457,7 @@ pub fn stringify(
     }
 }
 
-fn s2n(s: []const u8) ?i64 {
+fn s2n(s: []const u8) ?i65 {
     if (s.len < 1) return null;
     const start: usize = if (s[0] == '-') 1 else 0;
 
@@ -909,4 +924,15 @@ test "serialize EcdsaP256Key" {
     try stringify(k, .{}, str.writer());
 
     try std.testing.expectEqualStrings("\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.items);
+}
+
+test "serialize tagged union: 1" {
+    const AttStmtTag = enum { none };
+    const AttStmt = union(AttStmtTag) {
+        none: struct {},
+    };
+
+    const a = AttStmt{ .none = .{} };
+
+    try testStringify("\xa0", a, .{});
 }
