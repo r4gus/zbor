@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
         with: 
-          repository: ztap
+          repository: r4gus/ztap
           token: ${{ secrets.ZTAP_CI_TOKEN }}
 
       - name: Pull & update submodules recursively
