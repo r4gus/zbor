@@ -116,9 +116,9 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
 
                             switch (kv.key.getType()) {
                                 .Int => {
-                                    var x: [24]u8 = undefined;
-                                    const z = itoa(if (kv.key.int()) |y| y else return ParseError.Malformed, &x, 10);
-                                    match = std.mem.eql(u8, name, x[0..z]);
+                                    const x = if (kv.key.int()) |y| y else return ParseError.Malformed;
+                                    const y = s2n(name);
+                                    match = x == y;
                                 },
                                 else => match = std.mem.eql(u8, name, if (kv.key.string()) |x| x else return ParseError.Malformed),
                             }
@@ -453,45 +453,6 @@ pub fn stringify(
         },
         else => unreachable, // caught by the previous check
     }
-}
-
-fn itoa(number: i65, s: []u8, base: i65) usize {
-    var i: usize = 0;
-    var neg: bool = false;
-    var num = number;
-
-    if (number == 0) {
-        s[i] = '0';
-        return 1;
-    }
-
-    if (number < 0 and base == 10) {
-        num += -1;
-        neg = true;
-    }
-
-    while (num != 0) : (i += 1) {
-        const r: i65 = @mod(num, base);
-        s[i] = @intCast(u8, if (r > 9) (r - 10) + 'a' else r + '0');
-        num = @divTrunc(num, base);
-    }
-
-    if (neg) {
-        s[i] = '-';
-        i += 1;
-    }
-
-    var x: usize = 0;
-    var y: usize = i - 1;
-    while (x < y) {
-        const tmp: u8 = s[x];
-        s[x] = s[y];
-        s[y] = tmp;
-        x += 1;
-        y -= 1;
-    }
-
-    return i;
 }
 
 fn s2n(s: []const u8) ?i65 {
