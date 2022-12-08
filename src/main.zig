@@ -4,6 +4,7 @@ const testing = std.testing;
 
 const cbor = @import("cbor.zig");
 const parser = @import("parse.zig");
+pub const cose = @import("cose.zig");
 
 pub const Error = cbor.Error;
 pub const Type = cbor.Type;
@@ -23,4 +24,5 @@ pub const stringify = parser.stringify;
 test {
     _ = cbor;
     _ = parser;
+    _ = cose;
 }

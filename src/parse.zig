@@ -29,6 +29,7 @@ pub const ParseError = error{
     Overflow,
     OutOfMemory,
     Malformed,
+    NoUnionMemberMatched,
 };
 
 pub const StringifyError = error{
@@ -174,7 +175,20 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
 
                     return r;
                 },
-                else => return ParseError.UnexpectedItem,
+                .ByteString, .TextString => {
+                    if (arrayInfo.child != u8) return ParseError.UnexpectedItem;
+
+                    var v = if (item.string()) |x| x else return ParseError.Malformed;
+                    var r: T = undefined;
+
+                    if (v.len > r[0..].len) return ParseError.Overflow;
+                    std.mem.copy(u8, r[0..v.len], v);
+
+                    return r;
+                },
+                else => {
+                    return ParseError.UnexpectedItem;
+                },
             }
         },
         .Pointer => |ptrInfo| {
@@ -228,6 +242,27 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                     }
                 },
                 else => return Error.UnsupportedType,
+            }
+        },
+        .Union => |unionInfo| {
+            if (unionInfo.tag_type) |_| {
+                // try each union field until we find one that matches
+                inline for (unionInfo.fields) |u_field| {
+                    if (parse(u_field.field_type, item, options)) |value| {
+                        return @unionInit(T, u_field.name, value);
+                    } else |err| {
+                        // Bubble up error.OutOfMemory
+                        // Parsing some types won't have OutOfMemory in their
+                        // error-sets, for the condition to be valid, merge it in.
+                        if (@as(@TypeOf(err) || error{OutOfMemory}, err) == error.OutOfMemory) return err;
+                        // Bubble up AllocatorRequired, as it indicates missing option
+                        if (@as(@TypeOf(err) || error{AllocatorRequired}, err) == error.AllocatorRequired) return err;
+                        // otherwise continue through the `inline for`
+                    }
+                }
+                return ParseError.NoUnionMemberMatched;
+            } else {
+                @compileError("Unable to parse into untagged union '" ++ @typeName(T) ++ "'");
             }
         },
         else => return Error.UnsupportedType,
