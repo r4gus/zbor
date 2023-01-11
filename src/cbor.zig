@@ -1,23 +1,35 @@
 const std = @import("std");
 
-pub const Error = error{ Malformed, TypeMismatch, UnsupportedType };
-
+/// CBOR type (see RFC 8949)
 pub const Type = enum {
+    /// Integer in the range -2^64..2^64 - 1 (MT 0/1)
     Int,
+    /// Byte string (MT 2)
     ByteString,
+    /// UTF-8 text string (MT 3)
     TextString,
+    /// Array of data items (MT 4)
     Array,
+    /// Map of pairs of data items (MT 5)
     Map,
+    /// False (MT 7)
     False,
+    /// True (MT 7)
     True,
+    /// Null (MT 7)
     Null,
+    /// Undefined (MT 7)
     Undefined,
+    /// Simple value (MT 7)
     Simple,
+    /// Tagged data item whose tag number is an integer in the range 0..2^64 - 1 (MT 6)
     Tagged,
+    /// Floating point value (MT 7)
     Float,
-    UnsignedBignum,
+    /// Unknown data item
     Unknown,
 
+    /// Detect the data item type encoded within a raw byte
     pub fn fromByte(b: u8) @This() {
         return switch (b) {
             0x00...0x3b => .Int,
@@ -37,17 +49,25 @@ pub const Type = enum {
     }
 };
 
+/// DataItem is a wrapper around raw CBOR data
 pub const DataItem = struct {
+    /// Raw CBOR data
     data: []const u8,
 
+    /// Create a new DataItem from raw CBOR data
     pub fn new(data: []const u8) @This() {
         return .{ .data = data };
     }
 
+    /// Get the Type of the given DataItem
     pub fn getType(self: @This()) Type {
         return Type.fromByte(self.data[0]);
     }
 
+    /// Decode the given DataItem into an integer
+    ///
+    /// The function will return null if the given DataItems doesn't have the
+    /// tpye Type.Int or if the raw data is malformed.
     pub fn int(self: @This()) ?i65 {
         if (self.data[0] <= 0x1b and self.data[0] >= 0x00) {
             return @intCast(i65, if (additionalInfo(self.data, null)) |v| v else return null);
@@ -58,18 +78,30 @@ pub const DataItem = struct {
         }
     }
 
+    /// Decode the given DataItem into a string
+    ///
+    /// The function will return null if the given DataItems doesn't have the
+    /// tpye Type.ByteString/Type.TextString or if the raw data is malformed.
     pub fn string(self: @This()) ?[]const u8 {
-        if (!(self.data[0] <= 0x5b and self.data[0] >= 0x40) and !(self.data[0] <= 0x7b and self.data[0] >= 0x60)) return null;
+        const T = Type.fromByte(self.data[0]);
+        if (T != Type.ByteString and T != Type.TextString) return null;
 
         var begin: usize = 0;
         var len = if (additionalInfo(self.data, &begin)) |v| @intCast(usize, v) else return null;
 
+        // leave the cast to prevent an overflow!
         if (@intCast(u65, begin) + @intCast(u65, len) > self.data.len) return null;
         return self.data[begin .. begin + len];
     }
 
+    /// Decode the given DataItem into a array
+    ///
+    /// This function will return an ArrayIterator on success and null if
+    /// the given DataItem doesn't have the type Type.Array or if the raw
+    /// data is malformed.
     pub fn array(self: @This()) ?ArrayIterator {
-        if (self.data[0] > 0x9b or self.data[0] < 0x80) return null;
+        const T = Type.fromByte(self.data[0]);
+        if (T != Type.Array) return null;
 
         var begin: usize = 0;
         var len = if (additionalInfo(self.data, &begin)) |v| @intCast(usize, v) else return null;
@@ -86,8 +118,14 @@ pub const DataItem = struct {
         };
     }
 
+    /// Decode the given DataItem into a map
+    ///
+    /// This function will return an MapIterator on success and null if
+    /// the given DataItem doesn't have the type Type.Map or if the raw
+    /// data is malformed.
     pub fn map(self: @This()) ?MapIterator {
-        if (self.data[0] > 0xbb or self.data[0] < 0xa0) return null;
+        const T = Type.fromByte(self.data[0]);
+        if (T != Type.Map) return null;
 
         var begin: usize = 0;
         var len = if (additionalInfo(self.data, &begin)) |v| @intCast(usize, v) else return null;
@@ -104,16 +142,27 @@ pub const DataItem = struct {
         };
     }
 
+    /// Decode the given DataItem into a simple value
+    ///
+    /// This function will return null if the DataItems type
+    /// is not Type.Simple, Type.False, Type.True, Type.Null
+    /// or Type.Undefined, or if the raw data is malformed.
     pub fn simple(self: @This()) ?u8 {
         return switch (self.data[0]) {
-            0xe0...0xf3 => self.data[0] & 0x1f,
+            0xe0...0xf7 => self.data[0] & 0x1f,
             0xf8 => self.data[1],
             else => null,
         };
     }
 
+    /// Decode the given DataItem into a float
+    ///
+    /// This function will return null if the DataItem
+    /// isn't a half-, single-, or double precision
+    /// floating point value, or if the raw data is malformed.
     pub fn float(self: @This()) ?f64 {
-        if (self.data[0] > 0xfb or self.data[0] < 0xf9) return null;
+        const T = Type.fromByte(self.data[0]);
+        if (T != Type.Float) return null;
 
         if (additionalInfo(self.data, null)) |v| {
             return switch (self.data[0]) {
@@ -127,8 +176,13 @@ pub const DataItem = struct {
         }
     }
 
+    /// Decode the given DataItem into a Tag
+    ///
+    /// This function will return null if the DataItem
+    /// isn't of type Type.Tagged or if the raw data is malformed.
     pub fn tagged(self: @This()) ?Tag {
-        if (self.data[0] > 0xdb or self.data[0] < 0xc0) return null;
+        const T = Type.fromByte(self.data[0]);
+        if (T != Type.Tagged) return null;
 
         var begin: usize = 0;
         var nr = if (additionalInfo(self.data, &begin)) |v| v else return null;
@@ -137,22 +191,30 @@ pub const DataItem = struct {
     }
 };
 
+/// Representaion of a tagged data item
 pub const Tag = struct {
+    /// The tag of the data item
     nr: u64,
+    /// The data item being tagged
     content: DataItem,
 };
 
+/// The key-value pair of a map
 pub const Pair = struct {
     key: DataItem,
     value: DataItem,
 };
 
+/// Iterator for iterating over a map, returned by DataItem.map()
 pub const MapIterator = struct {
     data: []const u8,
     len: usize,
     count: usize,
     i: usize,
 
+    /// Get the next key Pair
+    ///
+    /// Returns null after the last element.
     pub fn next(self: *@This()) ?Pair {
         if (self.count >= self.len) return null;
         var new_i: usize = self.i;
@@ -170,12 +232,16 @@ pub const MapIterator = struct {
     }
 };
 
+/// Iterator for iterating over an array, returned by DataItem.array()
 pub const ArrayIterator = struct {
     data: []const u8,
     len: usize,
     count: usize,
     i: usize,
 
+    /// Get the next DataItem
+    ///
+    /// Returns null after the last element.
     pub fn next(self: *@This()) ?DataItem {
         if (self.count >= self.len) return null;
 
@@ -230,7 +296,7 @@ fn burn(data: []const u8, i: *usize) ?void {
 /// Return the additional information of the given data item.
 ///
 /// Pass a reference to `l` if you want to know where the
-/// actual data begins (|head| + |additional information|).
+/// actual data begins (l := |head| + |additional information|).
 fn additionalInfo(data: []const u8, l: ?*usize) ?u64 {
     if (data.len < 1) return null;
 
