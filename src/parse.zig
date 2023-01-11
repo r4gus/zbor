@@ -135,7 +135,7 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                                     }
                                 }
 
-                                @field(r, field.name) = try parse(field.field_type, kv.value, options);
+                                @field(r, field.name) = try parse(field.type, kv.value, options);
 
                                 fields_seen[i] = true;
                                 found = true;
@@ -150,7 +150,7 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
 
                     inline for (structInfo.fields) |field, i| {
                         if (!fields_seen[i]) {
-                            switch (@typeInfo(field.field_type)) {
+                            switch (@typeInfo(field.type)) {
                                 .Optional => @field(r, field.name) = null,
                                 else => return ParseError.MissingField,
                             }
@@ -248,7 +248,7 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
             if (unionInfo.tag_type) |_| {
                 // try each union field until we find one that matches
                 inline for (unionInfo.fields) |u_field| {
-                    if (parse(u_field.field_type, item, options)) |value| {
+                    if (parse(u_field.type, item, options)) |value| {
                         return @unionInit(T, u_field.name, value);
                     } else |err| {
                         // Bubble up error.OutOfMemory
@@ -352,11 +352,11 @@ pub fn stringify(
         .Struct => |S| {
             inline for (S.fields) |Field| {
                 // don't include void fields
-                if (Field.field_type == void) continue;
+                if (Field.type == void) continue;
 
                 // dont't include (optional) null fields
                 var emit_field = true;
-                if (@typeInfo(Field.field_type) == .Optional) {
+                if (@typeInfo(Field.type) == .Optional) {
                     if (options.skip_null_fields) {
                         if (@field(value, Field.name) == null) {
                             emit_field = false;
@@ -420,11 +420,11 @@ pub fn stringify(
         .Struct => |S| {
             inline for (S.fields) |Field| {
                 // don't include void fields
-                if (Field.field_type == void) continue;
+                if (Field.type == void) continue;
 
                 // dont't include (optional) null fields
                 var emit_field = true;
-                if (@typeInfo(Field.field_type) == .Optional) {
+                if (@typeInfo(Field.type) == .Optional) {
                     if (options.skip_null_fields) {
                         if (@field(value, Field.name) == null) {
                             emit_field = false;
