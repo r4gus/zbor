@@ -155,6 +155,19 @@ pub const DataItem = struct {
         };
     }
 
+    /// Decode the given DataItem into a boolean
+    ///
+    /// Returns null if the DataItem's type is not
+    /// Type.False or Type.True, or if the raw data
+    /// is malformed.
+    pub fn boolean(self: @This()) ?bool {
+        return switch (self.data[0]) {
+            0xf4 => false,
+            0xf5 => true,
+            else => null,
+        };
+    }
+
     /// Decode the given DataItem into a float
     ///
     /// This function will return null if the DataItem
@@ -549,9 +562,11 @@ test "deserialize other" {
 test "deserialize simple" {
     const di1 = DataItem.new("\xf4");
     try std.testing.expectEqual(Type.False, di1.getType());
+    try std.testing.expectEqual(di1.boolean().?, false);
 
     const di2 = DataItem.new("\xf5");
     try std.testing.expectEqual(Type.True, di2.getType());
+    try std.testing.expectEqual(di2.boolean().?, true);
 
     const di3 = DataItem.new("\xf6");
     try std.testing.expectEqual(Type.Null, di3.getType());
