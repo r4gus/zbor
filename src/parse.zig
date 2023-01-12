@@ -529,10 +529,10 @@ fn testStringify(e: []const u8, v: anytype, o: StringifyOptions) !void {
 }
 
 test "parse boolean" {
-    const t = DataItem.new("\xf5");
-    const f = DataItem.new("\xf4");
-    const u = DataItem.new("\xf7");
-    const i = DataItem.new("\x0b");
+    const t = try DataItem.new("\xf5");
+    const f = try DataItem.new("\xf4");
+    const u = try DataItem.new("\xf7");
+    const i = try DataItem.new("\x0b");
 
     try std.testing.expectEqual(true, try parse(bool, t, .{}));
     try std.testing.expectEqual(false, try parse(bool, f, .{}));
@@ -541,9 +541,9 @@ test "parse boolean" {
 }
 
 test "parse float" {
-    const f1 = DataItem.new("\xfb\x3f\xf1\x99\x99\x99\x99\x99\x9a");
-    const f2 = DataItem.new("\xFB\x40\x1D\x67\x86\xC2\x26\x80\x9D");
-    const f3 = DataItem.new("\xFB\xC0\x28\x1E\xB8\x51\xEB\x85\x1F");
+    const f1 = try DataItem.new("\xfb\x3f\xf1\x99\x99\x99\x99\x99\x9a");
+    const f2 = try DataItem.new("\xFB\x40\x1D\x67\x86\xC2\x26\x80\x9D");
+    const f3 = try DataItem.new("\xFB\xC0\x28\x1E\xB8\x51\xEB\x85\x1F");
 
     try std.testing.expectApproxEqRel(try parse(f16, f1, .{}), 1.1, 0.01);
     try std.testing.expectApproxEqRel(try parse(f16, f2, .{}), 7.3511, 0.01);
@@ -557,8 +557,8 @@ test "stringify float" {
 }
 
 test "parse int" {
-    const i_1 = DataItem.new("\x18\xff");
-    const i_2 = DataItem.new("\x19\x01\x00");
+    const i_1 = try DataItem.new("\x18\xff");
+    const i_2 = try DataItem.new("\x19\x01\x00");
 
     try std.testing.expectEqual(try parse(u8, i_1, .{}), 255);
     try std.testing.expectError(ParseError.Overflow, parse(u8, i_2, .{}));
@@ -597,7 +597,7 @@ test "parse struct: 1" {
         uptime: u64,
     };
 
-    const di = DataItem.new("\xa2\x64\x76\x61\x6c\x73\xa2\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x6a\x70\x72\x6f\x64\x75\x63\x74\x69\x6f\x6e\x18\x2a\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f");
+    const di = try DataItem.new("\xa2\x64\x76\x61\x6c\x73\xa2\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x6a\x70\x72\x6f\x64\x75\x63\x74\x69\x6f\x6e\x18\x2a\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f");
 
     const c = try parse(Config, di, .{});
 
@@ -612,7 +612,7 @@ test "parse struct: 2 (optional missing field)" {
         uptime: u64,
     };
 
-    const di = DataItem.new("\xa2\x64\x76\x61\x6c\x73\xa1\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f");
+    const di = try DataItem.new("\xa2\x64\x76\x61\x6c\x73\xa1\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f");
 
     const c = try parse(Config, di, .{});
 
@@ -625,7 +625,7 @@ test "parse struct: 3 (missing field)" {
         uptime: u64,
     };
 
-    const di = DataItem.new("\xa2\x64\x76\x61\x6c\x73\xa1\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f");
+    const di = try DataItem.new("\xa2\x64\x76\x61\x6c\x73\xa1\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f");
 
     try std.testing.expectError(ParseError.MissingField, parse(Config, di, .{}));
 }
@@ -636,7 +636,7 @@ test "parse struct: 4 (unknown field)" {
         uptime: u64,
     };
 
-    const di = DataItem.new("\xa2\x64\x76\x61\x6c\x73\xa2\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x6a\x70\x72\x6f\x64\x75\x63\x74\x69\x6f\x6e\x18\x2a\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f");
+    const di = try DataItem.new("\xa2\x64\x76\x61\x6c\x73\xa2\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x6a\x70\x72\x6f\x64\x75\x63\x74\x69\x6f\x6e\x18\x2a\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f");
 
     try std.testing.expectError(ParseError.UnknownField, parse(Config, di, .{ .ignore_unknown_fields = false }));
 }
@@ -649,7 +649,7 @@ test "parse struct: 7" {
         @"2": u64,
     };
 
-    const di = DataItem.new("\xA2\x01\xA2\x01\x01\x02\x18\x2A\x02\x19\x27\x0F");
+    const di = try DataItem.new("\xA2\x01\xA2\x01\x01\x02\x18\x2A\x02\x19\x27\x0F");
 
     const c = try parse(Config, di, .{ .allocator = allocator });
 
@@ -662,9 +662,9 @@ test "parse optional value" {
     const e1: ?u32 = 1234;
     const e2: ?u32 = null;
 
-    try std.testing.expectEqual(e1, try parse(?u32, DataItem.new("\x19\x04\xD2"), .{}));
-    try std.testing.expectEqual(e2, try parse(?u32, DataItem.new("\xf6"), .{}));
-    try std.testing.expectEqual(e2, try parse(?u32, DataItem.new("\xf7"), .{}));
+    try std.testing.expectEqual(e1, try parse(?u32, try DataItem.new("\x19\x04\xD2"), .{}));
+    try std.testing.expectEqual(e2, try parse(?u32, try DataItem.new("\xf6"), .{}));
+    try std.testing.expectEqual(e2, try parse(?u32, try DataItem.new("\xf7"), .{}));
 }
 
 test "stringify optional value" {
@@ -677,7 +677,7 @@ test "stringify optional value" {
 
 test "parse array: 1" {
     const e = [5]u8{ 1, 2, 3, 4, 5 };
-    const di = DataItem.new("\x85\x01\x02\x03\x04\x05");
+    const di = try DataItem.new("\x85\x01\x02\x03\x04\x05");
 
     const x = try parse([5]u8, di, .{});
 
@@ -686,7 +686,7 @@ test "parse array: 1" {
 
 test "parse array: 2" {
     const e = [5]?u8{ 1, null, 3, null, 5 };
-    const di = DataItem.new("\x85\x01\xF6\x03\xF6\x05");
+    const di = try DataItem.new("\x85\x01\xF6\x03\xF6\x05");
 
     const x = try parse([5]?u8, di, .{});
 
@@ -698,14 +698,14 @@ test "parse pointer" {
 
     const e1_1: u32 = 1234;
     const e1: *const u32 = &e1_1;
-    const di1 = DataItem.new("\x19\x04\xD2");
+    const di1 = try DataItem.new("\x19\x04\xD2");
     const c1 = try parse(*const u32, di1, .{ .allocator = allocator });
     defer allocator.destroy(c1);
     try std.testing.expectEqual(e1.*, c1.*);
 
     var e2_1: u32 = 1234;
     const e2: *u32 = &e2_1;
-    const di2 = DataItem.new("\x19\x04\xD2");
+    const di2 = try DataItem.new("\x19\x04\xD2");
     const c2 = try parse(*u32, di2, .{ .allocator = allocator });
     defer allocator.destroy(c2);
     try std.testing.expectEqual(e2.*, c2.*);
@@ -715,13 +715,13 @@ test "parse slice" {
     const allocator = std.testing.allocator;
 
     var e1: []const u8 = &.{ 1, 2, 3, 4, 5 };
-    const di1 = DataItem.new("\x45\x01\x02\x03\x04\x05");
+    const di1 = try DataItem.new("\x45\x01\x02\x03\x04\x05");
     const c1 = try parse([]const u8, di1, .{ .allocator = allocator });
     defer allocator.free(c1);
     try std.testing.expectEqualSlices(u8, e1, c1);
 
     var e2 = [5]u8{ 1, 2, 3, 4, 5 };
-    const di2 = DataItem.new("\x45\x01\x02\x03\x04\x05");
+    const di2 = try DataItem.new("\x45\x01\x02\x03\x04\x05");
     const c2 = try parse([]u8, di2, .{ .allocator = allocator });
     defer allocator.free(c2);
     try std.testing.expectEqualSlices(u8, e2[0..], c2);
@@ -837,7 +837,7 @@ test "stringify struct: 4" {
 test "parse struct: 5" {
     const allocator = std.testing.allocator;
 
-    const di = DataItem.new("\xa4\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x04\xa4\x64\x70\x6c\x61\x74\xf5\x62\x72\x6b\xf5\x62\x75\x70\xf5\x62\x75\x76\xf4");
+    const di = try DataItem.new("\xa4\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x04\xa4\x64\x70\x6c\x61\x74\xf5\x62\x72\x6b\xf5\x62\x75\x70\xf5\x62\x75\x76\xf4");
 
     const Info = struct {
         @"1": []const []const u8,
@@ -902,8 +902,8 @@ test "parse enum: 1" {
         low = 11,
     };
 
-    const di1 = DataItem.new("\x64\x68\x69\x67\x68");
-    const di2 = DataItem.new("\x63\x6C\x6F\x77");
+    const di1 = try DataItem.new("\x64\x68\x69\x67\x68");
+    const di2 = try DataItem.new("\x63\x6C\x6F\x77");
 
     const x1 = try parse(Level, di1, .{});
     const x2 = try parse(Level, di2, .{});
@@ -918,8 +918,8 @@ test "parse enum: 2" {
         low = 11,
     };
 
-    const di1 = DataItem.new("\x07");
-    const di2 = DataItem.new("\x0b");
+    const di1 = try DataItem.new("\x07");
+    const di2 = try DataItem.new("\x0b");
 
     const x1 = try parse(Level, di1, .{});
     const x2 = try parse(Level, di2, .{});
@@ -934,8 +934,8 @@ test "parse enum: 3" {
         low = -11,
     };
 
-    const di1 = DataItem.new("\x26");
-    const di2 = DataItem.new("\x2a");
+    const di1 = try DataItem.new("\x26");
+    const di2 = try DataItem.new("\x2a");
 
     const x1 = try parse(Level, di1, .{});
     const x2 = try parse(Level, di2, .{});
