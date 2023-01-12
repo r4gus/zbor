@@ -72,7 +72,7 @@ pub const DataItem = struct {
     /// Decode the given DataItem into an integer
     ///
     /// The function will return null if the given DataItems doesn't have the
-    /// tpye Type.Int or if the raw data is malformed.
+    /// tpye Type.Int.
     pub fn int(self: @This()) ?i65 {
         if (self.data[0] <= 0x1b and self.data[0] >= 0x00) {
             return @intCast(i65, if (additionalInfo(self.data, null)) |v| v else return null);
@@ -86,7 +86,7 @@ pub const DataItem = struct {
     /// Decode the given DataItem into a string
     ///
     /// The function will return null if the given DataItems doesn't have the
-    /// tpye Type.ByteString/Type.TextString or if the raw data is malformed.
+    /// tpye Type.ByteString or Type.TextString.
     pub fn string(self: @This()) ?[]const u8 {
         const T = Type.fromByte(self.data[0]);
         if (T != Type.ByteString and T != Type.TextString) return null;
@@ -94,16 +94,13 @@ pub const DataItem = struct {
         var begin: usize = 0;
         var len = if (additionalInfo(self.data, &begin)) |v| @intCast(usize, v) else return null;
 
-        // leave the cast to prevent an overflow!
-        if (@intCast(u65, begin) + @intCast(u65, len) > self.data.len) return null;
         return self.data[begin .. begin + len];
     }
 
     /// Decode the given DataItem into a array
     ///
     /// This function will return an ArrayIterator on success and null if
-    /// the given DataItem doesn't have the type Type.Array or if the raw
-    /// data is malformed.
+    /// the given DataItem doesn't have the type Type.Array.
     pub fn array(self: @This()) ?ArrayIterator {
         const T = Type.fromByte(self.data[0]);
         if (T != Type.Array) return null;
@@ -126,8 +123,7 @@ pub const DataItem = struct {
     /// Decode the given DataItem into a map
     ///
     /// This function will return an MapIterator on success and null if
-    /// the given DataItem doesn't have the type Type.Map or if the raw
-    /// data is malformed.
+    /// the given DataItem doesn't have the type Type.Map.
     pub fn map(self: @This()) ?MapIterator {
         const T = Type.fromByte(self.data[0]);
         if (T != Type.Map) return null;
@@ -151,7 +147,7 @@ pub const DataItem = struct {
     ///
     /// This function will return null if the DataItems type
     /// is not Type.Simple, Type.False, Type.True, Type.Null
-    /// or Type.Undefined, or if the raw data is malformed.
+    /// or Type.Undefined.
     pub fn simple(self: @This()) ?u8 {
         return switch (self.data[0]) {
             0xe0...0xf7 => self.data[0] & 0x1f,
@@ -163,8 +159,7 @@ pub const DataItem = struct {
     /// Decode the given DataItem into a boolean
     ///
     /// Returns null if the DataItem's type is not
-    /// Type.False or Type.True, or if the raw data
-    /// is malformed.
+    /// Type.False or Type.True.
     pub fn boolean(self: @This()) ?bool {
         return switch (self.data[0]) {
             0xf4 => false,
@@ -177,7 +172,7 @@ pub const DataItem = struct {
     ///
     /// This function will return null if the DataItem
     /// isn't a half-, single-, or double precision
-    /// floating point value, or if the raw data is malformed.
+    /// floating point value.
     pub fn float(self: @This()) ?f64 {
         const T = Type.fromByte(self.data[0]);
         if (T != Type.Float) return null;
@@ -197,7 +192,7 @@ pub const DataItem = struct {
     /// Decode the given DataItem into a Tag
     ///
     /// This function will return null if the DataItem
-    /// isn't of type Type.Tagged or if the raw data is malformed.
+    /// isn't of type Type.Tagged.
     pub fn tagged(self: @This()) ?Tag {
         const T = Type.fromByte(self.data[0]);
         if (T != Type.Tagged) return null;

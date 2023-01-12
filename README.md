@@ -41,8 +41,12 @@ To inspect CBOR data you must first create a new `DataItem`.
 ```zig
 const cbor = @import("zbor");
 
-const di = DataItem.new("\x1b\xff\xff\xff\xff\xff\xff\xff\xff");
+const di = DataItem.new("\x1b\xff\xff\xff\xff\xff\xff\xff\xff") catch {
+    // handle the case that the given data is malformed
+};
 ```
+
+`DataItem.new()` will check if the given data is well-formed before returning a `DataItem`. The data is well formed if it's syntactically correct and no bytes are left in the input after parsing (see [RFC 8949 Appendix C](https://www.rfc-editor.org/rfc/rfc8949.html#section-appendix.c-1)).
 
 To check the type of the given `DataItem` use the `getType()` function.
 
@@ -58,10 +62,7 @@ Based on the given type you can the access the underlying value.
 std.debug.assert(di.int().? == 18446744073709551615);
 ```
 
-All getter functions return either a value or `null`. You can use a pattern like `if (di.int()) |v| v else return error.Oops;` to access the value in a safe way.
-
-> The CBOR data is only parsed if you call one of the `DataItem` functions
-> and only as far as necessary.
+All getter functions return either a value or `null`. You can use a pattern like `if (di.int()) |v| v else return error.Oops;` to access the value in a safe way. If you've used `DataItem.new()` and know the type of the data item, you should be safe to just do `di.int().?`.
 
 The following getter functions are supported:
 * `int` - returns `?i65`
@@ -71,6 +72,7 @@ The following getter functions are supported:
 * `simple` - returns `?u8`
 * `float` - returns `?f64`
 * `tagged` - returns `?Tag`
+* `boolean` - returns `?bool`
 
 #### Iterators
 
@@ -107,6 +109,9 @@ const i = Info{
 try stringify(i, .{}, str.writer());
 ```
 
+This is currently the only way to create CBOR data.
+
+### Deserialization
 
 You can deserialize CBOR data into Zig objects using the `parse()` function.
 
