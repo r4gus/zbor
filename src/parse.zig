@@ -341,10 +341,18 @@ pub fn stringify(
     var v: u64 = 0;
     switch (@typeInfo(T)) {
         .Int, .ComptimeInt => v = @intCast(u64, if (value < 0) -(value + 1) else value),
-        .Float, .ComptimeFloat => {
-            // TODO: implement
-            // TODO: Encode as small as possible!
-            // TODO: Handle values that cant fit in u64 (->tagged)
+        .Float => |float| {
+            switch (float.bits) {
+                16 => try encode_2(out, head, @intCast(u64, @bitCast(u16, value))),
+                32 => try encode_4(out, head, @intCast(u64, @bitCast(u32, value))),
+                64 => try encode_8(out, head, @intCast(u64, @bitCast(u64, value))),
+                else => @compileError("Float must be 16, 32 or 64 Bits wide"),
+            }
+            return;
+        },
+        .ComptimeFloat => {
+            // Comptime floats are always encoded as single precision floats
+            try encode_4(out, head, @intCast(u64, @bitCast(u32, @floatCast(f32, value))));
             return;
         },
         .Bool => v = if (value) 21 else 20,
@@ -553,7 +561,10 @@ test "parse float" {
 }
 
 test "stringify float" {
-    // TODO
+    try testStringify("\xf9\x00\x00", @floatCast(f16, 0.0), .{});
+    try testStringify("\xfa\x47\xc3\x50\x00", @floatCast(f32, 100000.0), .{});
+    try testStringify("\xfb\x7e\x37\xe4\x3c\x88\x00\x75\x9c", @floatCast(f64, 1.0e+300), .{});
+    try testStringify("\xfa\x47\xc3\x50\x00", 100000.0, .{});
 }
 
 test "parse int" {

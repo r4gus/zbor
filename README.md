@@ -111,6 +111,9 @@ try stringify(i, .{}, str.writer());
 
 This is currently the only way to create CBOR data.
 
+> Note: Compile time floats are always encoded as single precision floats (f32). Please use `@floatCast`
+> before passing a float to `stringify()`.
+
 ### Deserialization
 
 You can deserialize CBOR data into Zig objects using the `parse()` function.
