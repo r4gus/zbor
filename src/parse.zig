@@ -562,8 +562,15 @@ test "parse float" {
 
 test "stringify float" {
     try testStringify("\xf9\x00\x00", @floatCast(f16, 0.0), .{});
+    try testStringify("\xf9\x80\x00", @floatCast(f16, -0.0), .{});
+    try testStringify("\xf9\x3c\x00", @floatCast(f16, 1.0), .{});
+    try testStringify("\xf9\x3e\x00", @floatCast(f16, 1.5), .{});
+    try testStringify("\xf9\x7b\xff", @floatCast(f16, 65504.0), .{});
     try testStringify("\xfa\x47\xc3\x50\x00", @floatCast(f32, 100000.0), .{});
+    try testStringify("\xfa\x7f\x7f\xff\xff", @floatCast(f32, 3.4028234663852886e+38), .{});
     try testStringify("\xfb\x7e\x37\xe4\x3c\x88\x00\x75\x9c", @floatCast(f64, 1.0e+300), .{});
+    try testStringify("\xfb\xc0\x10\x66\x66\x66\x66\x66\x66", @floatCast(f64, -4.1), .{});
+
     try testStringify("\xfa\x47\xc3\x50\x00", 100000.0, .{});
 }
 
