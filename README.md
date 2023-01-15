@@ -114,6 +114,8 @@ This is currently the only way to create CBOR data.
 > Note: Compile time floats are always encoded as single precision floats (f32). Please use `@floatCast`
 > before passing a float to `stringify()`.
 
+`u8`slices with sentinel terminator (e.g. `const x: [:0] = "FIDO_2_0"`) are treated as text strings.
+
 ### Deserialization
 
 You can deserialize CBOR data into Zig objects using the `parse()` function.
@@ -130,8 +132,3 @@ try std.testing.expectEqualSlices(u8, e[0..], x[0..]);
 The parser might require an allocator, which you can provide with `.{.allocator = <your allocator>}`.
 You're responsible for freeing all allocated memory!
 
-#### Field names
-
-If you want to serialize a specific field of a struct as byte string use the `_b` postfix for your field
-name, e.g. `struct { id_b: []const u8 }`. You can also use `_t` for text strings. The postfix will be
-ignored by the serializer.

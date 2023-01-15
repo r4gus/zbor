@@ -113,15 +113,14 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
 
                         inline for (structInfo.fields) |field, i| {
                             var match: bool = false;
-                            const name = if (field.name.len >= 3 and field.name[field.name.len - 2] == '_' and (field.name[field.name.len - 1] == 'b' or field.name[field.name.len - 1] == 't')) field.name[0 .. field.name.len - 2] else field.name;
 
                             switch (kv.key.getType()) {
                                 .Int => {
                                     const x = if (kv.key.int()) |y| y else return ParseError.Malformed;
-                                    const y = s2n(name);
+                                    const y = s2n(field.name);
                                     match = x == y;
                                 },
-                                else => match = std.mem.eql(u8, name, if (kv.key.string()) |x| x else return ParseError.Malformed),
+                                else => match = std.mem.eql(u8, field.name, if (kv.key.string()) |x| x else return ParseError.Malformed),
                             }
 
                             if (match) {
@@ -136,6 +135,17 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                                 }
 
                                 @field(r, field.name) = try parse(field.type, kv.value, options);
+                                errdefer {
+                                    // TODO: add error defer to free memory
+                                    const I = @typeInfo(@TypeOf(@field(r, field.name)));
+
+                                    switch (I) {
+                                        .Pointer => |ptrInfo| {
+                                            _ = ptrInfo;
+                                        },
+                                        else => {},
+                                    }
+                                }
 
                                 fields_seen[i] = true;
                                 found = true;
@@ -270,8 +280,11 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
 }
 
 pub const StringifyOptions = struct {
+    /// Struct fields that are null will not be included in the CBOR map.
     skip_null_fields: bool = true,
-    slice_as_text: bool = true,
+    /// Convert an u8 slice into a CBOR text string.
+    slice_as_text: bool = false,
+    /// Use the field name instead of the numerical value to represent a enum.
     enum_as_text: bool = true,
 };
 
@@ -301,7 +314,7 @@ pub fn stringify(
         .Pointer => |ptr_info| switch (ptr_info.size) {
             .Slice => {
                 if (ptr_info.child == u8) {
-                    if (options.slice_as_text and std.unicode.utf8ValidateSlice(value)) {
+                    if ((ptr_info.sentinel != null or options.slice_as_text) and std.unicode.utf8ValidateSlice(value)) {
                         head = 0x60;
                     } else {
                         head = 0x40;
@@ -443,24 +456,26 @@ pub fn stringify(
                 if (emit_field) {
                     var child_options = options;
                     var l = Field.name.len;
-                    if (Field.name.len >= 3) {
-                        if (Field.name[l - 2] == '_') {
-                            if (Field.name[l - 1] == 'b') {
-                                l -= 2;
-                                child_options.slice_as_text = false;
-                                child_options.enum_as_text = false;
-                            } else if (Field.name[l - 1] == 't') {
-                                l -= 2;
-                                child_options.slice_as_text = true;
-                                child_options.enum_as_text = true;
-                            }
-                        }
-                    }
+                    //if (Field.name.len >= 3) {
+                    //    if (Field.name[l - 2] == '_') {
+                    //        if (Field.name[l - 1] == 'b') {
+                    //            l -= 2;
+                    //            child_options.slice_as_text = false;
+                    //            child_options.enum_as_text = false;
+                    //        } else if (Field.name[l - 1] == 't') {
+                    //            l -= 2;
+                    //            child_options.slice_as_text = true;
+                    //            child_options.enum_as_text = true;
+                    //        }
+                    //    }
+                    //}
 
                     if (s2n(Field.name[0..l])) |nr| { // int key
                         try stringify(nr, options, out); // key
                     } else { // str key
-                        try stringify(Field.name[0..l], options, out); // key
+                        var tmp_opt = options;
+                        tmp_opt.slice_as_text = true;
+                        try stringify(Field.name[0..l], tmp_opt, out); // key
                     }
 
                     try stringify(@field(value, Field.name), child_options, out); // value
@@ -762,13 +777,13 @@ test "stringify pointer" {
 }
 
 test "stringify slice" {
-    const s1: []const u8 = "a";
+    const s1: [:0]const u8 = "a";
     try testStringify("\x61\x61", s1, .{});
 
-    const s2: []const u8 = "IETF";
+    const s2: [:0]const u8 = "IETF";
     try testStringify("\x64\x49\x45\x54\x46", s2, .{});
 
-    const s3: []const u8 = "\"\\";
+    const s3: [:0]const u8 = "\"\\";
     try testStringify("\x62\x22\x5c", s3, .{});
 
     const b1: []const u8 = &.{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 };
@@ -780,7 +795,7 @@ test "stringify slice" {
 
 test "stringify struct: 1" {
     const Info = struct {
-        versions: []const []const u8,
+        versions: []const [:0]const u8,
     };
 
     const i = Info{
@@ -792,7 +807,7 @@ test "stringify struct: 1" {
 
 test "stringify struct: 2" {
     const Info = struct {
-        @"1": []const []const u8,
+        @"1": []const [:0]const u8,
     };
 
     const i = Info{
@@ -804,15 +819,15 @@ test "stringify struct: 2" {
 
 test "stringify struct: 3" {
     const Info = struct {
-        @"1": []const []const u8,
-        @"2": []const []const u8,
-        @"3_b": []const u8,
+        @"1": []const [:0]const u8,
+        @"2": []const [:0]const u8,
+        @"3": []const u8,
     };
 
     const i = Info{
         .@"1" = &.{"FIDO_2_0"},
         .@"2" = &.{},
-        .@"3_b" = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f",
+        .@"3" = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f",
     };
 
     try testStringify("\xa3\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f", i, .{});
@@ -820,9 +835,9 @@ test "stringify struct: 3" {
 
 test "stringify struct: 4" {
     const Info = struct {
-        @"1": []const []const u8,
-        @"2": []const []const u8,
-        @"3_b": []const u8,
+        @"1": []const [:0]const u8,
+        @"2": []const [:0]const u8,
+        @"3": []const u8,
         @"4": struct {
             plat: bool,
             rk: bool,
@@ -837,7 +852,7 @@ test "stringify struct: 4" {
     const i = Info{
         .@"1" = &.{"FIDO_2_0"},
         .@"2" = &.{},
-        .@"3_b" = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f",
+        .@"3" = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f",
         .@"4" = .{
             .plat = true,
             .rk = true,
@@ -860,7 +875,7 @@ test "parse struct: 5" {
     const Info = struct {
         @"1": []const []const u8,
         @"2": []const []const u8,
-        @"3_b": []const u8,
+        @"3": []const u8,
         @"4": struct {
             plat: bool,
             rk: bool,
@@ -877,7 +892,7 @@ test "parse struct: 5" {
         allocator.free(i.@"1"[0]);
         allocator.free(i.@"1");
         allocator.free(i.@"2");
-        allocator.free(i.@"3_b");
+        allocator.free(i.@"3");
     }
 
     try std.testing.expectEqualStrings("FIDO_2_0", i.@"1"[0]);
@@ -983,15 +998,15 @@ test "serialize EcdsaP256Key" {
         /// crv:
         @"-1": u8 = 1,
         /// x-coordinate
-        @"-2_b": [32]u8,
+        @"-2": [32]u8,
         /// y-coordinate
-        @"-3_b": [32]u8,
+        @"-3": [32]u8,
 
         pub fn new(k: EcdsaP256.PublicKey) @This() {
             const xy = k.toUncompressedSec1();
             return .{
-                .@"-2_b" = xy[1..33].*,
-                .@"-3_b" = xy[33..65].*,
+                .@"-2" = xy[1..33].*,
+                .@"-3" = xy[33..65].*,
             };
         }
     };
@@ -1004,7 +1019,7 @@ test "serialize EcdsaP256Key" {
 
     try stringify(k, .{}, str.writer());
 
-    try std.testing.expectEqualStrings("\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.items);
+    try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.items);
 }
 
 test "serialize tagged union: 1" {
