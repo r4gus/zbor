@@ -220,9 +220,20 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                                 return ParseError.UnexpectedItem;
                             }
 
-                            var r: []ptrInfo.child = try allocator.alloc(ptrInfo.child, v.len);
+                            var sentinel: usize = 0;
+                            if (ptrInfo.sentinel != null) {
+                                sentinel += 1;
+                            }
+
+                            var r: []ptrInfo.child = try allocator.alloc(ptrInfo.child, v.len + sentinel);
                             errdefer allocator.free(r);
                             std.mem.copy(ptrInfo.child, r[0..], v[0..]);
+                            if (ptrInfo.sentinel) |some| {
+                                const sentinel_value = @ptrCast(*align(1) const ptrInfo.child, some).*;
+                                r[r.len - 1] = sentinel_value;
+                                return r[0 .. r.len - 1 :sentinel_value];
+                            }
+
                             return r;
                         },
                         .Array => {
@@ -242,7 +253,7 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                             if (ptrInfo.sentinel) |some| {
                                 const sentinel_value = @ptrCast(*align(1) const ptrInfo.child, some).*;
                                 try arraylist.append(sentinel_value);
-                                const output = arraylist.toOwnedSlice();
+                                const output = try arraylist.toOwnedSlice();
                                 return output[0 .. output.len - 1 :sentinel_value];
                             }
 
