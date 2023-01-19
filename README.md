@@ -89,7 +89,9 @@ while (iter.next()) |value| {
 }
 ```
 
-### Serialization
+### Encoding and decoding
+
+#### Serialization
 
 You can serialize Zig objects into CBOR using the `stringify()` function.
 
@@ -114,9 +116,10 @@ This is currently the only way to create CBOR data.
 > Note: Compile time floats are always encoded as single precision floats (f32). Please use `@floatCast`
 > before passing a float to `stringify()`.
 
-`u8`slices with sentinel terminator (e.g. `const x: [:0] = "FIDO_2_0"`) are treated as text strings.
+`u8`slices with sentinel terminator (e.g. `const x: [:0] = "FIDO_2_0"`) are treated as text strings and
+`u8` slices without sentinel terminator as byte strings.
 
-### Deserialization
+#### Deserialization
 
 You can deserialize CBOR data into Zig objects using the `parse()` function.
 
@@ -129,6 +132,13 @@ const x = try parse([5]u8, di, .{});
 try std.testing.expectEqualSlices(u8, e[0..], x[0..]);
 ```
 
-The parser might require an allocator, which you can provide with `.{.allocator = <your allocator>}`.
-You're responsible for freeing all allocated memory!
+##### Parse Options
+
+You can pass options to the `parse` function to influence its behaviour.
+
+This includes:
+
+* `allocator` - The allocator to be used (if necessary)
+* `duplicate_field_behavior` - How to handle duplicate fields (`.UseFirst`, `.Error`)
+* `ignore_unknown_fields` - Ignore unknown fields
 

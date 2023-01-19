@@ -60,7 +60,7 @@ pub const DataItem = struct {
     /// before returning a DataItem. Returns an error if the data is malformed.
     pub fn new(data: []const u8) !@This() {
         var i: usize = 0;
-        if (!wellFormed(data, &i, true)) return error.Malformed;
+        if (!wellFormed(data, &i, false)) return error.Malformed;
         return .{ .data = data };
     }
 

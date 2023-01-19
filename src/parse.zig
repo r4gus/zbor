@@ -113,14 +113,15 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
 
                         inline for (structInfo.fields) |field, i| {
                             var match: bool = false;
+                            const name = if (field.name.len >= 2 and field.name[0] == '#') field.name[1..] else field.name;
 
                             switch (kv.key.getType()) {
                                 .Int => {
                                     const x = if (kv.key.int()) |y| y else return ParseError.Malformed;
-                                    const y = s2n(field.name);
+                                    const y = s2n(name);
                                     match = x == y;
                                 },
-                                else => match = std.mem.eql(u8, field.name, if (kv.key.string()) |x| x else return ParseError.Malformed),
+                                else => match = std.mem.eql(u8, name, if (kv.key.string()) |x| x else return ParseError.Malformed),
                             }
 
                             if (match) {
@@ -467,26 +468,19 @@ pub fn stringify(
                 if (emit_field) {
                     var child_options = options;
                     var l = Field.name.len;
-                    //if (Field.name.len >= 3) {
-                    //    if (Field.name[l - 2] == '_') {
-                    //        if (Field.name[l - 1] == 'b') {
-                    //            l -= 2;
-                    //            child_options.slice_as_text = false;
-                    //            child_options.enum_as_text = false;
-                    //        } else if (Field.name[l - 1] == 't') {
-                    //            l -= 2;
-                    //            child_options.slice_as_text = true;
-                    //            child_options.enum_as_text = true;
-                    //        }
-                    //    }
-                    //}
+                    var name = Field.name[0..l];
 
-                    if (s2n(Field.name[0..l])) |nr| { // int key
-                        try stringify(nr, options, out); // key
+                    // # tells zbor to serialize enums as numbers not as strings
+                    if (name[0] == '#') {
+                        child_options.enum_as_text = false;
+                        name = name[1..];
+                    }
+
+                    if (s2n(name)) |nr| { // int key
+                        try stringify(nr, child_options, out); // key
                     } else { // str key
-                        var tmp_opt = options;
-                        tmp_opt.slice_as_text = true;
-                        try stringify(Field.name[0..l], tmp_opt, out); // key
+                        child_options.slice_as_text = true;
+                        try stringify(name, child_options, out); // key
                     }
 
                     try stringify(@field(value, Field.name), child_options, out); // value
@@ -878,6 +872,25 @@ test "stringify struct: 4" {
     try testStringify("\xa4\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x04\xa4\x64\x70\x6c\x61\x74\xf5\x62\x72\x6b\xf5\x62\x75\x70\xf5\x62\x75\x76\xf4", i, .{});
 }
 
+test "stringify struct: 5" {
+    const Level = enum(u8) {
+        high = 7,
+        low = 11,
+    };
+
+    const Info = struct {
+        x: Level,
+        @"#y": Level,
+    };
+
+    const x = Info{
+        .x = Level.high,
+        .@"#y" = Level.low,
+    };
+
+    try testStringify("\xA2\x61\x78\x64\x68\x69\x67\x68\x61\x79\x0B", x, .{});
+}
+
 test "parse struct: 5" {
     const allocator = std.testing.allocator;
 
@@ -909,6 +922,24 @@ test "parse struct: 5" {
     try std.testing.expectEqualStrings("FIDO_2_0", i.@"1"[0]);
 }
 
+test "parse struct: 8" {
+    const Level = enum(u8) {
+        high = 7,
+        low = 11,
+    };
+
+    const Info = struct {
+        x: Level,
+        @"#y": Level,
+    };
+
+    const di = try DataItem.new("\xA2\x61\x78\x64\x68\x69\x67\x68\x61\x79\x0B");
+    const x = try parse(Info, di, .{});
+
+    try std.testing.expectEqual(x.x, Level.high);
+    try std.testing.expectEqual(x.@"#y", Level.low);
+}
+
 test "stringify enum: 1" {
     const Level = enum(u8) {
         high = 7,
@@ -938,6 +969,16 @@ test "stringify enum: 2" {
 
     try testStringify("\x64\x68\x69\x67\x68", Level.high, .{});
     try testStringify("\x63\x6C\x6F\x77", Level.low, .{});
+}
+
+test "stringify enum: 4" {
+    const Level = enum(i8) {
+        high = -7,
+        low = -11,
+    };
+
+    try testStringify("\x26", Level.high, .{ .enum_as_text = false });
+    try testStringify("\x2a", Level.low, .{ .enum_as_text = false });
 }
 
 test "parse enum: 1" {
@@ -986,16 +1027,6 @@ test "parse enum: 3" {
 
     try std.testing.expectEqual(Level.high, x1);
     try std.testing.expectEqual(Level.low, x2);
-}
-
-test "stringify enum: 3" {
-    const Level = enum(i8) {
-        high = -7,
-        low = -11,
-    };
-
-    try testStringify("\x26", Level.high, .{ .enum_as_text = false });
-    try testStringify("\x2a", Level.low, .{ .enum_as_text = false });
 }
 
 test "serialize EcdsaP256Key" {
