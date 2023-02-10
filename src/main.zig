@@ -21,6 +21,9 @@ pub const StringifyOptions = parser.StringifyOptions;
 pub const parse = parser.parse;
 pub const stringify = parser.stringify;
 
+pub const Builder = build.Builder;
+pub const ContainerType = build.ContainerType;
+
 test {
     _ = cbor;
     _ = parser;

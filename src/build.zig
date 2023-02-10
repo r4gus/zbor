@@ -1,6 +1,7 @@
 const std = @import("std");
 const cbor = @import("cbor.zig");
 
+/// Type of a Builder container
 pub const ContainerType = enum {
     Leaf,
     Array,
