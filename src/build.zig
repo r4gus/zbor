@@ -26,12 +26,19 @@ pub const Builder = struct {
     allocator: std.mem.Allocator,
 
     pub fn new(allocator: std.mem.Allocator) !@This() {
+        return withType(allocator, .Leaf);
+    }
+
+    pub fn withType(allocator: std.mem.Allocator, t: ContainerType) !@This() {
         var b = @This(){
             .stack = std.ArrayList(Entry).init(allocator),
             .allocator = allocator,
         };
 
         try b.stack.append(Entry.new(allocator, .Leaf));
+        if (t != .Leaf) {
+            try b.stack.append(Entry.new(allocator, t));
+        }
         return b;
     }
 
@@ -66,24 +73,39 @@ pub const Builder = struct {
 
     pub fn leave(self: *@This()) !void {
         if (self.stack.items.len < 2) return error.EmptyStack;
+        if (self.last().t == .Map and self.last().cnt & 0x01 != 0)
+            return error.InvalidPairCount;
 
+        try self.moveUp();
+    }
+
+    pub fn finish(self: *@This()) ![]u8 {
+        if (self.last().t == .Map and self.last().cnt & 0x01 != 0)
+            return error.InvalidPairCount;
+
+        // unwind the stack if neccessary
+        while (self.stack.items.len > 1) {
+            try self.moveUp();
+        }
+
+        var s = self.stack.items[0].raw.toOwnedSlice();
+        self.stack.deinit();
+        return s;
+    }
+
+    fn moveUp(self: *@This()) !void {
         const e = self.stack.pop();
         defer e.raw.deinit();
 
         const h: u8 = switch (e.t) {
             .Array => 0x80,
             .Map => 0xa0,
+            .Leaf => unreachable,
         };
-        const v: u64 = e.cnt;
+        const v: u64 = if (e.t == .Map) e.cnt / 2 else e.cnt;
         try encode(self.last().raw.writer(), h, v);
         try self.last().raw.appendSlice(e.raw.items);
         self.last().cnt += 1;
-    }
-
-    pub fn finish(self: *@This()) ![]u8 {
-        var s = self.stack.items[0].raw.toOwnedSlice();
-        self.stack.deinit();
-        return s;
     }
 
     fn last(self: *@This()) *Entry {
@@ -149,4 +171,78 @@ test "stringify string with builder" {
 
     try testTextString("\x64\x49\x45\x54\x46", "IETF");
     try testTextString("\x62\x22\x5c", "\"\\");
+}
+
+test "stringify array using builder 1" {
+    const allocator = std.testing.allocator;
+    var b = try Builder.withType(allocator, .Array);
+    try b.pushInt(1);
+    try b.enter(.Array); // array 1 start
+    try b.pushInt(2);
+    try b.pushInt(3);
+    try b.leave(); // array 1 end
+    try b.enter(.Array); // array 2 start
+    try b.pushInt(4);
+    try b.pushInt(5);
+    try b.leave(); // array 2 end
+    const x = try b.finish();
+    defer allocator.free(x);
+
+    try std.testing.expectEqualSlices(u8, "\x83\x01\x82\x02\x03\x82\x04\x05", x);
+}
+
+test "stringify array using builder 2" {
+    const allocator = std.testing.allocator;
+    var b = try Builder.withType(allocator, .Array);
+    var i: i65 = 1;
+    while (i < 26) : (i += 1) {
+        try b.pushInt(i);
+    }
+    const x = try b.finish();
+    defer allocator.free(x);
+
+    try std.testing.expectEqualSlices(u8, "\x98\x19\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19", x);
+}
+
+test "stringify map using builder 1" {
+    const allocator = std.testing.allocator;
+    var b = try Builder.withType(allocator, .Map);
+    try b.pushInt(1);
+    try b.pushInt(2);
+    try b.pushInt(3);
+    try b.pushInt(4);
+    const x = try b.finish();
+    defer allocator.free(x);
+
+    try std.testing.expectEqualSlices(u8, "\xa2\x01\x02\x03\x04", x);
+}
+
+test "stringify nested map using builder 1" {
+    const allocator = std.testing.allocator;
+    var b = try Builder.withType(allocator, .Map);
+    try b.pushTextString("a");
+    try b.pushInt(1);
+    try b.pushTextString("b");
+    try b.enter(.Array);
+    try b.pushInt(2);
+    try b.pushInt(3);
+    //try b.leave();            <-- you can leave out the return at the end
+    const x = try b.finish();
+    defer allocator.free(x);
+
+    try std.testing.expectEqualSlices(u8, "\xa2\x61\x61\x01\x61\x62\x82\x02\x03", x);
+}
+
+test "stringify nested array using builder 1" {
+    const allocator = std.testing.allocator;
+    var b = try Builder.withType(allocator, .Array);
+    try b.pushTextString("a");
+    try b.enter(.Map);
+    try b.pushTextString("b");
+    try b.pushTextString("c");
+    try b.leave();
+    const x = try b.finish();
+    defer allocator.free(x);
+
+    try std.testing.expectEqualSlices(u8, "\x82\x61\x61\xa1\x61\x62\x61\x63", x);
 }
