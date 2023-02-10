@@ -21,14 +21,17 @@ const Entry = struct {
     }
 };
 
+/// A Builder lets you dynamically generate CBOR data.
 pub const Builder = struct {
     stack: std.ArrayList(Entry),
     allocator: std.mem.Allocator,
 
+    /// Create a new builder.
     pub fn new(allocator: std.mem.Allocator) !@This() {
         return withType(allocator, .Leaf);
     }
 
+    /// Create a new builder.
     pub fn withType(allocator: std.mem.Allocator, t: ContainerType) !@This() {
         var b = @This(){
             .stack = std.ArrayList(Entry).init(allocator),
@@ -42,6 +45,7 @@ pub const Builder = struct {
         return b;
     }
 
+    /// Serialize an integer.
     pub fn pushInt(self: *@This(), value: i65) !void {
         const h: u8 = if (value < 0) 0x20 else 0;
         const v: u64 = @intCast(u64, if (value < 0) -(value + 1) else value);
@@ -49,6 +53,7 @@ pub const Builder = struct {
         self.last().cnt += 1;
     }
 
+    /// Serialize a slice as byte string.
     pub fn pushByteString(self: *@This(), value: []const u8) !void {
         const h: u8 = 0x40;
         const v: u64 = @intCast(u64, value.len);
@@ -57,6 +62,7 @@ pub const Builder = struct {
         self.last().cnt += 1;
     }
 
+    /// Serialize a slice as text string.
     pub fn pushTextString(self: *@This(), value: []const u8) !void {
         const h: u8 = 0x60;
         const v: u64 = @intCast(u64, value.len);
@@ -65,12 +71,32 @@ pub const Builder = struct {
         self.last().cnt += 1;
     }
 
+    /// Serialize a tag.
+    ///
+    /// You MUST serialize another data item right after calling this function.
+    pub fn pushTag(self: *@This(), tag: u64) !void {
+        const h: u8 = 0xc0;
+        const v: u64 = tag;
+        try encode(self.last().raw.writer(), h, v);
+    }
+
+    /// Serialize a simple value.
+    pub fn pushSimple(self: *@This(), simple: u8) !void {
+        if (24 <= simple and simple <= 31) return error.ReservedValue;
+
+        const h: u8 = 0xf0;
+        const v: u64 = @intCast(u64, simple);
+        try encode(self.last().raw.writer(), h, v);
+    }
+
+    /// Enter a data structure (Array or Map)
     pub fn enter(self: *@This(), t: ContainerType) !void {
         if (t == .Leaf) return error.InvalidContainerType;
 
         try self.stack.append(Entry.new(self.allocator, t));
     }
 
+    /// Leave the current data structure
     pub fn leave(self: *@This()) !void {
         if (self.stack.items.len < 2) return error.EmptyStack;
         if (self.last().t == .Map and self.last().cnt & 0x01 != 0)
@@ -79,6 +105,9 @@ pub const Builder = struct {
         try self.moveUp();
     }
 
+    /// Return the serialized data.
+    ///
+    /// The caller is responsible for freeing the data.
     pub fn finish(self: *@This()) ![]u8 {
         if (self.last().t == .Map and self.last().cnt & 0x01 != 0)
             return error.InvalidPairCount;
@@ -245,4 +274,25 @@ test "stringify nested array using builder 1" {
     defer allocator.free(x);
 
     try std.testing.expectEqualSlices(u8, "\x82\x61\x61\xa1\x61\x62\x61\x63", x);
+}
+
+test "stringify tag using builder 1" {
+    const allocator = std.testing.allocator;
+    var b = try Builder.new(allocator);
+    try b.pushTag(0);
+    try b.pushTextString("2013-03-21T20:04:00Z");
+    const x = try b.finish();
+    defer allocator.free(x);
+
+    try std.testing.expectEqualSlices(u8, "\xc0\x74\x32\x30\x31\x33\x2d\x30\x33\x2d\x32\x31\x54\x32\x30\x3a\x30\x34\x3a\x30\x30\x5a", x);
+}
+
+test "stringify simple using builder 1" {
+    const allocator = std.testing.allocator;
+    var b = try Builder.new(allocator);
+    try b.pushSimple(255);
+    const x = try b.finish();
+    defer allocator.free(x);
+
+    try std.testing.expectEqualSlices(u8, "\xf8\xff", x);
 }
