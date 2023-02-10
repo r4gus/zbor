@@ -5,6 +5,7 @@ const testing = std.testing;
 const cbor = @import("cbor.zig");
 const parser = @import("parse.zig");
 pub const cose = @import("cose.zig");
+const build = @import("build.zig");
 
 pub const Type = cbor.Type;
 pub const DataItem = cbor.DataItem;
@@ -24,4 +25,5 @@ test {
     _ = cbor;
     _ = parser;
     _ = cose;
+    _ = build;
 }
