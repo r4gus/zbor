@@ -298,13 +298,16 @@ pub const StringifyOptions = struct {
     slice_as_text: bool = false,
     /// Use the field name instead of the numerical value to represent a enum.
     enum_as_text: bool = true,
+    /// Pass an optional allocator. This might be useful when implementing
+    /// a own cborStringify method for a struct or union.
+    allocator: ?std.mem.Allocator = null,
 };
 
 pub fn stringify(
     value: anytype,
     options: StringifyOptions,
     out: anytype,
-) StringifyError!void {
+) !void {
     const T = @TypeOf(value);
     var head: u8 = 0;
     switch (@typeInfo(T)) {
@@ -321,7 +324,13 @@ pub fn stringify(
                 head = 0x80;
             }
         },
-        .Struct => head = 0xa0, // Struct becomes a Map.
+        .Struct => {
+            if (comptime std.meta.trait.hasFn("cborStringify")(T)) {
+                return value.cborStringify(options, out);
+            }
+
+            head = 0xa0; // Struct becomes a Map.
+        },
         .Optional => {}, // <- This value will be ignored.
         .Pointer => |ptr_info| switch (ptr_info.size) {
             .Slice => {
@@ -345,6 +354,10 @@ pub fn stringify(
             if (options.enum_as_text) head = 0x60 else head = 0;
         },
         .Union => {
+            if (comptime std.meta.trait.hasFn("cborStringify")(T)) {
+                return value.cborStringify(options, out);
+            }
+
             const info = @typeInfo(T).Union;
             if (info.tag_type) |UnionTagType| {
                 inline for (info.fields) |u_field| {
@@ -1073,4 +1086,39 @@ test "serialize tagged union: 1" {
     const a = AttStmt{ .none = .{} };
 
     try testStringify("\xa0", a, .{});
+}
+
+const build = @import("build.zig");
+
+test "overload struct 1" {
+    const Foo = struct {
+        x: u32 = 1234,
+        y: struct {
+            a: []const u8 = "public-key",
+            b: u64 = 0x1122334455667788,
+        },
+
+        pub fn cborStringify(self: *const @This(), options: StringifyOptions, out: anytype) !void {
+
+            // First stringify the 'y' struct
+            const allocator = std.testing.allocator;
+            var o = std.ArrayList(u8).init(allocator);
+            defer o.deinit();
+            try stringify(self.y, options, o.writer());
+
+            // Then use the Builder to alter the CBOR output
+            var b = try build.Builder.withType(allocator, .Map);
+            try b.pushTextString("x");
+            try b.pushInt(self.x);
+            try b.pushTextString("y");
+            try b.pushByteString(o.items);
+            const x = try b.finish();
+            defer allocator.free(x);
+
+            try out.writeAll(x);
+        }
+    };
+
+    const x = Foo{ .y = .{} };
+    try testStringify("\xa2\x61\x78\x19\x04\xd2\x61\x79\x58\x19\xa2\x61\x61\x6a\x70\x75\x62\x6c\x69\x63\x2d\x6b\x65\x79\x61\x62\x1b\x11\x22\x33\x44\x55\x66\x77\x88", x, .{});
 }
