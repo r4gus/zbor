@@ -5,8 +5,8 @@ const testing = std.testing;
 const cbor = @import("cbor.zig");
 const parser = @import("parse.zig");
 pub const cose = @import("cose.zig");
+const build = @import("build.zig");
 
-pub const Error = cbor.Error;
 pub const Type = cbor.Type;
 pub const DataItem = cbor.DataItem;
 pub const Tag = cbor.Tag;
@@ -21,8 +21,12 @@ pub const StringifyOptions = parser.StringifyOptions;
 pub const parse = parser.parse;
 pub const stringify = parser.stringify;
 
+pub const Builder = build.Builder;
+pub const ContainerType = build.ContainerType;
+
 test {
     _ = cbor;
     _ = parser;
     _ = cose;
+    _ = build;
 }
