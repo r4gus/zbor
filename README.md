@@ -111,8 +111,6 @@ const i = Info{
 try stringify(i, .{}, str.writer());
 ```
 
-This is currently the only way to create CBOR data.
-
 > Note: Compile time floats are always encoded as single precision floats (f32). Please use `@floatCast`
 > before passing a float to `stringify()`.
 
@@ -142,3 +140,67 @@ This includes:
 * `duplicate_field_behavior` - How to handle duplicate fields (`.UseFirst`, `.Error`)
 * `ignore_unknown_fields` - Ignore unknown fields
 
+#### Builder
+
+You can also dynamically create CBOR data using the `Builder`.
+
+```zig
+const allocator = std.testing.allocator;
+
+var b = try Builder.withType(allocator, .Map);
+try b.pushTextString("a");
+try b.pushInt(1);
+try b.pushTextString("b");
+try b.enter(.Array);
+try b.pushInt(2);
+try b.pushInt(3);
+//try b.leave();            <-- you can leave out the return at the end
+const x = try b.finish();
+defer allocator.free(x);
+
+// { "a": 1, "b": [2, 3] }
+try std.testing.expectEqualSlices(u8, "\xa2\x61\x61\x01\x61\x62\x82\x02\x03", x);
+```
+
+##### Commands
+
+- The `push*` functions append a data item
+- The `enter` function takes a container type and pushes it on the builder stack
+- The `leave` function leaves the current container. The container is appended to the wrapping container
+- The `finish` function returns the CBOR data as owned slice
+
+#### Overriding stringify
+
+You can override the `stringify` function for structs and tagged unions by implementing `cborStringify`.
+
+```zig
+const Foo = struct {
+    x: u32 = 1234,
+    y: struct {
+        a: []const u8 = "public-key",
+        b: u64 = 0x1122334455667788,
+    },
+
+    pub fn cborStringify(self: *const @This(), options: StringifyOptions, out: anytype) !void {
+
+        // First stringify the 'y' struct
+        const allocator = std.testing.allocator;
+        var o = std.ArrayList(u8).init(allocator);
+        defer o.deinit();
+        try stringify(self.y, options, o.writer());
+
+        // Then use the Builder to alter the CBOR output
+        var b = try build.Builder.withType(allocator, .Map);
+        try b.pushTextString("x");
+        try b.pushInt(self.x);
+        try b.pushTextString("y");
+        try b.pushByteString(o.items);
+        const x = try b.finish();
+        defer allocator.free(x);
+
+        try out.writeAll(x);
+    }
+};
+```
+
+The `StringifyOptions` can be used to indirectly pass an `Allocator` to the function.
