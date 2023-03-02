@@ -111,7 +111,7 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
 
                         if (kv.key.getType() != .TextString and kv.key.getType() != .Int) continue;
 
-                        inline for (structInfo.fields) |field, i| {
+                        inline for (structInfo.fields, 0..) |field, i| {
                             var match: bool = false;
                             const name = if (field.name.len >= 2 and field.name[0] == '#') field.name[1..] else field.name;
 
@@ -159,7 +159,7 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
                         }
                     }
 
-                    inline for (structInfo.fields) |field, i| {
+                    inline for (structInfo.fields, 0..) |field, i| {
                         if (!fields_seen[i]) {
                             switch (@typeInfo(field.type)) {
                                 .Optional => @field(r, field.name) = null,
