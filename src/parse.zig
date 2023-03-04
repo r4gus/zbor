@@ -37,18 +37,38 @@ pub const StringifyError = error{
     OutOfMemory,
 };
 
+/// Options for deserializing CBOR data
 pub const ParseOptions = struct {
+    /// An allocator required if `parse` needs to allocate memory
+    /// for slices and pointers
     allocator: ?Allocator = null,
 
+    /// How to behave if a CBOR map has two or more keys with
+    /// the same value
     duplicate_field_behavior: enum {
+        /// Use the first one
         UseFirst,
+        /// Don't allow duplicates
         Error,
     } = .Error,
 
+    /// Ignore CBOR map keys that were not expected
     ignore_unknown_fields: bool = true,
+
+    /// Settings for specific fields that override the default options.
+    /// For `parse`, only the alias option is relevant.
+    field_settings: []const FieldSettings = &.{},
 };
 
-pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError!T {
+/// Deserialize a CBOR data item into a Zig data structure
+pub fn parse(
+    /// The type to deserialize to
+    comptime T: type,
+    /// The data item to deserialize
+    item: DataItem,
+    /// Options to effect the behaviour of this function
+    options: ParseOptions,
+) ParseError!T {
     switch (@typeInfo(T)) {
         .Bool => {
             return switch (item.getType()) {
@@ -113,7 +133,16 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
 
                         inline for (structInfo.fields, 0..) |field, i| {
                             var match: bool = false;
-                            const name = if (field.name.len >= 2 and field.name[0] == '#') field.name[1..] else field.name;
+                            var name: []const u8 = field.name;
+
+                            // Is there an alias specified?
+                            for (options.field_settings) |fs| {
+                                if (std.mem.eql(u8, field.name, fs.name)) {
+                                    if (fs.alias) |alias| {
+                                        name = alias;
+                                    }
+                                }
+                            }
 
                             switch (kv.key.getType()) {
                                 .Int => {
@@ -320,7 +349,7 @@ pub const FieldSettings = struct {
         slice_as_text: bool = false,
         /// Use the field name instead of its numerical value (only if enum)
         enum_as_text: bool = true,
-    },
+    } = .{},
 };
 
 /// Serialize the given value to CBOR
@@ -972,14 +1001,14 @@ test "parse struct: 8" {
 
     const Info = struct {
         x: Level,
-        @"#y": Level,
+        y: Level,
     };
 
     const di = try DataItem.new("\xA2\x61\x78\x64\x68\x69\x67\x68\x61\x79\x0B");
     const x = try parse(Info, di, .{});
 
     try std.testing.expectEqual(x.x, Level.high);
-    try std.testing.expectEqual(x.@"#y", Level.low);
+    try std.testing.expectEqual(x.y, Level.low);
 }
 
 test "stringify enum: 1" {
@@ -1137,14 +1166,45 @@ test "serialize EcdsP256Key using alias" {
     defer str.deinit();
 
     try stringify(k, .{ .field_settings = &.{
-        .{ .name = "kty", .alias = "1", .options = .{} },
-        .{ .name = "alg", .alias = "3", .options = .{} },
-        .{ .name = "crv", .alias = "-1", .options = .{} },
-        .{ .name = "x", .alias = "-2", .options = .{} },
-        .{ .name = "y", .alias = "-3", .options = .{} },
+        .{ .name = "kty", .alias = "1" },
+        .{ .name = "alg", .alias = "3" },
+        .{ .name = "crv", .alias = "-1" },
+        .{ .name = "x", .alias = "-2" },
+        .{ .name = "y", .alias = "-3" },
     } }, str.writer());
 
     try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.items);
+}
+
+test "deserialize EcdsP256Key using alias" {
+    const EcdsaP256Key = struct {
+        /// kty:
+        kty: u8 = 2,
+        /// alg:
+        alg: i8 = -7,
+        /// crv:
+        crv: u8 = 1,
+        /// x-coordinate
+        x: [32]u8,
+        /// y-coordinate
+        y: [32]u8,
+    };
+
+    const di = try DataItem.new("\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52");
+
+    const x = try parse(EcdsaP256Key, di, .{ .field_settings = &.{
+        .{ .name = "kty", .alias = "1" },
+        .{ .name = "alg", .alias = "3" },
+        .{ .name = "crv", .alias = "-1" },
+        .{ .name = "x", .alias = "-2" },
+        .{ .name = "y", .alias = "-3" },
+    } });
+
+    try std.testing.expectEqual(@intCast(u8, 2), x.kty);
+    try std.testing.expectEqual(@intCast(i8, -7), x.alg);
+    try std.testing.expectEqual(@intCast(u8, 1), x.crv);
+    try std.testing.expectEqualSlices(u8, "\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e", &x.x);
+    try std.testing.expectEqualSlices(u8, "\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", &x.y);
 }
 
 test "serialize tagged union: 1" {
