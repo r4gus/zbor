@@ -46,7 +46,7 @@ const di = DataItem.new("\x1b\xff\xff\xff\xff\xff\xff\xff\xff") catch {
 };
 ```
 
-`DataItem.new()` will check if the given data is well-formed before returning a `DataItem`. The data is well formed if it's syntactically correct and no bytes are left in the input after parsing (see [RFC 8949 Appendix C](https://www.rfc-editor.org/rfc/rfc8949.html#section-appendix.c-1)).
+`DataItem.new()` will check if the given data is well-formed before returning a `DataItem`. The data is well formed if it's syntactically correct. 
 
 To check the type of the given `DataItem` use the `getType()` function.
 
@@ -117,6 +117,18 @@ try stringify(i, .{}, str.writer());
 `u8`slices with sentinel terminator (e.g. `const x: [:0] = "FIDO_2_0"`) are treated as text strings and
 `u8` slices without sentinel terminator as byte strings.
 
+##### Stringify Options
+
+You can pass options to the `stringify` function to influence its behaviour.
+
+This includes:
+
+* `allocator` - The allocator to be used (if necessary)
+* `skip_null_fields` - Struct fields that are null will not be included in the CBOR map
+* `slice_as_text` - Convert an u8 slice into a CBOR text string
+* `enum_as_text`- Use the field name instead of the numerical value to represent a enum
+* `field_settings` - Lets you influence how `stringify` treats specific fileds. The settings set using `field_settings` override the default settings.
+
 #### Deserialization
 
 You can deserialize CBOR data into Zig objects using the `parse()` function.
@@ -139,6 +151,7 @@ This includes:
 * `allocator` - The allocator to be used (if necessary)
 * `duplicate_field_behavior` - How to handle duplicate fields (`.UseFirst`, `.Error`)
 * `ignore_unknown_fields` - Ignore unknown fields
+* `field_settings` - Lets you specify aliases for struct fields
 
 #### Builder
 
