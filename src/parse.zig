@@ -35,6 +35,7 @@ pub const ParseError = error{
 pub const StringifyError = error{
     UnsupportedItem,
     OutOfMemory,
+    InvalidPairCount,
 };
 
 pub const ParseOptions = struct {
@@ -331,7 +332,7 @@ pub fn stringify(
     options: StringifyOptions,
     /// A writer
     out: anytype,
-) !void {
+) StringifyError!void {
     const T = @TypeOf(value);
     const TInf = @typeInfo(T);
     var head: u8 = 0;
