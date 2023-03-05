@@ -305,6 +305,9 @@ pub const StringifyOptions = struct {
     allocator: ?std.mem.Allocator = null,
     /// Settings for specific fields that override the default options
     field_settings: []const FieldSettings = &.{},
+    /// Stringfiy called from cborStringify. This falg is used to prevent infinite recursion:
+    /// stringify -> cborStringify -> stringify -> cborStringify -> stringify ...
+    from_cborStringify: bool = false,
 };
 
 /// Options for a specific field specified by `name`
@@ -396,7 +399,7 @@ pub fn stringify(
         },
         .Struct => |S| {
             // Custom stringify function overrides default behaviour
-            if (comptime std.meta.trait.hasFn("cborStringify")(T)) {
+            if (comptime std.meta.trait.hasFn("cborStringify")(T) and !options.from_cborStringify) {
                 return value.cborStringify(options, out);
             }
 
@@ -527,7 +530,7 @@ pub fn stringify(
             }
         },
         .Union => {
-            if (comptime std.meta.trait.hasFn("cborStringify")(T)) {
+            if (comptime std.meta.trait.hasFn("cborStringify")(T) and !options.from_cborStringify) {
                 return value.cborStringify(options, out);
             }
 
