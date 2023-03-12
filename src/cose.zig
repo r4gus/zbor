@@ -106,6 +106,15 @@ pub const Algorithm = enum(i32) {
     A192Gcm = 2,
     /// AES-GCM mode w/ 256-bit key, 128-bit tag
     A256Gcm = 3,
+
+    pub fn to_raw(self: @This()) [4]u8 {
+        const i = @enumToInt(self);
+        return std.mem.asBytes(&i).*;
+    }
+
+    pub fn from_raw(raw: [4]u8) @This() {
+        return @intToEnum(@This(), std.mem.bytesToValue(i32, &raw));
+    }
 };
 
 /// COSE key types
@@ -204,4 +213,17 @@ test "cose Key p256 parse #1" {
     try std.testing.expectEqual(Algorithm.Es256, key.P256.@"3");
 
     //const x = try EcdsaP256Sha256.PublicKey.fromSec1("\x04\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52");
+}
+
+test "alg to raw" {
+    const es256 = Algorithm.Es256;
+    const x: [4]u8 = es256.to_raw();
+
+    try std.testing.expectEqualSlices(u8, "\xF9\xFF\xFF\xFF", &x);
+}
+
+test "raw to alg" {
+    const x: [4]u8 = "\xF9\xFF\xFF\xFF".*;
+
+    try std.testing.expectEqual(Algorithm.Es256, Algorithm.from_raw(x));
 }
