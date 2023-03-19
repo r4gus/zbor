@@ -35,20 +35,41 @@ pub const ParseError = error{
 pub const StringifyError = error{
     UnsupportedItem,
     OutOfMemory,
+    InvalidPairCount,
 };
 
+/// Options for deserializing CBOR data
 pub const ParseOptions = struct {
+    /// An allocator required if `parse` needs to allocate memory
+    /// for slices and pointers
     allocator: ?Allocator = null,
 
+    /// How to behave if a CBOR map has two or more keys with
+    /// the same value
     duplicate_field_behavior: enum {
+        /// Use the first one
         UseFirst,
+        /// Don't allow duplicates
         Error,
     } = .Error,
 
+    /// Ignore CBOR map keys that were not expected
     ignore_unknown_fields: bool = true,
+
+    /// Settings for specific fields that override the default options.
+    /// For `parse`, only the alias option is relevant.
+    field_settings: []const FieldSettings = &.{},
 };
 
-pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError!T {
+/// Deserialize a CBOR data item into a Zig data structure
+pub fn parse(
+    /// The type to deserialize to
+    comptime T: type,
+    /// The data item to deserialize
+    item: DataItem,
+    /// Options to effect the behaviour of this function
+    options: ParseOptions,
+) ParseError!T {
     switch (@typeInfo(T)) {
         .Bool => {
             return switch (item.getType()) {
@@ -113,7 +134,16 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
 
                         inline for (structInfo.fields, 0..) |field, i| {
                             var match: bool = false;
-                            const name = if (field.name.len >= 2 and field.name[0] == '#') field.name[1..] else field.name;
+                            var name: []const u8 = field.name;
+
+                            // Is there an alias specified?
+                            for (options.field_settings) |fs| {
+                                if (std.mem.eql(u8, field.name, fs.name)) {
+                                    if (fs.alias) |alias| {
+                                        name = alias;
+                                    }
+                                }
+                            }
 
                             switch (kv.key.getType()) {
                                 .Int => {
@@ -291,6 +321,7 @@ pub fn parse(comptime T: type, item: DataItem, options: ParseOptions) ParseError
     }
 }
 
+/// Options to influence the behavior of the stringify function
 pub const StringifyOptions = struct {
     /// Struct fields that are null will not be included in the CBOR map.
     skip_null_fields: bool = true,
@@ -301,48 +332,204 @@ pub const StringifyOptions = struct {
     /// Pass an optional allocator. This might be useful when implementing
     /// a own cborStringify method for a struct or union.
     allocator: ?std.mem.Allocator = null,
+    /// Settings for specific fields that override the default options
+    field_settings: []const FieldSettings = &.{},
+    /// Stringfiy called from cborStringify. This falg is used to prevent infinite recursion:
+    /// stringify -> cborStringify -> stringify -> cborStringify -> stringify ...
+    from_cborStringify: bool = false,
 };
 
+/// Options for a specific field specified by `name`
+pub const FieldSettings = struct {
+    /// The name of the field
+    name: []const u8,
+    /// The alternative name of the field
+    alias: ?[]const u8 = null,
+    /// Options specific for the given field
+    options: struct {
+        /// Don't serialize the given filed if it's null
+        skip_if_null: bool = true,
+        /// Convert the field into a CBOR text string (only if u8 slice)
+        slice_as_text: bool = false,
+        /// Use the field name instead of its numerical value (only if enum)
+        enum_as_text: bool = true,
+    } = .{},
+};
+
+/// Serialize the given value to CBOR
 pub fn stringify(
+    /// The value to serialize
     value: anytype,
+    /// Options to influence the functions behaviour
     options: StringifyOptions,
+    /// A writer
     out: anytype,
-) !void {
+) StringifyError!void {
     const T = @TypeOf(value);
+    const TInf = @typeInfo(T);
     var head: u8 = 0;
-    switch (@typeInfo(T)) {
-        .Int, .ComptimeInt => head = if (value < 0) 0x20 else 0,
-        .Float, .ComptimeFloat, .Bool, .Null => head = 0xe0,
+    var v: u64 = 0;
+
+    switch (TInf) {
+        .Int, .ComptimeInt => {
+            head = if (value < 0) 0x20 else 0;
+            v = @intCast(u64, if (value < 0) -(value + 1) else value);
+            try encode(out, head, v);
+            return;
+        },
+        .Float, .ComptimeFloat => {
+            head = 0xe0;
+            switch (TInf) {
+                .Float => |float| {
+                    switch (float.bits) {
+                        16 => try encode_2(out, head, @intCast(u64, @bitCast(u16, value))),
+                        32 => try encode_4(out, head, @intCast(u64, @bitCast(u32, value))),
+                        64 => try encode_8(out, head, @intCast(u64, @bitCast(u64, value))),
+                        else => @compileError("Float must be 16, 32 or 64 Bits wide"),
+                    }
+                    return;
+                },
+                .ComptimeFloat => {
+                    // Comptime floats are always encoded as single precision floats
+                    try encode_4(out, head, @intCast(u64, @bitCast(u32, @floatCast(f32, value))));
+                    return;
+                },
+                else => unreachable,
+            }
+        },
+        .Bool, .Null => {
+            head = 0xe0;
+            v = switch (TInf) {
+                .Bool => if (value) 21 else 20,
+                .Null => 22,
+                else => unreachable,
+            };
+            try encode(out, head, v);
+            return;
+        },
         .Array => |arrayInfo| {
             if (arrayInfo.child == u8) {
-                if (options.slice_as_text and std.unicode.utf8ValidateSlice(value[0..])) {
-                    head = 0x60;
-                } else {
-                    head = 0x40;
-                }
+                const valid_utf8 = std.unicode.utf8ValidateSlice(value[0..]);
+                head = if (options.slice_as_text and valid_utf8) 0x60 else 0x40;
             } else {
                 head = 0x80;
             }
+            v = @intCast(u64, value.len);
+            try encode(out, head, v);
+
+            if (arrayInfo.child == u8) {
+                try out.writeAll(value[0..]);
+            } else {
+                for (value) |x| {
+                    try stringify(x, options, out);
+                }
+            }
+            return;
         },
-        .Struct => {
-            if (comptime std.meta.trait.hasFn("cborStringify")(T)) {
+        .Struct => |S| {
+            // Custom stringify function overrides default behaviour
+            if (comptime std.meta.trait.hasFn("cborStringify")(T) and !options.from_cborStringify) {
                 return value.cborStringify(options, out);
             }
 
             head = 0xa0; // Struct becomes a Map.
+
+            // Count the number of fields that should be serialized
+            inline for (S.fields) |Field| {
+                // don't include void fields
+                if (Field.type == void) continue;
+
+                // dont't include (optional) null fields
+                var emit_field = true;
+                if (@typeInfo(Field.type) == .Optional) {
+                    if (options.skip_null_fields) {
+                        if (@field(value, Field.name) == null) {
+                            emit_field = false;
+                        }
+                    }
+                }
+
+                if (emit_field) {
+                    v += 1;
+                }
+            }
+
+            try encode(out, head, v);
+
+            // Now serialize the actual fields
+            inline for (S.fields) |Field| {
+                // don't include void fields
+                if (Field.type == void) continue;
+
+                // dont't include (optional) null fields
+                var emit_field = true;
+                if (@typeInfo(Field.type) == .Optional) {
+                    if (options.skip_null_fields) {
+                        if (@field(value, Field.name) == null) {
+                            emit_field = false;
+                        }
+                    }
+                }
+
+                if (emit_field) {
+                    var child_options = options;
+                    var name: []const u8 = Field.name[0..];
+
+                    for (options.field_settings) |fs| {
+                        if (std.mem.eql(u8, Field.name, fs.name)) {
+                            // We found settings for the given field
+                            child_options.skip_null_fields = fs.options.skip_if_null;
+                            child_options.slice_as_text = fs.options.slice_as_text;
+                            child_options.enum_as_text = fs.options.enum_as_text;
+
+                            if (fs.alias) |alias| {
+                                name = alias;
+                            }
+                        }
+                    }
+
+                    if (s2n(name)) |nr| { // int key
+                        try stringify(nr, child_options, out); // key
+                    } else { // str key
+                        child_options.slice_as_text = true;
+                        try stringify(name, child_options, out); // key
+                    }
+
+                    try stringify(@field(value, Field.name), child_options, out); // value
+                }
+            }
+            return;
         },
-        .Optional => {}, // <- This value will be ignored.
+        .Optional => {
+            if (value) |payload| {
+                try stringify(payload, options, out);
+                return;
+            } else {
+                try stringify(null, options, out);
+                return;
+            }
+        },
         .Pointer => |ptr_info| switch (ptr_info.size) {
             .Slice => {
                 if (ptr_info.child == u8) {
-                    if ((ptr_info.sentinel != null or options.slice_as_text) and std.unicode.utf8ValidateSlice(value)) {
-                        head = 0x60;
-                    } else {
-                        head = 0x40;
-                    }
+                    const is_sentinel = ptr_info.sentinel != null;
+                    const valid_utf8 = std.unicode.utf8ValidateSlice(value);
+                    head = if ((is_sentinel or options.slice_as_text) and valid_utf8) 0x60 else 0x40;
                 } else {
                     head = 0x80;
                 }
+
+                v = @intCast(u64, value.len);
+                try encode(out, head, v);
+
+                if (ptr_info.child == u8) {
+                    try out.writeAll(value);
+                } else {
+                    for (value) |x| {
+                        try stringify(x, options, out);
+                    }
+                }
+                return;
             },
             .One => {
                 try stringify(value.*, options, out);
@@ -350,11 +537,29 @@ pub fn stringify(
             },
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
         },
-        .Enum => {
-            if (options.enum_as_text) head = 0x60 else head = 0;
+        .Enum => |enumInfo| {
+            head = if (options.enum_as_text) 0x60 else 0;
+
+            if (options.enum_as_text) {
+                const tmp = @enumToInt(value);
+                inline for (enumInfo.fields) |field| {
+                    if (field.value == tmp) {
+                        v = @intCast(u64, field.name.len);
+                        try encode(out, head, v);
+                        try out.writeAll(field.name);
+                        return;
+                    }
+                }
+            } else {
+                const tmp = @enumToInt(value);
+                if (tmp < 0) head = 0x20;
+                v = @intCast(u64, if (tmp < 0) -(tmp + 1) else tmp);
+                try encode(out, head, v);
+                return;
+            }
         },
         .Union => {
-            if (comptime std.meta.trait.hasFn("cborStringify")(T)) {
+            if (comptime std.meta.trait.hasFn("cborStringify")(T) and !options.from_cborStringify) {
                 return value.cborStringify(options, out);
             }
 
@@ -374,164 +579,6 @@ pub fn stringify(
         else => {
             return .UnsupportedItem;
         }, // TODO: add remaining options
-    }
-
-    var v: u64 = 0;
-    switch (@typeInfo(T)) {
-        .Int, .ComptimeInt => v = @intCast(u64, if (value < 0) -(value + 1) else value),
-        .Float => |float| {
-            switch (float.bits) {
-                16 => try encode_2(out, head, @intCast(u64, @bitCast(u16, value))),
-                32 => try encode_4(out, head, @intCast(u64, @bitCast(u32, value))),
-                64 => try encode_8(out, head, @intCast(u64, @bitCast(u64, value))),
-                else => @compileError("Float must be 16, 32 or 64 Bits wide"),
-            }
-            return;
-        },
-        .ComptimeFloat => {
-            // Comptime floats are always encoded as single precision floats
-            try encode_4(out, head, @intCast(u64, @bitCast(u32, @floatCast(f32, value))));
-            return;
-        },
-        .Bool => v = if (value) 21 else 20,
-        .Null => v = 22,
-        .Struct => |S| {
-            inline for (S.fields) |Field| {
-                // don't include void fields
-                if (Field.type == void) continue;
-
-                // dont't include (optional) null fields
-                var emit_field = true;
-                if (@typeInfo(Field.type) == .Optional) {
-                    if (options.skip_null_fields) {
-                        if (@field(value, Field.name) == null) {
-                            emit_field = false;
-                        }
-                    }
-                }
-
-                if (emit_field) {
-                    v += 1;
-                }
-            }
-        },
-        .Optional => {
-            if (value) |payload| {
-                try stringify(payload, options, out);
-                return;
-            } else {
-                try stringify(null, options, out);
-                return;
-            }
-        },
-        .Enum => |enumInfo| {
-            if (options.enum_as_text) {
-                const tmp = @enumToInt(value);
-                inline for (enumInfo.fields) |field| {
-                    if (field.value == tmp) {
-                        v = @intCast(u64, field.name.len);
-                    }
-                }
-            } else {
-                const tmp = @enumToInt(value);
-                if (tmp < 0) head = 0x20;
-                v = @intCast(u64, if (tmp < 0) -(tmp + 1) else tmp);
-            }
-        },
-        .Pointer => |ptr_info| v = switch (ptr_info.size) {
-            .Slice => @intCast(u64, value.len),
-            else => {},
-        },
-        .Array => {
-            v = @intCast(u64, value.len);
-        },
-        else => unreachable, // caught by the first check
-    }
-
-    switch (v) {
-        0x00...0x17 => {
-            try out.writeByte(head | @intCast(u8, v));
-        },
-        0x18...0xff => {
-            try out.writeByte(head | 24);
-            try out.writeByte(@intCast(u8, v));
-        },
-        0x0100...0xffff => try encode_2(out, head, v),
-        0x00010000...0xffffffff => try encode_4(out, head, v),
-        0x0000000100000000...0xffffffffffffffff => try encode_8(out, head, v),
-    }
-
-    switch (@typeInfo(T)) {
-        .Int, .ComptimeInt, .Float, .ComptimeFloat, .Bool, .Null => {},
-        .Struct => |S| {
-            inline for (S.fields) |Field| {
-                // don't include void fields
-                if (Field.type == void) continue;
-
-                // dont't include (optional) null fields
-                var emit_field = true;
-                if (@typeInfo(Field.type) == .Optional) {
-                    if (options.skip_null_fields) {
-                        if (@field(value, Field.name) == null) {
-                            emit_field = false;
-                        }
-                    }
-                }
-
-                if (emit_field) {
-                    var child_options = options;
-                    var l = Field.name.len;
-                    var name = Field.name[0..l];
-
-                    // # tells zbor to serialize enums as numbers not as strings
-                    if (name[0] == '#') {
-                        child_options.enum_as_text = false;
-                        name = name[1..];
-                    }
-
-                    if (s2n(name)) |nr| { // int key
-                        try stringify(nr, child_options, out); // key
-                    } else { // str key
-                        child_options.slice_as_text = true;
-                        try stringify(name, child_options, out); // key
-                    }
-
-                    try stringify(@field(value, Field.name), child_options, out); // value
-                }
-            }
-        },
-        .Pointer => |ptr_info| switch (ptr_info.size) {
-            .Slice => {
-                if (ptr_info.child == u8) {
-                    try out.writeAll(value);
-                } else {
-                    for (value) |x| {
-                        try stringify(x, options, out);
-                    }
-                }
-            },
-            else => {},
-        },
-        .Array => |arrayInfo| {
-            if (arrayInfo.child == u8) {
-                try out.writeAll(value[0..]);
-            } else {
-                for (value) |x| {
-                    try stringify(x, options, out);
-                }
-            }
-        },
-        .Enum => |enumInfo| {
-            if (options.enum_as_text) {
-                const tmp = @enumToInt(value);
-                inline for (enumInfo.fields) |field| {
-                    if (field.value == tmp) {
-                        try out.writeAll(field.name);
-                    }
-                }
-            }
-        },
-        else => unreachable, // caught by the previous check
     }
 }
 
@@ -558,6 +605,21 @@ fn cmp(l: []const u8, r: []const u8) bool {
         if (l[i] != r[i]) return false;
     }
     return true;
+}
+
+fn encode(out: anytype, head: u8, v: u64) !void {
+    switch (v) {
+        0x00...0x17 => {
+            try out.writeByte(head | @intCast(u8, v));
+        },
+        0x18...0xff => {
+            try out.writeByte(head | 24);
+            try out.writeByte(@intCast(u8, v));
+        },
+        0x0100...0xffff => try cbor.encode_2(out, head, v),
+        0x00010000...0xffffffff => try cbor.encode_4(out, head, v),
+        0x0000000100000000...0xffffffffffffffff => try cbor.encode_8(out, head, v),
+    }
 }
 
 fn testStringify(e: []const u8, v: anytype, o: StringifyOptions) !void {
@@ -893,15 +955,15 @@ test "stringify struct: 5" {
 
     const Info = struct {
         x: Level,
-        @"#y": Level,
+        y: Level,
     };
 
     const x = Info{
         .x = Level.high,
-        .@"#y" = Level.low,
+        .y = Level.low,
     };
 
-    try testStringify("\xA2\x61\x78\x64\x68\x69\x67\x68\x61\x79\x0B", x, .{});
+    try testStringify("\xA2\x61\x78\x64\x68\x69\x67\x68\x61\x79\x0B", x, .{ .field_settings = &.{.{ .name = "y", .options = .{ .enum_as_text = false } }} });
 }
 
 test "parse struct: 5" {
@@ -943,14 +1005,14 @@ test "parse struct: 8" {
 
     const Info = struct {
         x: Level,
-        @"#y": Level,
+        y: Level,
     };
 
     const di = try DataItem.new("\xA2\x61\x78\x64\x68\x69\x67\x68\x61\x79\x0B");
     const x = try parse(Info, di, .{});
 
     try std.testing.expectEqual(x.x, Level.high);
-    try std.testing.expectEqual(x.@"#y", Level.low);
+    try std.testing.expectEqual(x.y, Level.low);
 }
 
 test "stringify enum: 1" {
@@ -1075,6 +1137,78 @@ test "serialize EcdsaP256Key" {
     try stringify(k, .{}, str.writer());
 
     try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.items);
+}
+
+test "serialize EcdsP256Key using alias" {
+    const EcdsaP256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
+
+    const EcdsaP256Key = struct {
+        /// kty:
+        kty: u8 = 2,
+        /// alg:
+        alg: i8 = -7,
+        /// crv:
+        crv: u8 = 1,
+        /// x-coordinate
+        x: [32]u8,
+        /// y-coordinate
+        y: [32]u8,
+
+        pub fn new(k: EcdsaP256.PublicKey) @This() {
+            const xy = k.toUncompressedSec1();
+            return .{
+                .x = xy[1..33].*,
+                .y = xy[33..65].*,
+            };
+        }
+    };
+
+    const k = EcdsaP256Key.new(try EcdsaP256.PublicKey.fromSec1("\x04\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52"));
+
+    const allocator = std.testing.allocator;
+    var str = std.ArrayList(u8).init(allocator);
+    defer str.deinit();
+
+    try stringify(k, .{ .field_settings = &.{
+        .{ .name = "kty", .alias = "1" },
+        .{ .name = "alg", .alias = "3" },
+        .{ .name = "crv", .alias = "-1" },
+        .{ .name = "x", .alias = "-2" },
+        .{ .name = "y", .alias = "-3" },
+    } }, str.writer());
+
+    try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.items);
+}
+
+test "deserialize EcdsP256Key using alias" {
+    const EcdsaP256Key = struct {
+        /// kty:
+        kty: u8 = 2,
+        /// alg:
+        alg: i8 = -7,
+        /// crv:
+        crv: u8 = 1,
+        /// x-coordinate
+        x: [32]u8,
+        /// y-coordinate
+        y: [32]u8,
+    };
+
+    const di = try DataItem.new("\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52");
+
+    const x = try parse(EcdsaP256Key, di, .{ .field_settings = &.{
+        .{ .name = "kty", .alias = "1" },
+        .{ .name = "alg", .alias = "3" },
+        .{ .name = "crv", .alias = "-1" },
+        .{ .name = "x", .alias = "-2" },
+        .{ .name = "y", .alias = "-3" },
+    } });
+
+    try std.testing.expectEqual(@intCast(u8, 2), x.kty);
+    try std.testing.expectEqual(@intCast(i8, -7), x.alg);
+    try std.testing.expectEqual(@intCast(u8, 1), x.crv);
+    try std.testing.expectEqualSlices(u8, "\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e", &x.x);
+    try std.testing.expectEqualSlices(u8, "\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", &x.y);
 }
 
 test "serialize tagged union: 1" {
