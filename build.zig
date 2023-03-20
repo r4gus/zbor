@@ -24,10 +24,11 @@ pub fn build(b: *std.build.Builder) void {
     //// step when running `zig build`).
     //lib.install();
 
-    b.addModule("zbor", .{
+    const zbor_module = b.addModule("zbor", .{
         .source_file = .{ .path = "src/main.zig" },
         .dependencies = &.{},
     });
+    _ = zbor_module;
 
     // Creates a step for unit testing.
     const lib_tests = b.addTest(.{
