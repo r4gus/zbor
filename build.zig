@@ -12,17 +12,22 @@ pub fn build(b: *std.build.Builder) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const lib = b.addStaticLibrary(.{
-        .name = "zbor",
-        .root_source_file = .{ .path = "src/main.zig" },
-        .target = target,
-        .optimize = optimize,
-    });
+    //const lib = b.addStaticLibrary(.{
+    //    .name = "zbor",
+    //    .root_source_file = .{ .path = "src/main.zig" },
+    //    .target = target,
+    //    .optimize = optimize,
+    //});
 
-    // This declares intent for the library to be installed into the
-    // standard location when the user invokes the "install" step (the default
-    // step when running `zig build`).
-    lib.install();
+    //// This declares intent for the library to be installed into the
+    //// standard location when the user invokes the "install" step (the default
+    //// step when running `zig build`).
+    //lib.install();
+
+    b.addModule("zbor", .{
+        .source_file = .{ .path = "src/main.zig" },
+        .dependencies = &.{},
+    });
 
     // Creates a step for unit testing.
     const lib_tests = b.addTest(.{
