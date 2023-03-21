@@ -13,7 +13,39 @@ and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
 
 ## Getting started
 
-To use this library in your own project just add it as a submodule, e.g.:
+To use this library you can either add it directly as a module or use the
+Zig package manager to fetchi it as dependency.
+
+### Zig package manager
+
+First add this library as dependency to your `build.zig.zon` file:
+
+```zon
+.{
+    .name = "your-project",
+    .version = 0.0.1,
+
+    .dependencies = .{
+        .zbor = .{
+            .url = "https://github.com/r4gus/zbor/archive/master.tar.gz",
+            .hash = "1220bfd0526e76937238e2268ea69e97de6b79744d934e4fabd98e0d6e7a8d8e4740",
+        }
+    },
+}
+```
+
+#### Hash
+
+To calculate the hash you can use the following [script](https://github.com/r4gus/zig-package-hash/blob/main/hash.sh).
+
+> Note: The Zig core team might alter the hashing algorithm used, i.e., the script might
+> not always calculate the correct result in the future.
+
+We also specify the hash within the release notes starting with version `0.11.3-alpha`.
+
+### As a module
+
+First add the library to your project, e.g., as a submodule:
 
 ```
 your-project$ mkdir libs
@@ -23,7 +55,15 @@ your-project$ git submodule add https://github.com/r4gus/zbor.git libs/zbor
 Then add the following line to your `build.zig` file.
 
 ```zig
-exe.addPackagePath("zbor", "libs/zbor/src/main.zig");
+// Create a new module
+var zbor_module = b.createModule(.{
+    .source_file = .{ .path = "libs/zbor/src/main.zig" },
+});
+
+// create your exe ...
+
+// Add the module to your exe/ lib
+exe.addModule("zbor", zbor_module);
 ```
 
 ## Usage
