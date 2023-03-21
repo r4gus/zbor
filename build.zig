@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn build(b: *std.build.Builder) void {
+pub fn build(b: *std.build.Builder) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -26,9 +26,9 @@ pub fn build(b: *std.build.Builder) void {
 
     const zbor_module = b.addModule("zbor", .{
         .source_file = .{ .path = "src/main.zig" },
-        .dependencies = &.{},
     });
-    _ = zbor_module;
+
+    try b.modules.put(b.dupe("zbor"), zbor_module);
 
     // Creates a step for unit testing.
     const lib_tests = b.addTest(.{
