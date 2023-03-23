@@ -151,7 +151,9 @@ pub fn parse(
                                     const y = s2n(name);
                                     match = x == y;
                                 },
-                                else => match = std.mem.eql(u8, name, if (kv.key.string()) |x| x else return ParseError.Malformed),
+                                else => {
+                                    match = std.mem.eql(u8, name, if (kv.key.string()) |x| x else return ParseError.Malformed);
+                                },
                             }
 
                             if (match) {
@@ -193,7 +195,16 @@ pub fn parse(
                         if (!fields_seen[i]) {
                             switch (@typeInfo(field.type)) {
                                 .Optional => @field(r, field.name) = null,
-                                else => return ParseError.MissingField,
+                                else => {
+                                    if (field.default_value) |default_ptr| {
+                                        if (!field.is_comptime) {
+                                            const default = @ptrCast(*align(1) const field.type, default_ptr).*;
+                                            @field(r, field.name) = default;
+                                        }
+                                    } else {
+                                        return ParseError.MissingField;
+                                    }
+                                },
                             }
                         }
                     }
@@ -1255,4 +1266,66 @@ test "overload struct 1" {
 
     const x = Foo{ .y = .{} };
     try testStringify("\xa2\x61\x78\x19\x04\xd2\x61\x79\x58\x19\xa2\x61\x61\x6a\x70\x75\x62\x6c\x69\x63\x2d\x6b\x65\x79\x61\x62\x1b\x11\x22\x33\x44\x55\x66\x77\x88", x, .{});
+}
+
+test "parse get assertion request 1" {
+    const GetAssertionParam = struct {
+        rpId: [:0]const u8,
+        clientDataHash: []const u8,
+        allowList: ?[]const struct {
+            id: []const u8,
+            type: [:0]const u8,
+            transports: ?[]const [:0]const u8 = null,
+        } = null,
+        options: ?struct {
+            up: bool = true,
+            rk: bool = true,
+            uv: bool = false,
+        } = null,
+        pinUvAuthParam: ?[32]u8 = null,
+        pinUvAuthProtocol: ?u8 = null,
+
+        pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
+            allocator.free(self.rpId);
+            allocator.free(self.clientDataHash);
+            if (self.allowList) |pkcds| {
+                for (pkcds) |pkcd| {
+                    allocator.free(pkcd.id);
+                    allocator.free(pkcd.type);
+                    if (pkcd.transports) |trans| {
+                        for (trans) |t| {
+                            allocator.free(t);
+                        }
+                        allocator.free(trans);
+                    }
+                }
+                allocator.free(pkcds);
+            }
+        }
+    };
+
+    const allocator = std.testing.allocator;
+
+    const payload = "\xa6\x01\x6b\x77\x65\x62\x61\x75\x74\x68\x6e\x2e\x69\x6f\x02\x58\x20\x6e\x0c\xb5\xf9\x7c\xae\xb8\xbf\x79\x7a\x62\x14\xc7\x19\x1c\x80\x8f\xe5\xa5\x50\x21\xf9\xfb\x76\x6e\x81\x83\xcd\x8a\x0d\x55\x0b\x03\x81\xa2\x62\x69\x64\x58\x40\xf9\xff\xff\xff\x95\xea\x72\x74\x2f\xa6\x03\xc3\x51\x9f\x9c\x17\xc0\xff\x81\xc4\x5d\xbb\x46\xe2\x3c\xff\x6f\xc1\xd0\xd5\xb3\x64\x6d\x49\x5c\xb1\x1b\x80\xe5\x78\x88\xbf\xba\xe3\x89\x8d\x69\x85\xfc\x19\x6c\x43\xfd\xfc\x2e\x80\x18\xac\x2d\x5b\xb3\x79\xa1\xf0\x64\x74\x79\x70\x65\x6a\x70\x75\x62\x6c\x69\x63\x2d\x6b\x65\x79\x05\xa1\x62\x75\x70\xf4\x06\x58\x20\x30\x5b\x38\x2d\x1c\xd9\xb9\x71\x4d\x51\x98\x30\xe5\xb0\x02\xcb\x6c\x38\x25\xbc\x05\xf8\x7e\xf1\xbc\xda\x36\x4d\x2d\x4d\xb9\x10\x07\x02";
+
+    const di = try DataItem.new(payload);
+
+    const get_assertion_param = try parse(
+        GetAssertionParam,
+        di,
+        .{
+            .allocator = allocator,
+            .field_settings = &.{
+                .{ .name = "rpId", .alias = "1", .options = .{} },
+                .{ .name = "clientDataHash", .alias = "2", .options = .{} },
+                .{ .name = "allowList", .alias = "3", .options = .{} },
+                .{ .name = "options", .alias = "5", .options = .{} },
+                .{ .name = "pinUvAuthParam", .alias = "6", .options = .{} },
+                .{ .name = "pinUvAuthProtocol", .alias = "7", .options = .{} },
+            },
+        },
+    );
+    defer get_assertion_param.deinit(allocator);
+
+    try std.testing.expectEqual(false, get_assertion_param.options.?.up);
 }
