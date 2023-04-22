@@ -439,7 +439,8 @@ pub fn stringify(
         },
         .Struct => |S| {
             // Custom stringify function overrides default behaviour
-            if (comptime std.meta.trait.hasFn("cborStringify")(T) and !options.from_cborStringify) {
+            const has_stringify = comptime std.meta.trait.hasFn("cborStringify")(T);
+            if (has_stringify and !options.from_cborStringify) {
                 return value.cborStringify(options, out);
             }
 
