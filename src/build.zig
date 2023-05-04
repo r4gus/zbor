@@ -140,6 +140,25 @@ pub const Builder = struct {
         };
     }
 
+    /// Add a chunk of CBOR.
+    ///
+    /// The given CBOR data is only added if its well formed.
+    ///
+    /// On error (except for MalformedCbor) all allocated memory is freed.
+    /// After this point one MUST NOT access the builder!
+    pub fn pushCbor(self: *@This(), input: []const u8) !void {
+        // First check that the given cbor is well formed
+        var i: usize = 0;
+        if (!cbor.wellFormed(input, i, true)) return error.MalformedCbor;
+
+        // Append the cbor data
+        self.top().raw.appendSlice(input) catch |e| {
+            self.unwind();
+            return e;
+        };
+        self.top().cnt += 1;
+    }
+
     /// Enter a data structure (Array or Map)
     ///
     /// On error (except for InvalidContainerType) all allocated memory is freed.
