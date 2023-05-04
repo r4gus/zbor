@@ -3,13 +3,13 @@ const cbor = @import("cbor.zig");
 
 /// Type of a Builder container
 pub const ContainerType = enum {
-    Leaf,
+    Root,
     Array,
     Map,
 };
 
 const Entry = struct {
-    t: ContainerType = .Leaf,
+    t: ContainerType = .Root,
     cnt: u64 = 0,
     raw: std.ArrayList(u8),
 
@@ -28,79 +28,138 @@ pub const Builder = struct {
     allocator: std.mem.Allocator,
 
     /// Create a new builder.
+    ///
+    /// On error all allocated memory is freed.
     pub fn new(allocator: std.mem.Allocator) !@This() {
-        return withType(allocator, .Leaf);
+        return withType(allocator, .Root);
     }
 
-    /// Create a new builder.
+    /// Create a new builder with the given container type.
+    ///
+    /// On error all allocated memory is freed.
     pub fn withType(allocator: std.mem.Allocator, t: ContainerType) !@This() {
         var b = @This(){
             .stack = std.ArrayList(Entry).init(allocator),
             .allocator = allocator,
         };
 
-        try b.stack.append(Entry.new(allocator, .Leaf));
-        if (t != .Leaf) {
-            try b.stack.append(Entry.new(allocator, t));
+        // The stack has at least one element on it: the Root
+        b.stack.append(Entry.new(allocator, .Root)) catch |e| {
+            b.unwind();
+            return e;
+        };
+        // If we want to use a container type just push another
+        // entry onto the stack. The container will later be
+        // merged into the root
+        if (t != .Root) {
+            b.stack.append(Entry.new(allocator, t)) catch |e| {
+                b.unwind();
+                return e;
+            };
         }
         return b;
     }
 
     /// Serialize an integer.
+    ///
+    /// On error all allocated memory is freed. After this
+    /// point one MUST NOT access the builder!
     pub fn pushInt(self: *@This(), value: i65) !void {
         const h: u8 = if (value < 0) 0x20 else 0;
         const v: u64 = @intCast(u64, if (value < 0) -(value + 1) else value);
-        try encode(self.last().raw.writer(), h, v);
-        self.last().cnt += 1;
+        encode(self.top().raw.writer(), h, v) catch |e| {
+            self.unwind();
+            return e;
+        };
+        self.top().cnt += 1;
     }
 
     /// Serialize a slice as byte string.
+    ///
+    /// On error all allocated memory is freed. After this
+    /// point one MUST NOT access the builder!
     pub fn pushByteString(self: *@This(), value: []const u8) !void {
         const h: u8 = 0x40;
         const v: u64 = @intCast(u64, value.len);
-        try encode(self.last().raw.writer(), h, v);
-        try self.last().raw.appendSlice(value);
-        self.last().cnt += 1;
+        encode(self.top().raw.writer(), h, v) catch |e| {
+            self.unwind();
+            return e;
+        };
+        self.top().raw.appendSlice(value) catch |e| {
+            self.unwind();
+            return e;
+        };
+        self.top().cnt += 1;
     }
 
     /// Serialize a slice as text string.
+    ///
+    /// On error all allocated memory is freed. After this
+    /// point one MUST NOT access the builder!
     pub fn pushTextString(self: *@This(), value: []const u8) !void {
         const h: u8 = 0x60;
         const v: u64 = @intCast(u64, value.len);
-        try encode(self.last().raw.writer(), h, v);
-        try self.last().raw.appendSlice(value);
-        self.last().cnt += 1;
+        encode(self.top().raw.writer(), h, v) catch |e| {
+            self.unwind();
+            return e;
+        };
+        self.top().raw.appendSlice(value) catch |e| {
+            self.unwind();
+            return e;
+        };
+        self.top().cnt += 1;
     }
 
     /// Serialize a tag.
     ///
     /// You MUST serialize another data item right after calling this function.
+    ///
+    /// On error all allocated memory is freed. After this
+    /// point one MUST NOT access the builder!
     pub fn pushTag(self: *@This(), tag: u64) !void {
         const h: u8 = 0xc0;
         const v: u64 = tag;
-        try encode(self.last().raw.writer(), h, v);
+        encode(self.top().raw.writer(), h, v) catch |e| {
+            self.unwind();
+            return e;
+        };
     }
 
     /// Serialize a simple value.
+    ///
+    /// On error (except for ReservedValue) all allocated memory is freed.
+    /// After this point one MUST NOT access the builder!
     pub fn pushSimple(self: *@This(), simple: u8) !void {
         if (24 <= simple and simple <= 31) return error.ReservedValue;
 
         const h: u8 = 0xf0;
         const v: u64 = @intCast(u64, simple);
-        try encode(self.last().raw.writer(), h, v);
+        encode(self.top().raw.writer(), h, v) catch |e| {
+            self.unwind();
+            return e;
+        };
     }
 
     /// Enter a data structure (Array or Map)
+    ///
+    /// On error (except for InvalidContainerType) all allocated memory is freed.
+    /// After this point one MUST NOT access the builder!
     pub fn enter(self: *@This(), t: ContainerType) !void {
-        if (t == .Leaf) return error.InvalidContainerType;
+        if (t == .Root) return error.InvalidContainerType;
 
-        try self.stack.append(Entry.new(self.allocator, t));
+        self.stack.append(Entry.new(self.allocator, t)) catch |e| {
+            self.unwind();
+            return e;
+        };
     }
 
     /// Leave the current data structure
+    ///
+    /// On error (except for EmptyStack and InvalidPairCount) all allocated
+    /// memory is freed. After this point one MUST NOT access the builder!
     pub fn leave(self: *@This()) !void {
         if (self.stack.items.len < 2) return error.EmptyStack;
-        if (self.last().t == .Map and self.last().cnt & 0x01 != 0)
+        if (self.top().t == .Map and self.top().cnt & 0x01 != 0)
             return error.InvalidPairCount;
 
         try self.moveUp();
@@ -109,8 +168,11 @@ pub const Builder = struct {
     /// Return the serialized data.
     ///
     /// The caller is responsible for freeing the data.
+    ///
+    /// On error (except for InvalidPairCount) all allocated
+    /// memory is freed. After this point one MUST NOT access the builder!
     pub fn finish(self: *@This()) ![]u8 {
-        if (self.last().t == .Map and self.last().cnt & 0x01 != 0)
+        if (self.top().t == .Map and self.top().cnt & 0x01 != 0)
             return error.InvalidPairCount;
 
         // unwind the stack if neccessary
@@ -130,15 +192,22 @@ pub const Builder = struct {
         const h: u8 = switch (e.t) {
             .Array => 0x80,
             .Map => 0xa0,
-            .Leaf => unreachable,
+            .Root => unreachable,
         };
         const v: u64 = if (e.t == .Map) e.cnt / 2 else e.cnt;
-        try encode(self.last().raw.writer(), h, v);
-        try self.last().raw.appendSlice(e.raw.items);
-        self.last().cnt += 1;
+        encode(self.top().raw.writer(), h, v) catch |err| {
+            self.unwind();
+            return err;
+        };
+        self.top().raw.appendSlice(e.raw.items) catch |err| {
+            self.unwind();
+            return err;
+        };
+        self.top().cnt += 1;
     }
 
-    fn last(self: *@This()) *Entry {
+    /// Return a mutable reference to the element at the top of the stack.
+    fn top(self: *@This()) *Entry {
         return &self.stack.items[self.stack.items.len - 1];
     }
 
@@ -155,6 +224,16 @@ pub const Builder = struct {
             0x00010000...0xffffffff => try cbor.encode_4(out, head, v),
             0x0000000100000000...0xffffffffffffffff => try cbor.encode_8(out, head, v),
         }
+    }
+
+    /// Free all allocated memory on error. This is meant
+    /// to prevent memory leaks if the builder throws an error.
+    fn unwind(self: *@This()) void {
+        while (self.stack.items.len > 0) {
+            const e = self.stack.pop();
+            e.raw.deinit();
+        }
+        self.stack.deinit();
     }
 };
 
