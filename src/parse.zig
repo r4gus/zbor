@@ -485,6 +485,9 @@ pub fn stringify(
 
                 if (emit_field) {
                     var child_options = options;
+                    // the flag shouldn't have an effect on the children.
+                    // It's only purpose is to prevent an infinite loop on the same level.
+                    child_options.from_cborStringify = false;
                     var name: []const u8 = Field.name[0..];
 
                     for (options.field_settings) |fs| {
