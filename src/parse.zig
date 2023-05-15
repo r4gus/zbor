@@ -59,6 +59,7 @@ pub const ParseOptions = struct {
     /// Settings for specific fields that override the default options.
     /// For `parse`, only the alias option is relevant.
     field_settings: []const FieldSettings = &.{},
+    from_cborParse: bool = false,
 };
 
 /// Deserialize a CBOR data item into a Zig data structure
@@ -121,6 +122,12 @@ pub fn parse(
             }
         },
         .Struct => |structInfo| {
+            // Custom parse function overrides default behaviour
+            const has_parse = comptime std.meta.trait.hasFn("cborParse")(T);
+            if (has_parse and !options.from_cborParse) {
+                return T.cborParse(item, options);
+            }
+
             switch (item.getType()) {
                 .Map => {
                     var r: T = undefined;
@@ -1218,6 +1225,45 @@ test "deserialize EcdsP256Key using alias" {
         .{ .name = "x", .alias = "-2" },
         .{ .name = "y", .alias = "-3" },
     } });
+
+    try std.testing.expectEqual(@intCast(u8, 2), x.kty);
+    try std.testing.expectEqual(@intCast(i8, -7), x.alg);
+    try std.testing.expectEqual(@intCast(u8, 1), x.crv);
+    try std.testing.expectEqualSlices(u8, "\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e", &x.x);
+    try std.testing.expectEqualSlices(u8, "\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", &x.y);
+}
+
+test "deserialize EcdsP256Key using alias 2" {
+    const EcdsaP256Key = struct {
+        /// kty:
+        kty: u8 = 2,
+        /// alg:
+        alg: i8 = -7,
+        /// crv:
+        crv: u8 = 1,
+        /// x-coordinate
+        x: [32]u8,
+        /// y-coordinate
+        y: [32]u8,
+
+        pub fn cborParse(item: DataItem, options: ParseOptions) !@This() {
+            _ = options;
+            return try parse(@This(), item, .{
+                .from_cborParse = true, // prevent infinite loops
+                .field_settings = &.{
+                    .{ .name = "kty", .alias = "1" },
+                    .{ .name = "alg", .alias = "3" },
+                    .{ .name = "crv", .alias = "-1" },
+                    .{ .name = "x", .alias = "-2" },
+                    .{ .name = "y", .alias = "-3" },
+                },
+            });
+        }
+    };
+
+    const di = try DataItem.new("\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52");
+
+    const x = try parse(EcdsaP256Key, di, .{});
 
     try std.testing.expectEqual(@intCast(u8, 2), x.kty);
     try std.testing.expectEqual(@intCast(i8, -7), x.alg);

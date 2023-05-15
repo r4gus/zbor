@@ -257,3 +257,42 @@ const Foo = struct {
 ```
 
 The `StringifyOptions` can be used to indirectly pass an `Allocator` to the function.
+
+Please make sure to set `from_cborStringify` to `true` when calling recursively into `stringify(self)` to prevent infinite loops.
+
+#### Overriding parse
+
+You can override the `parse` function for structs and tagged unions by implementing `cborParse`. This is helpful if you have aliases for your struct members.
+
+```zig
+const EcdsaP256Key = struct {
+    /// kty:
+    kty: u8 = 2,
+    /// alg:
+    alg: i8 = -7,
+    /// crv:
+    crv: u8 = 1,
+    /// x-coordinate
+    x: [32]u8,
+    /// y-coordinate
+    y: [32]u8,
+
+    pub fn cborParse(item: DataItem, options: ParseOptions) !@This() {
+        _ = options;
+        return try parse(@This(), item, .{
+            .from_cborParse = true, // prevent infinite loops
+            .field_settings = &.{
+                .{ .name = "kty", .alias = "1" },
+                .{ .name = "alg", .alias = "3" },
+                .{ .name = "crv", .alias = "-1" },
+                .{ .name = "x", .alias = "-2" },
+                .{ .name = "y", .alias = "-3" },
+            },
+        });
+    }
+};
+```
+
+The `ParseOptions` can be used to indirectly pass an `Allocator` to the function.
+
+Please make sure to set `from_cborParse` to `true` when calling recursively into `parse(self)` to prevent infinite loops.
