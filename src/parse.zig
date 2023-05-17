@@ -315,6 +315,12 @@ pub fn parse(
             }
         },
         .Union => |unionInfo| {
+            // Custom parse function overrides default behaviour
+            const has_parse = comptime std.meta.trait.hasFn("cborParse")(T);
+            if (has_parse and !options.from_cborParse) {
+                return T.cborParse(item, options);
+            }
+
             if (unionInfo.tag_type) |_| {
                 // try each union field until we find one that matches
                 inline for (unionInfo.fields) |u_field| {
@@ -581,7 +587,8 @@ pub fn stringify(
             }
         },
         .Union => {
-            if (comptime std.meta.trait.hasFn("cborStringify")(T) and !options.from_cborStringify) {
+            const has_stringify = comptime std.meta.trait.hasFn("cborStringify")(T);
+            if (has_stringify and !options.from_cborStringify) {
                 return value.cborStringify(options, out);
             }
 

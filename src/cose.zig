@@ -11,6 +11,8 @@ const ArrayIterator = cbor.ArrayIterator;
 const parse_ = @import("parse.zig");
 const stringify = parse_.stringify;
 const parse = parse_.parse;
+const StringifyOptions = parse_.StringifyOptions;
+const ParseOptions = parse_.ParseOptions;
 
 /// COSE algorithm identifiers
 pub const Algorithm = enum(i32) {
@@ -166,24 +168,52 @@ pub const KeyTag = enum { P256 };
 pub const Key = union(KeyTag) {
     P256: struct {
         /// kty: Identification of the key type
-        @"1": KeyType = .Ec2,
+        kty: KeyType = .Ec2,
         /// alg: Key usage restriction to this algorithm
-        @"3": Algorithm,
+        alg: Algorithm,
         /// crv: EC identifier -- Taken from the "COSE Elliptic Curves" registry
-        @"-1": Curve = .P256,
+        crv: Curve = .P256,
         /// x: x-coordinate
-        @"-2": [32]u8,
+        x: [32]u8,
         /// y: y-coordinate
-        @"-3": [32]u8,
+        y: [32]u8,
     },
 
     pub fn fromP256Pub(alg: Algorithm, pk: anytype) @This() {
         const sec1 = pk.toUncompressedSec1();
         return .{ .P256 = .{
-            .@"3" = alg,
-            .@"-2" = sec1[1..33].*,
-            .@"-3" = sec1[33..65].*,
+            .alg = alg,
+            .x = sec1[1..33].*,
+            .y = sec1[33..65].*,
         } };
+    }
+
+    pub fn cborStringify(self: *const @This(), options: StringifyOptions, out: anytype) !void {
+        _ = options;
+        return stringify(self, .{
+            .from_cborStringify = true,
+            .field_settings = &.{
+                .{ .name = "kty", .alias = "1", .options = .{ .enum_as_text = false } },
+                .{ .name = "alg", .alias = "3", .options = .{ .enum_as_text = false } },
+                .{ .name = "crv", .alias = "-1", .options = .{ .enum_as_text = false } },
+                .{ .name = "x", .alias = "-2", .options = .{} },
+                .{ .name = "y", .alias = "-3", .options = .{} },
+            },
+        }, out);
+    }
+
+    pub fn cborParse(item: cbor.DataItem, options: ParseOptions) !@This() {
+        return try parse(@This(), item, .{
+            .allocator = options.allocator,
+            .from_cborParse = true, // prevent infinite loops
+            .field_settings = &.{
+                .{ .name = "kty", .alias = "1", .options = .{} },
+                .{ .name = "alg", .alias = "3", .options = .{} },
+                .{ .name = "crv", .alias = "-1", .options = .{} },
+                .{ .name = "x", .alias = "-2", .options = .{} },
+                .{ .name = "y", .alias = "-3", .options = .{} },
+            },
+        });
     }
 };
 
@@ -198,7 +228,7 @@ test "cose Key p256 stringify #1" {
     var str = std.ArrayList(u8).init(allocator);
     defer str.deinit();
 
-    try stringify(k, .{ .enum_as_text = false }, str.writer());
+    try stringify(k, .{}, str.writer());
 
     try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.items);
 }
@@ -210,9 +240,11 @@ test "cose Key p256 parse #1" {
 
     const key = try parse(Key, di, .{});
 
-    try std.testing.expectEqual(Algorithm.Es256, key.P256.@"3");
-
-    //const x = try EcdsaP256Sha256.PublicKey.fromSec1("\x04\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52");
+    try std.testing.expectEqual(Algorithm.Es256, key.P256.alg);
+    try std.testing.expectEqual(KeyType.Ec2, key.P256.kty);
+    try std.testing.expectEqual(Curve.P256, key.P256.crv);
+    try std.testing.expectEqualSlices(u8, "\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e", &key.P256.x);
+    try std.testing.expectEqualSlices(u8, "\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", &key.P256.y);
 }
 
 test "alg to raw" {
