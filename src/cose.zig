@@ -14,6 +14,8 @@ const parse = parse_.parse;
 const StringifyOptions = parse_.StringifyOptions;
 const ParseOptions = parse_.ParseOptions;
 
+const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
+
 /// COSE algorithm identifiers
 pub const Algorithm = enum(i32) {
     /// RSASSA-PKCS1-v1_5 using SHA-1
@@ -177,6 +179,8 @@ pub const Key = union(KeyTag) {
         x: [32]u8,
         /// y: y-coordinate
         y: [32]u8,
+        /// Private key
+        d: ?[32]u8 = null,
     },
 
     pub fn fromP256Pub(alg: Algorithm, pk: anytype) @This() {
@@ -186,6 +190,152 @@ pub const Key = union(KeyTag) {
             .x = sec1[1..33].*,
             .y = sec1[33..65].*,
         } };
+    }
+
+    pub fn fromP256PrivPub(alg: Algorithm, privk: anytype, pubk: anytype) @This() {
+        const sec1 = pubk.toUncompressedSec1();
+        const pk = privk.toBytes();
+        return .{ .P256 = .{
+            .alg = alg,
+            .x = sec1[1..33].*,
+            .y = sec1[33..65].*,
+            .d = pk,
+        } };
+    }
+
+    /// Creates a new ECDSA P-256 (secp256r1) key pair for the ES256 algorithm.
+    ///
+    /// - `seed`: Optional seed to derive the key pair from. If `null`, a random seed will be used.
+    ///
+    /// Returns the newly created key pair as a structure containing the algorithm identifier,
+    /// public key coordinates, and the secret key.
+    ///
+    /// # Examples
+    ///
+    /// ```zig
+    /// const cbor = @import("zbor");
+    /// const keyPair = try cbor.cose.Key.es256(null);
+    ///
+    /// // Use the key pair...
+    /// ```
+    pub fn es256(seed: ?[32]u8) !@This() {
+        const kp = try EcdsaP256Sha256.KeyPair.create(seed);
+        const sec1 = kp.public_key.toUncompressedSec1();
+        const pk = kp.secret_key.toBytes();
+        return .{ .P256 = .{
+            .alg = .Es256,
+            .x = sec1[1..33].*,
+            .y = sec1[33..65].*,
+            .d = pk,
+        } };
+    }
+
+    /// Signs the provided data using the specified algorithm and key.
+    ///
+    /// - `data_seq`: A sequence of data slices to be signed together.
+    /// - `allocator`: Allocator to allocate memory for the signature.
+    ///
+    /// Returns the DER-encoded signature as a dynamically allocated byte slice,
+    /// or an error if the algorithm or key is unsupported.
+    ///
+    /// The user is responsible for freeing the allocated memory.
+    ///
+    /// # Errors
+    ///
+    /// - `error.UnsupportedAlgorithm`: If the algorithm is not supported.
+    ///
+    /// # Examples
+    ///
+    /// ```zig
+    /// const result = try key.sign(&.{data}, allocator);
+    ///
+    /// // Use the signature...
+    /// ```
+    pub fn sign(
+        self: *const @This(),
+        data_seq: []const []const u8,
+        allocator: std.mem.Allocator,
+    ) ![]const u8 {
+        switch (self.*) {
+            .P256 => |k| {
+                if (k.d == null) return error.MissingPrivateKey;
+
+                switch (k.alg) {
+                    .Es256 => {
+                        var kp = try EcdsaP256Sha256.KeyPair.fromSecretKey(
+                            try EcdsaP256Sha256.SecretKey.fromBytes(k.d.?),
+                        );
+                        var signer = try kp.signer(null);
+
+                        // Append data that should be signed together
+                        for (data_seq) |data| {
+                            signer.update(data);
+                        }
+
+                        // Sign the data
+                        const sig = try signer.finalize();
+                        var buffer: [EcdsaP256Sha256.Signature.der_encoded_max_length]u8 = undefined;
+                        const der = sig.toDer(&buffer);
+                        var mem = try allocator.alloc(u8, der.len);
+                        @memcpy(mem, der);
+                        return mem;
+                    },
+                    else => return error.UnsupportedAlgorithm,
+                }
+            },
+        }
+    }
+
+    /// Verifies a signature using the provided public key and a data sequence.
+    ///
+    /// - `signature`: signature to be verified.
+    /// - `data_seq`: Array of data slices that were signed together.
+    ///
+    /// Returns `true` if the signature is valid, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```zig
+    /// const signatureValid = try key.verify(signature, &.{data});
+    /// if (signatureValid) {
+    ///     // Signature is valid
+    /// } else {
+    ///     // Signature is not valid
+    /// }
+    /// ```
+    pub fn verify(
+        self: *const @This(),
+        signature: []const u8,
+        data_seq: []const []const u8,
+    ) !bool {
+        switch (self.*) {
+            .P256 => |k| {
+                switch (k.alg) {
+                    .Es256 => {
+                        // Get public key struct
+                        var usec1: [65]u8 = undefined;
+                        usec1[0] = 4;
+                        @memcpy(usec1[1..33], &k.x);
+                        @memcpy(usec1[33..65], &k.y);
+                        const pk = try EcdsaP256Sha256.PublicKey.fromSec1(&usec1);
+                        // Get signature struct
+                        const sig = try EcdsaP256Sha256.Signature.fromDer(signature);
+                        // Get verifier
+                        var verifier = try sig.verifier(pk);
+                        for (data_seq) |data| {
+                            verifier.update(data);
+                        }
+                        verifier.verify() catch {
+                            // Verification failed
+                            return false;
+                        };
+
+                        return true;
+                    },
+                    else => return error.UnsupportedAlgorithm,
+                }
+            },
+        }
     }
 
     pub fn cborStringify(self: *const @This(), options: StringifyOptions, out: anytype) !void {
@@ -198,6 +348,7 @@ pub const Key = union(KeyTag) {
                 .{ .name = "crv", .alias = "-1", .options = .{ .enum_as_text = false } },
                 .{ .name = "x", .alias = "-2", .options = .{} },
                 .{ .name = "y", .alias = "-3", .options = .{} },
+                .{ .name = "d", .alias = "-4", .options = .{} },
             },
         }, out);
     }
@@ -212,14 +363,13 @@ pub const Key = union(KeyTag) {
                 .{ .name = "crv", .alias = "-1", .options = .{} },
                 .{ .name = "x", .alias = "-2", .options = .{} },
                 .{ .name = "y", .alias = "-3", .options = .{} },
+                .{ .name = "d", .alias = "-4", .options = .{} },
             },
         });
     }
 };
 
 test "cose Key p256 stringify #1" {
-    const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
-
     const x = try EcdsaP256Sha256.PublicKey.fromSec1("\x04\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52");
 
     const k = Key.fromP256Pub(.Es256, x);
@@ -258,4 +408,31 @@ test "raw to alg" {
     const x: [4]u8 = "\xF9\xFF\xFF\xFF".*;
 
     try std.testing.expectEqual(Algorithm.Es256, Algorithm.from_raw(x));
+}
+
+test "es256 sign verify 1" {
+    const allocator = std.testing.allocator;
+    const msg = "Hello, World!";
+
+    var kp1 = try EcdsaP256Sha256.KeyPair.create(null);
+
+    // Create a signature via cose key struct
+    var cosep256 = Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key);
+    const sig_der_1 = try cosep256.sign(&.{msg}, allocator);
+    defer allocator.free(sig_der_1);
+
+    // Verify the created signature
+    const sig1 = try EcdsaP256Sha256.Signature.fromDer(sig_der_1);
+    sig1.verify(msg, kp1.public_key) catch {
+        try std.testing.expect(false); // expected void but got error
+    };
+
+    // Verify the created signature again
+    try std.testing.expectEqual(true, try cosep256.verify(sig_der_1, &.{msg}));
+
+    // Create another key-pair
+    var kp2 = try Key.es256(null);
+
+    // Trying to verfiy the first signature using the new key-pair should fail
+    try std.testing.expectEqual(false, try kp2.verify(sig_der_1, &.{msg}));
 }
