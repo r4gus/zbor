@@ -174,7 +174,13 @@ pub fn parse(
                                     }
                                 }
 
-                                @field(r, field.name) = try parse(field.type, kv.value, options);
+                                var child_options = options;
+                                child_options.from_cborParse = false;
+                                @field(r, field.name) = try parse(
+                                    field.type,
+                                    kv.value,
+                                    child_options,
+                                );
                                 errdefer {
                                     // TODO: add error defer to free memory
                                     const I = @typeInfo(@TypeOf(@field(r, field.name)));
