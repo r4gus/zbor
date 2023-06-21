@@ -183,6 +183,21 @@ pub const Key = union(KeyTag) {
         d: ?[32]u8 = null,
     },
 
+    pub fn copySecure(self: *const @This()) @This() {
+        switch (self.*) {
+            .P256 => |k| {
+                return .{ .P256 = .{
+                    .kty = k.kty,
+                    .alg = k.alg,
+                    .crv = k.crv,
+                    .x = k.x,
+                    .y = k.y,
+                    .d = null,
+                } };
+            },
+        }
+    }
+
     pub fn fromP256Pub(alg: Algorithm, pk: anytype) @This() {
         const sec1 = pk.toUncompressedSec1();
         return .{ .P256 = .{
@@ -435,4 +450,11 @@ test "es256 sign verify 1" {
 
     // Trying to verfiy the first signature using the new key-pair should fail
     try std.testing.expectEqual(false, try kp2.verify(sig_der_1, &.{msg}));
+}
+
+test "copy secure #1" {
+    var kp1 = try EcdsaP256Sha256.KeyPair.create(null);
+    var cosep256 = Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key);
+    var cpy = cosep256.copySecure();
+    try std.testing.expectEqual(cpy.P256.d, null);
 }
