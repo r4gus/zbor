@@ -143,6 +143,10 @@ pub fn parse(
                             var match: bool = false;
                             var name: []const u8 = field.name;
 
+                            // std.mem.Allocator contains anyopaque which isn't
+                            // possible to parse.
+                            if (field.type == std.mem.Allocator) continue;
+
                             // Is there an alias specified?
                             for (options.field_settings) |fs| {
                                 if (std.mem.eql(u8, field.name, fs.name)) {
@@ -209,7 +213,10 @@ pub fn parse(
                             switch (@typeInfo(field.type)) {
                                 .Optional => @field(r, field.name) = null,
                                 else => {
-                                    if (field.default_value) |default_ptr| {
+                                    if (field.type == std.mem.Allocator and options.allocator != null) {
+                                        // Assign the allocator that was provided by the caller
+                                        @field(r, field.name) = options.allocator.?;
+                                    } else if (field.default_value) |default_ptr| {
                                         if (!field.is_comptime) {
                                             const default = @ptrCast(*align(1) const field.type, default_ptr).*;
                                             @field(r, field.name) = default;
@@ -377,6 +384,8 @@ pub const FieldSettings = struct {
     alias: ?[]const u8 = null,
     /// Options specific for the given field
     options: struct {
+        /// Don't serialize the given field
+        skip: bool = false,
         /// Don't serialize the given filed if it's null
         skip_if_null: bool = true,
         /// Convert the field into a CBOR text string (only if u8 slice)
@@ -399,6 +408,13 @@ pub fn stringify(
     const TInf = @typeInfo(T);
     var head: u8 = 0;
     var v: u64 = 0;
+
+    // I don't know if this is a good solution but it's
+    // the easiest way to work around all the anyopaque
+    // compiler errors. Makes no sense to serialize a
+    // allocator but this allows storing a allocator
+    // in a struct and then just skipping the field.
+    if (T == std.mem.Allocator) return;
 
     switch (TInf) {
         .Int, .ComptimeInt => {
@@ -480,6 +496,12 @@ pub fn stringify(
                     }
                 }
 
+                for (options.field_settings) |fs| {
+                    if (std.mem.eql(u8, Field.name, fs.name)) {
+                        if (fs.options.skip) emit_field = false;
+                    }
+                }
+
                 if (emit_field) {
                     v += 1;
                 }
@@ -502,26 +524,27 @@ pub fn stringify(
                     }
                 }
 
-                if (emit_field) {
-                    var child_options = options;
-                    // the flag shouldn't have an effect on the children.
-                    // It's only purpose is to prevent an infinite loop on the same level.
-                    child_options.from_cborStringify = false;
-                    var name: []const u8 = Field.name[0..];
+                // the flag shouldn't have an effect on the children.
+                // It's only purpose is to prevent an infinite loop on the same level.
+                var child_options = options;
+                child_options.from_cborStringify = false;
+                var name: []const u8 = Field.name[0..];
 
-                    for (options.field_settings) |fs| {
-                        if (std.mem.eql(u8, Field.name, fs.name)) {
-                            // We found settings for the given field
-                            child_options.skip_null_fields = fs.options.skip_if_null;
-                            child_options.slice_as_text = fs.options.slice_as_text;
-                            child_options.enum_as_text = fs.options.enum_as_text;
+                for (options.field_settings) |fs| {
+                    if (std.mem.eql(u8, Field.name, fs.name)) {
+                        // Ignore the given field
+                        if (fs.options.skip) emit_field = false;
+                        // We found settings for the given field
+                        child_options.skip_null_fields = fs.options.skip_if_null;
+                        child_options.slice_as_text = fs.options.slice_as_text;
+                        child_options.enum_as_text = fs.options.enum_as_text;
 
-                            if (fs.alias) |alias| {
-                                name = alias;
-                            }
+                        if (fs.alias) |alias| {
+                            name = alias;
                         }
                     }
-
+                }
+                if (emit_field) {
                     if (s2n(name)) |nr| { // int key
                         try stringify(nr, child_options, out); // key
                     } else { // str key
@@ -1391,4 +1414,69 @@ test "parse get assertion request 1" {
     defer get_assertion_param.deinit(allocator);
 
     try std.testing.expectEqual(false, get_assertion_param.options.?.up);
+}
+
+test "skip serializing field #1" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        a: i32,
+        b: bool,
+        c: [5]u8,
+    };
+
+    const s = S{
+        .a = 32,
+        .b = true,
+        .c = "abcde".*,
+    };
+
+    var str = std.ArrayList(u8).init(allocator);
+    defer str.deinit();
+
+    try stringify(s, .{ .field_settings = &.{
+        .{ .name = "b", .options = .{ .skip = true } },
+    } }, str.writer());
+
+    try std.testing.expectEqualSlices(u8, "\xa2\x61\x61\x18\x20\x61\x63\x65\x61\x62\x63\x64\x65", str.items);
+}
+
+test "skip serializing field #2" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        a: []u8,
+        b: std.mem.Allocator,
+    };
+
+    const s = S{
+        .a = try allocator.alloc(u8, 5),
+        .b = allocator,
+    };
+    @memcpy(s.a, "abcde");
+    defer allocator.free(s.a);
+
+    var str = std.ArrayList(u8).init(allocator);
+    defer str.deinit();
+
+    try stringify(s, .{ .field_settings = &.{
+        .{ .name = "b", .options = .{ .skip = true } },
+    } }, str.writer());
+
+    try std.testing.expectEqualSlices(u8, "\xa1\x61\x61\x65\x61\x62\x63\x64\x65", str.items);
+}
+
+test "assign allocator to allocator fields #1" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        a: []u8,
+        b: std.mem.Allocator,
+    };
+
+    var di = try DataItem.new("\xa1\x61\x61\x65\x61\x62\x63\x64\x65");
+    var x = try parse(S, di, .{ .allocator = allocator });
+    defer allocator.free(x.a);
+
+    try std.testing.expectEqualSlices(u8, "abcde", x.a);
 }
