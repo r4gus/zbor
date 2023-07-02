@@ -112,12 +112,12 @@ pub const Algorithm = enum(i32) {
     A256Gcm = 3,
 
     pub fn to_raw(self: @This()) [4]u8 {
-        const i = @enumToInt(self);
+        const i = @intFromEnum(self);
         return std.mem.asBytes(&i).*;
     }
 
     pub fn from_raw(raw: [4]u8) @This() {
-        return @intToEnum(@This(), std.mem.bytesToValue(i32, &raw));
+        return @as(@This(), @enumFromInt(std.mem.bytesToValue(i32, &raw)));
     }
 };
 

@@ -66,7 +66,7 @@ pub const Builder = struct {
     /// point one MUST NOT access the builder!
     pub fn pushInt(self: *@This(), value: i65) !void {
         const h: u8 = if (value < 0) 0x20 else 0;
-        const v: u64 = @intCast(u64, if (value < 0) -(value + 1) else value);
+        const v: u64 = @as(u64, @intCast(if (value < 0) -(value + 1) else value));
         encode(self.top().raw.writer(), h, v) catch |e| {
             self.unwind();
             return e;
@@ -80,7 +80,7 @@ pub const Builder = struct {
     /// point one MUST NOT access the builder!
     pub fn pushByteString(self: *@This(), value: []const u8) !void {
         const h: u8 = 0x40;
-        const v: u64 = @intCast(u64, value.len);
+        const v: u64 = @as(u64, @intCast(value.len));
         encode(self.top().raw.writer(), h, v) catch |e| {
             self.unwind();
             return e;
@@ -98,7 +98,7 @@ pub const Builder = struct {
     /// point one MUST NOT access the builder!
     pub fn pushTextString(self: *@This(), value: []const u8) !void {
         const h: u8 = 0x60;
-        const v: u64 = @intCast(u64, value.len);
+        const v: u64 = @as(u64, @intCast(value.len));
         encode(self.top().raw.writer(), h, v) catch |e| {
             self.unwind();
             return e;
@@ -133,7 +133,7 @@ pub const Builder = struct {
         if (24 <= simple and simple <= 31) return error.ReservedValue;
 
         const h: u8 = 0xf0;
-        const v: u64 = @intCast(u64, simple);
+        const v: u64 = @as(u64, @intCast(simple));
         encode(self.top().raw.writer(), h, v) catch |e| {
             self.unwind();
             return e;
@@ -233,11 +233,11 @@ pub const Builder = struct {
     fn encode(out: anytype, head: u8, v: u64) !void {
         switch (v) {
             0x00...0x17 => {
-                try out.writeByte(head | @intCast(u8, v));
+                try out.writeByte(head | @as(u8, @intCast(v)));
             },
             0x18...0xff => {
                 try out.writeByte(head | 24);
-                try out.writeByte(@intCast(u8, v));
+                try out.writeByte(@as(u8, @intCast(v)));
             },
             0x0100...0xffff => try cbor.encode_2(out, head, v),
             0x00010000...0xffffffff => try cbor.encode_4(out, head, v),

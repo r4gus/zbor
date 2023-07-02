@@ -75,9 +75,9 @@ pub const DataItem = struct {
     /// tpye Type.Int.
     pub fn int(self: @This()) ?i65 {
         if (self.data[0] <= 0x1b and self.data[0] >= 0x00) {
-            return @intCast(i65, if (additionalInfo(self.data, null)) |v| v else return null);
+            return @as(i65, @intCast(if (additionalInfo(self.data, null)) |v| v else return null));
         } else if (self.data[0] <= 0x3b and self.data[0] >= 0x20) {
-            return -@intCast(i65, if (additionalInfo(self.data, null)) |v| v else return null) - 1;
+            return -@as(i65, @intCast(if (additionalInfo(self.data, null)) |v| v else return null)) - 1;
         } else {
             return null;
         }
@@ -92,7 +92,7 @@ pub const DataItem = struct {
         if (T != Type.ByteString and T != Type.TextString) return null;
 
         var begin: usize = 0;
-        var len = if (additionalInfo(self.data, &begin)) |v| @intCast(usize, v) else return null;
+        var len = if (additionalInfo(self.data, &begin)) |v| @as(usize, @intCast(v)) else return null;
 
         return self.data[begin .. begin + len];
     }
@@ -106,7 +106,7 @@ pub const DataItem = struct {
         if (T != Type.Array) return null;
 
         var begin: usize = 0;
-        var len = if (additionalInfo(self.data, &begin)) |v| @intCast(usize, v) else return null;
+        var len = if (additionalInfo(self.data, &begin)) |v| @as(usize, @intCast(v)) else return null;
 
         // Get to the end of the array
         var end: usize = 0;
@@ -129,7 +129,7 @@ pub const DataItem = struct {
         if (T != Type.Map) return null;
 
         var begin: usize = 0;
-        var len = if (additionalInfo(self.data, &begin)) |v| @intCast(usize, v) else return null;
+        var len = if (additionalInfo(self.data, &begin)) |v| @as(usize, @intCast(v)) else return null;
 
         // Get to the end of the map
         var end: usize = 0;
@@ -179,9 +179,9 @@ pub const DataItem = struct {
 
         if (additionalInfo(self.data, null)) |v| {
             return switch (self.data[0]) {
-                0xf9 => @floatCast(f64, @bitCast(f16, @intCast(u16, v))),
-                0xfa => @floatCast(f64, @bitCast(f32, @intCast(u32, v))),
-                0xfb => @bitCast(f64, v),
+                0xf9 => @as(f64, @floatCast(@as(f16, @bitCast(@as(u16, @intCast(v)))))),
+                0xfa => @as(f64, @floatCast(@as(f32, @bitCast(@as(u32, @intCast(v)))))),
+                0xfb => @as(f64, @bitCast(v)),
                 else => unreachable,
             };
         } else {
@@ -282,7 +282,7 @@ pub const ArrayIterator = struct {
 /// Move the index `i` to the beginning of the next data item.
 fn burn(data: []const u8, i: *usize) ?void {
     var offset: usize = 0;
-    const len = if (additionalInfo(data[i.*..], &offset)) |v| @intCast(usize, v) else return null;
+    const len = if (additionalInfo(data[i.*..], &offset)) |v| @as(usize, @intCast(v)) else return null;
 
     switch (data[i.*]) {
         0x00...0x1b => i.* += offset,
@@ -327,27 +327,27 @@ fn additionalInfo(data: []const u8, l: ?*usize) ?u64 {
     switch (data[0] & 0x1f) {
         0x00...0x17 => {
             if (l != null) l.?.* = 1;
-            return @intCast(u64, data[0] & 0x1f);
+            return @as(u64, @intCast(data[0] & 0x1f));
         },
         0x18 => {
             if (data.len < 2) return null;
             if (l != null) l.?.* = 2;
-            return @intCast(u64, data[1]);
+            return @as(u64, @intCast(data[1]));
         },
         0x19 => {
             if (data.len < 3) return null;
             if (l != null) l.?.* = 3;
-            return @intCast(u64, unsigned_16(data[1..3]));
+            return @as(u64, @intCast(unsigned_16(data[1..3])));
         },
         0x1a => {
             if (data.len < 5) return null;
             if (l != null) l.?.* = 5;
-            return @intCast(u64, unsigned_32(data[1..5]));
+            return @as(u64, @intCast(unsigned_32(data[1..5])));
         },
         0x1b => {
             if (data.len < 9) return null;
             if (l != null) l.?.* = 9;
-            return @intCast(u64, unsigned_64(data[1..9]));
+            return @as(u64, @intCast(unsigned_64(data[1..9])));
         },
         else => return null,
     }
@@ -366,27 +366,27 @@ pub fn wellFormed(data: []const u8, i: *usize, check_len: bool) bool {
     i.* += 1;
     const mt = ib >> 5;
     const ai = ib & 0x1f;
-    var val: usize = @intCast(usize, ai);
+    var val: usize = @as(usize, @intCast(ai));
 
     switch (ai) {
         24 => {
             if (i.* + 1 > data.len) return false;
-            val = @intCast(usize, data[i.*]);
+            val = @as(usize, @intCast(data[i.*]));
             i.* += 1;
         },
         25 => {
             if (i.* + 2 > data.len) return false;
-            val = @intCast(usize, unsigned_16(data[i.* .. i.* + 2]));
+            val = @as(usize, @intCast(unsigned_16(data[i.* .. i.* + 2])));
             i.* += 2;
         },
         26 => {
             if (i.* + 4 > data.len) return false;
-            val = @intCast(usize, unsigned_32(data[i.* .. i.* + 4]));
+            val = @as(usize, @intCast(unsigned_32(data[i.* .. i.* + 4])));
             i.* += 4;
         },
         27 => {
             if (i.* + 8 > data.len) return false;
-            val = @intCast(usize, unsigned_64(data[i.* .. i.* + 8]));
+            val = @as(usize, @intCast(unsigned_64(data[i.* .. i.* + 8])));
             i.* += 8;
         },
         28, 29, 30 => return false,
@@ -419,41 +419,41 @@ pub fn wellFormed(data: []const u8, i: *usize, check_len: bool) bool {
 }
 
 pub fn unsigned_16(data: []const u8) u16 {
-    return @intCast(u16, data[0]) << 8 | @intCast(u16, data[1]);
+    return @as(u16, @intCast(data[0])) << 8 | @as(u16, @intCast(data[1]));
 }
 
 pub fn unsigned_32(data: []const u8) u32 {
-    return @intCast(u32, data[0]) << 24 | @intCast(u32, data[1]) << 16 | @intCast(u32, data[2]) << 8 | @intCast(u32, data[3]);
+    return @as(u32, @intCast(data[0])) << 24 | @as(u32, @intCast(data[1])) << 16 | @as(u32, @intCast(data[2])) << 8 | @as(u32, @intCast(data[3]));
 }
 
 pub fn unsigned_64(data: []const u8) u64 {
-    return @intCast(u64, data[0]) << 56 | @intCast(u64, data[1]) << 48 | @intCast(u64, data[2]) << 40 | @intCast(u64, data[3]) << 32 | @intCast(u64, data[4]) << 24 | @intCast(u64, data[5]) << 16 | @intCast(u64, data[6]) << 8 | @intCast(u64, data[7]);
+    return @as(u64, @intCast(data[0])) << 56 | @as(u64, @intCast(data[1])) << 48 | @as(u64, @intCast(data[2])) << 40 | @as(u64, @intCast(data[3])) << 32 | @as(u64, @intCast(data[4])) << 24 | @as(u64, @intCast(data[5])) << 16 | @as(u64, @intCast(data[6])) << 8 | @as(u64, @intCast(data[7]));
 }
 
 pub fn encode_2(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(head | 25);
-    try cbor.writeByte(@intCast(u8, (v >> 8) & 0xff));
-    try cbor.writeByte(@intCast(u8, v & 0xff));
+    try cbor.writeByte(@as(u8, @intCast((v >> 8) & 0xff)));
+    try cbor.writeByte(@as(u8, @intCast(v & 0xff)));
 }
 
 pub fn encode_4(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(head | 26);
-    try cbor.writeByte(@intCast(u8, (v >> 24) & 0xff));
-    try cbor.writeByte(@intCast(u8, (v >> 16) & 0xff));
-    try cbor.writeByte(@intCast(u8, (v >> 8) & 0xff));
-    try cbor.writeByte(@intCast(u8, v & 0xff));
+    try cbor.writeByte(@as(u8, @intCast((v >> 24) & 0xff)));
+    try cbor.writeByte(@as(u8, @intCast((v >> 16) & 0xff)));
+    try cbor.writeByte(@as(u8, @intCast((v >> 8) & 0xff)));
+    try cbor.writeByte(@as(u8, @intCast(v & 0xff)));
 }
 
 pub fn encode_8(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(head | 27);
-    try cbor.writeByte(@intCast(u8, (v >> 56) & 0xff));
-    try cbor.writeByte(@intCast(u8, (v >> 48) & 0xff));
-    try cbor.writeByte(@intCast(u8, (v >> 40) & 0xff));
-    try cbor.writeByte(@intCast(u8, (v >> 32) & 0xff));
-    try cbor.writeByte(@intCast(u8, (v >> 24) & 0xff));
-    try cbor.writeByte(@intCast(u8, (v >> 16) & 0xff));
-    try cbor.writeByte(@intCast(u8, (v >> 8) & 0xff));
-    try cbor.writeByte(@intCast(u8, v & 0xff));
+    try cbor.writeByte(@as(u8, @intCast((v >> 56) & 0xff)));
+    try cbor.writeByte(@as(u8, @intCast((v >> 48) & 0xff)));
+    try cbor.writeByte(@as(u8, @intCast((v >> 40) & 0xff)));
+    try cbor.writeByte(@as(u8, @intCast((v >> 32) & 0xff)));
+    try cbor.writeByte(@as(u8, @intCast((v >> 24) & 0xff)));
+    try cbor.writeByte(@as(u8, @intCast((v >> 16) & 0xff)));
+    try cbor.writeByte(@as(u8, @intCast((v >> 8) & 0xff)));
+    try cbor.writeByte(@as(u8, @intCast(v & 0xff)));
 }
 
 test "deserialize unsigned" {

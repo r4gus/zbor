@@ -81,7 +81,7 @@ pub fn parse(
         },
         .Float, .ComptimeFloat => {
             return switch (item.getType()) {
-                .Float => if (item.float()) |x| @floatCast(T, x) else return ParseError.Malformed,
+                .Float => if (item.float()) |x| @as(T, @floatCast(x)) else return ParseError.Malformed,
                 else => ParseError.UnexpectedItem,
             };
         },
@@ -92,7 +92,7 @@ pub fn parse(
                     if (v > std.math.maxInt(T) or v < std.math.minInt(T))
                         return ParseError.Overflow;
 
-                    return @intCast(T, v);
+                    return @as(T, @intCast(v));
                 },
                 else => return ParseError.UnexpectedItem,
             }
@@ -218,7 +218,7 @@ pub fn parse(
                                         @field(r, field.name) = options.allocator.?;
                                     } else if (field.default_value) |default_ptr| {
                                         if (!field.is_comptime) {
-                                            const default = @ptrCast(*align(1) const field.type, default_ptr).*;
+                                            const default = @as(*align(1) const field.type, @ptrCast(default_ptr)).*;
                                             @field(r, field.name) = default;
                                         }
                                     } else {
@@ -291,7 +291,7 @@ pub fn parse(
                             errdefer allocator.free(r);
                             std.mem.copy(ptrInfo.child, r[0..], v[0..]);
                             if (ptrInfo.sentinel) |some| {
-                                const sentinel_value = @ptrCast(*align(1) const ptrInfo.child, some).*;
+                                const sentinel_value = @as(*align(1) const ptrInfo.child, @ptrCast(some)).*;
                                 r[r.len - 1] = sentinel_value;
                                 return r[0 .. r.len - 1 :sentinel_value];
                             }
@@ -313,7 +313,7 @@ pub fn parse(
                             }
 
                             if (ptrInfo.sentinel) |some| {
-                                const sentinel_value = @ptrCast(*align(1) const ptrInfo.child, some).*;
+                                const sentinel_value = @as(*align(1) const ptrInfo.child, @ptrCast(some)).*;
                                 try arraylist.append(sentinel_value);
                                 const output = try arraylist.toOwnedSlice();
                                 return output[0 .. output.len - 1 :sentinel_value];
@@ -419,7 +419,7 @@ pub fn stringify(
     switch (TInf) {
         .Int, .ComptimeInt => {
             head = if (value < 0) 0x20 else 0;
-            v = @intCast(u64, if (value < 0) -(value + 1) else value);
+            v = @as(u64, @intCast(if (value < 0) -(value + 1) else value));
             try encode(out, head, v);
             return;
         },
@@ -428,16 +428,16 @@ pub fn stringify(
             switch (TInf) {
                 .Float => |float| {
                     switch (float.bits) {
-                        16 => try encode_2(out, head, @intCast(u64, @bitCast(u16, value))),
-                        32 => try encode_4(out, head, @intCast(u64, @bitCast(u32, value))),
-                        64 => try encode_8(out, head, @intCast(u64, @bitCast(u64, value))),
+                        16 => try encode_2(out, head, @as(u64, @intCast(@as(u16, @bitCast(value))))),
+                        32 => try encode_4(out, head, @as(u64, @intCast(@as(u32, @bitCast(value))))),
+                        64 => try encode_8(out, head, @as(u64, @intCast(@as(u64, @bitCast(value))))),
                         else => @compileError("Float must be 16, 32 or 64 Bits wide"),
                     }
                     return;
                 },
                 .ComptimeFloat => {
                     // Comptime floats are always encoded as single precision floats
-                    try encode_4(out, head, @intCast(u64, @bitCast(u32, @floatCast(f32, value))));
+                    try encode_4(out, head, @as(u64, @intCast(@as(u32, @bitCast(@as(f32, @floatCast(value)))))));
                     return;
                 },
                 else => unreachable,
@@ -460,7 +460,7 @@ pub fn stringify(
             } else {
                 head = 0x80;
             }
-            v = @intCast(u64, value.len);
+            v = @as(u64, @intCast(value.len));
             try encode(out, head, v);
 
             if (arrayInfo.child == u8) {
@@ -576,7 +576,7 @@ pub fn stringify(
                     head = 0x80;
                 }
 
-                v = @intCast(u64, value.len);
+                v = @as(u64, @intCast(value.len));
                 try encode(out, head, v);
 
                 if (ptr_info.child == u8) {
@@ -598,19 +598,19 @@ pub fn stringify(
             head = if (options.enum_as_text) 0x60 else 0;
 
             if (options.enum_as_text) {
-                const tmp = @enumToInt(value);
+                const tmp = @intFromEnum(value);
                 inline for (enumInfo.fields) |field| {
                     if (field.value == tmp) {
-                        v = @intCast(u64, field.name.len);
+                        v = @as(u64, @intCast(field.name.len));
                         try encode(out, head, v);
                         try out.writeAll(field.name);
                         return;
                     }
                 }
             } else {
-                const tmp = @enumToInt(value);
+                const tmp = @intFromEnum(value);
                 if (tmp < 0) head = 0x20;
-                v = @intCast(u64, if (tmp < 0) -(tmp + 1) else tmp);
+                v = @as(u64, @intCast(if (tmp < 0) -(tmp + 1) else tmp));
                 try encode(out, head, v);
                 return;
             }
@@ -649,7 +649,7 @@ fn s2n(s: []const u8) ?i65 {
     for (s[start..]) |c| {
         if (c > 57 or c < 48) return null;
         x *= 10;
-        x += @intCast(i64, c - 48);
+        x += @as(i64, @intCast(c - 48));
     }
 
     return if (start == 1) -x else x;
@@ -668,11 +668,11 @@ fn cmp(l: []const u8, r: []const u8) bool {
 fn encode(out: anytype, head: u8, v: u64) !void {
     switch (v) {
         0x00...0x17 => {
-            try out.writeByte(head | @intCast(u8, v));
+            try out.writeByte(head | @as(u8, @intCast(v)));
         },
         0x18...0xff => {
             try out.writeByte(head | 24);
-            try out.writeByte(@intCast(u8, v));
+            try out.writeByte(@as(u8, @intCast(v)));
         },
         0x0100...0xffff => try cbor.encode_2(out, head, v),
         0x00010000...0xffffffff => try cbor.encode_4(out, head, v),
@@ -714,15 +714,15 @@ test "parse float" {
 }
 
 test "stringify float" {
-    try testStringify("\xf9\x00\x00", @floatCast(f16, 0.0), .{});
-    try testStringify("\xf9\x80\x00", @floatCast(f16, -0.0), .{});
-    try testStringify("\xf9\x3c\x00", @floatCast(f16, 1.0), .{});
-    try testStringify("\xf9\x3e\x00", @floatCast(f16, 1.5), .{});
-    try testStringify("\xf9\x7b\xff", @floatCast(f16, 65504.0), .{});
-    try testStringify("\xfa\x47\xc3\x50\x00", @floatCast(f32, 100000.0), .{});
-    try testStringify("\xfa\x7f\x7f\xff\xff", @floatCast(f32, 3.4028234663852886e+38), .{});
-    try testStringify("\xfb\x7e\x37\xe4\x3c\x88\x00\x75\x9c", @floatCast(f64, 1.0e+300), .{});
-    try testStringify("\xfb\xc0\x10\x66\x66\x66\x66\x66\x66", @floatCast(f64, -4.1), .{});
+    try testStringify("\xf9\x00\x00", @as(f16, @floatCast(0.0)), .{});
+    try testStringify("\xf9\x80\x00", @as(f16, @floatCast(-0.0)), .{});
+    try testStringify("\xf9\x3c\x00", @as(f16, @floatCast(1.0)), .{});
+    try testStringify("\xf9\x3e\x00", @as(f16, @floatCast(1.5)), .{});
+    try testStringify("\xf9\x7b\xff", @as(f16, @floatCast(65504.0)), .{});
+    try testStringify("\xfa\x47\xc3\x50\x00", @as(f32, @floatCast(100000.0)), .{});
+    try testStringify("\xfa\x7f\x7f\xff\xff", @as(f32, @floatCast(3.4028234663852886e+38)), .{});
+    try testStringify("\xfb\x7e\x37\xe4\x3c\x88\x00\x75\x9c", @as(f64, @floatCast(1.0e+300)), .{});
+    try testStringify("\xfb\xc0\x10\x66\x66\x66\x66\x66\x66", @as(f64, @floatCast(-4.1)), .{});
 
     try testStringify("\xfa\x47\xc3\x50\x00", 100000.0, .{});
 }
@@ -1262,9 +1262,9 @@ test "deserialize EcdsP256Key using alias" {
         .{ .name = "y", .alias = "-3" },
     } });
 
-    try std.testing.expectEqual(@intCast(u8, 2), x.kty);
-    try std.testing.expectEqual(@intCast(i8, -7), x.alg);
-    try std.testing.expectEqual(@intCast(u8, 1), x.crv);
+    try std.testing.expectEqual(@as(u8, @intCast(2)), x.kty);
+    try std.testing.expectEqual(@as(i8, @intCast(-7)), x.alg);
+    try std.testing.expectEqual(@as(u8, @intCast(1)), x.crv);
     try std.testing.expectEqualSlices(u8, "\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e", &x.x);
     try std.testing.expectEqualSlices(u8, "\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", &x.y);
 }
@@ -1301,9 +1301,9 @@ test "deserialize EcdsP256Key using alias 2" {
 
     const x = try parse(EcdsaP256Key, di, .{});
 
-    try std.testing.expectEqual(@intCast(u8, 2), x.kty);
-    try std.testing.expectEqual(@intCast(i8, -7), x.alg);
-    try std.testing.expectEqual(@intCast(u8, 1), x.crv);
+    try std.testing.expectEqual(@as(u8, @intCast(2)), x.kty);
+    try std.testing.expectEqual(@as(i8, @intCast(-7)), x.alg);
+    try std.testing.expectEqual(@as(u8, @intCast(1)), x.crv);
     try std.testing.expectEqualSlices(u8, "\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e", &x.x);
     try std.testing.expectEqualSlices(u8, "\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", &x.y);
 }
