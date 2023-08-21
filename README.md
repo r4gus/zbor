@@ -8,8 +8,13 @@ The Concise Binary Object Representation (CBOR) is a data format whose design
 goals include the possibility of extremely small code size, fairly small 
 message size, and extensibility without the need for version negotiation
 ([RFC8949](https://www.rfc-editor.org/rfc/rfc8949.html#abstract)). It is used
-in different protocols like [CTAP](https://fidoalliance.org/specs/fido-v2.0-ps-20190130/fido-client-to-authenticator-protocol-v2.0-ps-20190130.html#ctap2-canonical-cbor-encoding-form) 
-and [WebAuthn](https://www.w3.org/TR/webauthn-2/#cbor) (FIDO2).
+in different protocols like the Client to Authenticator Protocol 
+[CTAP2](https://fidoalliance.org/specs/fido-v2.0-ps-20190130/fido-client-to-authenticator-protocol-v2.0-ps-20190130.html#ctap2-canonical-cbor-encoding-form) 
+which is a essential part of FIDO2 authenticators/ Passkeys.
+
+I have utilized this library in several projects throughout the previous year, primarily in conjunction with my [FIDO2 library](https://github.com/r4gus/fido2). I'd consider it stable. 
+With the introduction of [Zig version `0.11.0`](https://ziglang.org/download/), this library will remain aligned with the most recent stable release. If you have any problems or want
+to share some ideas feel free to open an issue or write me a mail, but please be kind.
 
 ## Getting started
 
@@ -34,14 +39,31 @@ First add this library as dependency to your `build.zig.zon` file:
 }
 ```
 
+then within you `build.zig` add the following code:
+
+```zig
+const zbor_dep = b.dependency("zbor", .{
+    .target = target,
+    .optimize = optimize,
+});
+const zbor_module = zbor_dep.module("zbor");
+
+// If you have a module that has zbor as a dependency:
+const your_module = b.addModule("your-module", .{
+    .source_file = .{ .path = "src/main.zig" },
+    .dependencies = &.{
+        .{ .name = "zbor", .module = zbor_module },
+    },
+});
+
+// Or as a dependency for a executable:
+exe.addModule("zbor", zbor_module);
+```
+
 #### Hash
 
-To calculate the hash you can use the following [script](https://github.com/r4gus/zig-package-hash/blob/main/hash.sh).
-
-> Note: The Zig core team might alter the hashing algorithm used, i.e., the script might
-> not always calculate the correct result in the future.
-
-We also specify the hash within the release notes starting with version `0.11.3-alpha`.
+The easiest way to get the required hash is to use a wrong one and then copy the correct one
+from the error message.
 
 ### As a module
 
@@ -70,9 +92,6 @@ exe.addModule("zbor", zbor_module);
 
 This library lets you inspect and parse CBOR data without having to allocate
 additional memory.
-
-> Note: This library is not mature and probably still has bugs. If you encounter
-> any errors please open an [issue](https://github.com/r4gus/zbor/issues/new).
 
 ### Inspect CBOR data
 
@@ -164,10 +183,11 @@ You can pass options to the `stringify` function to influence its behaviour.
 This includes:
 
 * `allocator` - The allocator to be used (if necessary)
-* `skip_null_fields` - Struct fields that are null will not be included in the CBOR map
-* `slice_as_text` - Convert an u8 slice into a CBOR text string
-* `enum_as_text`- Use the field name instead of the numerical value to represent a enum
+* `skip_null_fields` - Struct fields that are null will not be included in the CBOR map (default is `true`)
+* `slice_as_text` - Convert an u8 slice into a CBOR text string (default is `false`)
+* `enum_as_text`- Use the field name instead of the numerical value to represent a enum (default is `true`)
 * `field_settings` - Lets you influence how `stringify` treats specific fileds. The settings set using `field_settings` override the default settings.
+* `from_cborStringify` - Flag to break infinity loops (see Overriding stringfy)
 
 #### Deserialization
 
@@ -188,10 +208,11 @@ You can pass options to the `parse` function to influence its behaviour.
 
 This includes:
 
-* `allocator` - The allocator to be used (if necessary)
+* `allocator` - The allocator to be used. This is required if your data type has any pointers, slices, etc.
 * `duplicate_field_behavior` - How to handle duplicate fields (`.UseFirst`, `.Error`)
-* `ignore_unknown_fields` - Ignore unknown fields
+* `ignore_unknown_fields` - Ignore unknown fields (default is `true`)
 * `field_settings` - Lets you specify aliases for struct fields
+* `from_cborParse` - Flag to break infinity loops (see Overriding parse)
 
 #### Builder
 
@@ -296,3 +317,24 @@ const EcdsaP256Key = struct {
 The `ParseOptions` can be used to indirectly pass an `Allocator` to the function.
 
 Please make sure to set `from_cborParse` to `true` when calling recursively into `parse(self)` to prevent infinite loops.
+
+#### Structs with fields of type `std.mem.Allocator`
+
+If you have a struct with a field of type `std.mem.Allocator` you have to override the `stringify` 
+funcation for that struct, e.g.:
+
+```zig
+pub fn cborStringify(self: *const @This(), options: cbor.StringifyOptions, out: anytype) !void {
+    _ = options;
+
+    try cbor.stringify(self, .{
+        .from_cborStringify = true,
+        .field_settings = &.{
+            .{ .name = "allocator", .options = .{ .skip = true } },
+        },
+    }, out);
+}
+```
+
+When using `parse` make sure you pass a allocator to the function. The passed allocator will be assigned
+to the field of type `std.mem.Allocator`.
