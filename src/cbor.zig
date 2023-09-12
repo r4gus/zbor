@@ -369,25 +369,15 @@ pub fn wellFormed(data: []const u8, i: *usize, check_len: bool) bool {
     var val: usize = @as(usize, @intCast(ai));
 
     switch (ai) {
-        24 => {
-            if (i.* + 1 > data.len) return false;
-            val = @as(usize, @intCast(data[i.*]));
-            i.* += 1;
-        },
-        25 => {
-            if (i.* + 2 > data.len) return false;
-            val = @as(usize, @intCast(unsigned_16(data[i.* .. i.* + 2])));
-            i.* += 2;
-        },
-        26 => {
-            if (i.* + 4 > data.len) return false;
-            val = @as(usize, @intCast(unsigned_32(data[i.* .. i.* + 4])));
-            i.* += 4;
-        },
-        27 => {
-            if (i.* + 8 > data.len) return false;
-            val = @as(usize, @intCast(unsigned_64(data[i.* .. i.* + 8])));
-            i.* += 8;
+        24, 25, 26, 27 => {
+            const bytes = @as(usize, @intCast(1)) << @intCast(ai - 24);
+            if (i.* + bytes > data.len) return false;
+            val = 0;
+            for (data[i.* .. i.* + bytes]) |byte| {
+                val <<= 8;
+                val += byte;
+            }
+            i.* += bytes;
         },
         28, 29, 30 => return false,
         31 => return false, // we dont support indefinite length items for now
@@ -418,25 +408,25 @@ pub fn wellFormed(data: []const u8, i: *usize, check_len: bool) bool {
     return true;
 }
 
-pub fn unsigned_16(data: []const u8) u16 {
+pub inline fn unsigned_16(data: []const u8) u16 {
     return @as(u16, @intCast(data[0])) << 8 | @as(u16, @intCast(data[1]));
 }
 
-pub fn unsigned_32(data: []const u8) u32 {
+pub inline fn unsigned_32(data: []const u8) u32 {
     return @as(u32, @intCast(data[0])) << 24 | @as(u32, @intCast(data[1])) << 16 | @as(u32, @intCast(data[2])) << 8 | @as(u32, @intCast(data[3]));
 }
 
-pub fn unsigned_64(data: []const u8) u64 {
+pub inline fn unsigned_64(data: []const u8) u64 {
     return @as(u64, @intCast(data[0])) << 56 | @as(u64, @intCast(data[1])) << 48 | @as(u64, @intCast(data[2])) << 40 | @as(u64, @intCast(data[3])) << 32 | @as(u64, @intCast(data[4])) << 24 | @as(u64, @intCast(data[5])) << 16 | @as(u64, @intCast(data[6])) << 8 | @as(u64, @intCast(data[7]));
 }
 
-pub fn encode_2(cbor: anytype, head: u8, v: u64) !void {
+pub inline fn encode_2(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(head | 25);
     try cbor.writeByte(@as(u8, @intCast((v >> 8) & 0xff)));
     try cbor.writeByte(@as(u8, @intCast(v & 0xff)));
 }
 
-pub fn encode_4(cbor: anytype, head: u8, v: u64) !void {
+pub inline fn encode_4(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(head | 26);
     try cbor.writeByte(@as(u8, @intCast((v >> 24) & 0xff)));
     try cbor.writeByte(@as(u8, @intCast((v >> 16) & 0xff)));
@@ -444,7 +434,7 @@ pub fn encode_4(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(@as(u8, @intCast(v & 0xff)));
 }
 
-pub fn encode_8(cbor: anytype, head: u8, v: u64) !void {
+pub inline fn encode_8(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(head | 27);
     try cbor.writeByte(@as(u8, @intCast((v >> 56) & 0xff)));
     try cbor.writeByte(@as(u8, @intCast((v >> 48) & 0xff)));
