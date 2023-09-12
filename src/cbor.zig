@@ -60,7 +60,7 @@ pub const DataItem = struct {
     /// before returning a DataItem. Returns an error if the data is malformed.
     pub fn new(data: []const u8) !@This() {
         var i: usize = 0;
-        if (!wellFormed(data, &i, false)) return error.Malformed;
+        if (!validate(data, &i, false)) return error.Malformed;
         return .{ .data = data };
     }
 
@@ -360,7 +360,7 @@ fn additionalInfo(data: []const u8, l: ?*usize) ?u64 {
 /// * `check_len` - It's important that `data` doesn't contain any extra bytes at the end [Yes/no]
 ///
 /// Returns true if the given data is well formed, false otherwise.
-pub fn wellFormed(data: []const u8, i: *usize, check_len: bool) bool {
+pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
     if (i.* >= data.len) return false;
     const ib = data[i.*];
     i.* += 1;
@@ -389,16 +389,16 @@ pub fn wellFormed(data: []const u8, i: *usize, check_len: bool) bool {
         4 => {
             var j: usize = 0;
             while (j < val) : (j += 1) {
-                if (!wellFormed(data, i, false)) return false;
+                if (!validate(data, i, false)) return false;
             }
         },
         5 => {
             var j: usize = 0;
             while (j < val * 2) : (j += 1) {
-                if (!wellFormed(data, i, false)) return false;
+                if (!validate(data, i, false)) return false;
             }
         },
-        6 => if (!wellFormed(data, i, false)) return false,
+        6 => if (!validate(data, i, false)) return false,
         7 => if (ai == 24 and val < 32) return false,
         else => {},
     }
@@ -674,108 +674,108 @@ test "deserialize tagged" {
     try std.testing.expectEqual(t1.nr, 0);
 }
 
-fn wellFormedTest(data: []const u8, expected: bool) !void {
+fn validateTest(data: []const u8, expected: bool) !void {
     var i: usize = 0;
-    try std.testing.expectEqual(expected, wellFormed(data, &i, true));
+    try std.testing.expectEqual(expected, validate(data, &i, true));
 }
 
 test "well formed" {
-    try wellFormedTest("\x00", true);
-    try wellFormedTest("\x01", true);
-    try wellFormedTest("\x0a", true);
-    try wellFormedTest("\x17", true);
-    try wellFormedTest("\x18\x18", true);
-    try wellFormedTest("\x18\x19", true);
-    try wellFormedTest("\x18\x64", true);
-    try wellFormedTest("\x19\x03\xe8", true);
+    try validateTest("\x00", true);
+    try validateTest("\x01", true);
+    try validateTest("\x0a", true);
+    try validateTest("\x17", true);
+    try validateTest("\x18\x18", true);
+    try validateTest("\x18\x19", true);
+    try validateTest("\x18\x64", true);
+    try validateTest("\x19\x03\xe8", true);
 }
 
 test "malformed" {
     // Empty
-    try wellFormedTest("", false);
+    try validateTest("", false);
 
     // End of input in a head
-    try wellFormedTest("\x18", false);
-    try wellFormedTest("\x19", false);
-    try wellFormedTest("\x1a", false);
-    try wellFormedTest("\x1b", false);
-    try wellFormedTest("\x19\x01", false);
-    try wellFormedTest("\x1a\x01\x02", false);
-    try wellFormedTest("\x1b\x01\x02\x03\x04\x05\x06\x07", false);
-    try wellFormedTest("\x38", false);
-    try wellFormedTest("\x58", false);
-    try wellFormedTest("\x78", false);
-    try wellFormedTest("\x98", false);
-    try wellFormedTest("\x9a\x01\xff\x00", false);
-    try wellFormedTest("\xb8", false);
-    try wellFormedTest("\xd8", false);
-    try wellFormedTest("\xf8", false);
-    try wellFormedTest("\xf9\x00", false);
-    try wellFormedTest("\xfa\x00\x00", false);
-    try wellFormedTest("\xfb\x00\x00\x00", false);
+    try validateTest("\x18", false);
+    try validateTest("\x19", false);
+    try validateTest("\x1a", false);
+    try validateTest("\x1b", false);
+    try validateTest("\x19\x01", false);
+    try validateTest("\x1a\x01\x02", false);
+    try validateTest("\x1b\x01\x02\x03\x04\x05\x06\x07", false);
+    try validateTest("\x38", false);
+    try validateTest("\x58", false);
+    try validateTest("\x78", false);
+    try validateTest("\x98", false);
+    try validateTest("\x9a\x01\xff\x00", false);
+    try validateTest("\xb8", false);
+    try validateTest("\xd8", false);
+    try validateTest("\xf8", false);
+    try validateTest("\xf9\x00", false);
+    try validateTest("\xfa\x00\x00", false);
+    try validateTest("\xfb\x00\x00\x00", false);
 
     // Definite-length strings with short data
-    try wellFormedTest("\x41", false);
-    try wellFormedTest("\x61", false);
-    try wellFormedTest("\x5a\xff\xff\xff\xff\x00", false);
-    //try wellFormedTest("\x5b\xff\xff\xff\xff\xff\xff\xff\xff\x01\x02\x03", false); TODO: crashes
-    try wellFormedTest("\x7a\xff\xff\xff\xff\x00", false);
-    try wellFormedTest("\x7b\x7f\xff\xff\xff\xff\xff\xff\xff\x01\x02\x03", false);
+    try validateTest("\x41", false);
+    try validateTest("\x61", false);
+    try validateTest("\x5a\xff\xff\xff\xff\x00", false);
+    //try validateTest("\x5b\xff\xff\xff\xff\xff\xff\xff\xff\x01\x02\x03", false); TODO: crashes
+    try validateTest("\x7a\xff\xff\xff\xff\x00", false);
+    try validateTest("\x7b\x7f\xff\xff\xff\xff\xff\xff\xff\x01\x02\x03", false);
 
     // Definite-length maps and arrays not closed with enough items
-    try wellFormedTest("\x81", false);
-    try wellFormedTest("\x81\x81\x81\x81\x81\x81\x81\x81\x81", false);
-    try wellFormedTest("\x82\x00", false);
-    try wellFormedTest("\xa1", false);
-    try wellFormedTest("\xa2\x01\x02", false);
-    try wellFormedTest("\xa1\x00", false);
-    try wellFormedTest("\xa2\x00\x00\x00", false);
+    try validateTest("\x81", false);
+    try validateTest("\x81\x81\x81\x81\x81\x81\x81\x81\x81", false);
+    try validateTest("\x82\x00", false);
+    try validateTest("\xa1", false);
+    try validateTest("\xa2\x01\x02", false);
+    try validateTest("\xa1\x00", false);
+    try validateTest("\xa2\x00\x00\x00", false);
 
     // Tag number not followed by tag content
-    try wellFormedTest("\xc0", false);
+    try validateTest("\xc0", false);
 
     // Reserved additional information values
-    try wellFormedTest("\x1c", false);
-    try wellFormedTest("\x1d", false);
-    try wellFormedTest("\x1e", false);
-    try wellFormedTest("\x3c", false);
-    try wellFormedTest("\x3d", false);
-    try wellFormedTest("\x3e", false);
-    try wellFormedTest("\x5c", false);
-    try wellFormedTest("\x5d", false);
-    try wellFormedTest("\x5e", false);
-    try wellFormedTest("\x7c", false);
-    try wellFormedTest("\x7d", false);
-    try wellFormedTest("\x7e", false);
-    try wellFormedTest("\x9c", false);
-    try wellFormedTest("\x9d", false);
-    try wellFormedTest("\x9e", false);
-    try wellFormedTest("\xbc", false);
-    try wellFormedTest("\xbd", false);
-    try wellFormedTest("\xbe", false);
-    try wellFormedTest("\xdc", false);
-    try wellFormedTest("\xdd", false);
-    try wellFormedTest("\xde", false);
-    try wellFormedTest("\xfc", false);
-    try wellFormedTest("\xfd", false);
-    try wellFormedTest("\xfe", false);
+    try validateTest("\x1c", false);
+    try validateTest("\x1d", false);
+    try validateTest("\x1e", false);
+    try validateTest("\x3c", false);
+    try validateTest("\x3d", false);
+    try validateTest("\x3e", false);
+    try validateTest("\x5c", false);
+    try validateTest("\x5d", false);
+    try validateTest("\x5e", false);
+    try validateTest("\x7c", false);
+    try validateTest("\x7d", false);
+    try validateTest("\x7e", false);
+    try validateTest("\x9c", false);
+    try validateTest("\x9d", false);
+    try validateTest("\x9e", false);
+    try validateTest("\xbc", false);
+    try validateTest("\xbd", false);
+    try validateTest("\xbe", false);
+    try validateTest("\xdc", false);
+    try validateTest("\xdd", false);
+    try validateTest("\xde", false);
+    try validateTest("\xfc", false);
+    try validateTest("\xfd", false);
+    try validateTest("\xfe", false);
 
     // Reserved two-byte encodings of simple values
-    try wellFormedTest("\xf8\x00", false);
-    try wellFormedTest("\xf8\x01", false);
-    try wellFormedTest("\xf8\x18", false);
-    try wellFormedTest("\xf8\x1f", false);
+    try validateTest("\xf8\x00", false);
+    try validateTest("\xf8\x01", false);
+    try validateTest("\xf8\x18", false);
+    try validateTest("\xf8\x1f", false);
 
     // Break occuring on its own outside of an indifinite-length item
-    try wellFormedTest("\xff", false);
+    try validateTest("\xff", false);
 
     // Break occuring in a definite-length array or map or a tag
-    try wellFormedTest("\x81\xff", false);
-    try wellFormedTest("\x82\x00\xff", false);
-    try wellFormedTest("\xa1\xff", false);
-    try wellFormedTest("\xa1\xff\x00", false);
-    try wellFormedTest("\xa1\x00\xff", false);
-    try wellFormedTest("\xa2\x00\x00\xff", false);
-    try wellFormedTest("\x9f\x81\xff", false);
-    try wellFormedTest("\x9f\x82\x9f\x81\x9f\x9f\xff\xff\xff\xff", false);
+    try validateTest("\x81\xff", false);
+    try validateTest("\x82\x00\xff", false);
+    try validateTest("\xa1\xff", false);
+    try validateTest("\xa1\xff\x00", false);
+    try validateTest("\xa1\x00\xff", false);
+    try validateTest("\xa2\x00\x00\xff", false);
+    try validateTest("\x9f\x81\xff", false);
+    try validateTest("\x9f\x82\x9f\x81\x9f\x9f\xff\xff\xff\xff", false);
 }
