@@ -364,6 +364,7 @@ pub const StringifyOptions = struct {
     skip_null_fields: bool = true,
     /// Convert an u8 slice into a CBOR text string.
     slice_as_text: bool = false,
+    force_byte_string: bool = false,
     /// Use the field name instead of the numerical value to represent a enum.
     enum_as_text: bool = true,
     /// Pass an optional allocator. This might be useful when implementing
@@ -390,6 +391,7 @@ pub const FieldSettings = struct {
         skip_if_null: bool = true,
         /// Convert the field into a CBOR text string (only if u8 slice)
         slice_as_text: bool = false,
+        force_byte_string: bool = false,
         /// Use the field name instead of its numerical value (only if enum)
         enum_as_text: bool = true,
     } = .{},
@@ -537,6 +539,7 @@ pub fn stringify(
                         // We found settings for the given field
                         child_options.skip_null_fields = fs.options.skip_if_null;
                         child_options.slice_as_text = fs.options.slice_as_text;
+                        child_options.force_byte_string = fs.options.force_byte_string;
                         child_options.enum_as_text = fs.options.enum_as_text;
 
                         if (fs.alias) |alias| {
@@ -571,7 +574,11 @@ pub fn stringify(
                 if (ptr_info.child == u8) {
                     const is_sentinel = ptr_info.sentinel != null;
                     const valid_utf8 = std.unicode.utf8ValidateSlice(value);
-                    head = if ((is_sentinel or options.slice_as_text) and valid_utf8) 0x60 else 0x40;
+                    if (options.force_byte_string) {
+                        head = 0x40;
+                    } else {
+                        head = if ((is_sentinel or options.slice_as_text) and valid_utf8) 0x60 else 0x40;
+                    }
                 } else {
                     head = 0x80;
                 }
