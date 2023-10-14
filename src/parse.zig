@@ -391,7 +391,7 @@ pub const FieldSettings = struct {
         skip_if_null: bool = true,
         /// Convert the field into a CBOR text string (only if u8 slice)
         slice_as_text: bool = false,
-        force_byte_string: bool = false,
+        value_force_byte_string: bool = false,
         /// Use the field name instead of its numerical value (only if enum)
         enum_as_text: bool = true,
     } = .{},
@@ -532,6 +532,8 @@ pub fn stringify(
                 child_options.from_cborStringify = false;
                 var name: []const u8 = Field.name[0..];
 
+                var force_byte_string = false;
+
                 for (options.field_settings) |fs| {
                     if (std.mem.eql(u8, Field.name, fs.name)) {
                         // Ignore the given field
@@ -539,7 +541,7 @@ pub fn stringify(
                         // We found settings for the given field
                         child_options.skip_null_fields = fs.options.skip_if_null;
                         child_options.slice_as_text = fs.options.slice_as_text;
-                        child_options.force_byte_string = fs.options.force_byte_string;
+                        force_byte_string = fs.options.value_force_byte_string;
                         child_options.enum_as_text = fs.options.enum_as_text;
 
                         if (fs.alias) |alias| {
@@ -555,6 +557,7 @@ pub fn stringify(
                         try stringify(name, child_options, out); // key
                     }
 
+                    child_options.force_byte_string = force_byte_string;
                     try stringify(@field(value, Field.name), child_options, out); // value
                 }
             }
