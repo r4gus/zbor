@@ -149,7 +149,7 @@ pub const Builder = struct {
     pub fn pushCbor(self: *@This(), input: []const u8) !void {
         // First check that the given cbor is well formed
         var i: usize = 0;
-        if (!cbor.wellFormed(input, &i, true)) return error.MalformedCbor;
+        if (!cbor.validate(input, &i, true)) return error.MalformedCbor;
 
         // Append the cbor data
         self.top().raw.appendSlice(input) catch |e| {
