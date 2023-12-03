@@ -173,21 +173,57 @@ try stringify(i, .{}, str.writer());
 > Note: Compile time floats are always encoded as single precision floats (f32). Please use `@floatCast`
 > before passing a float to `stringify()`.
 
-`u8`slices with sentinel terminator (e.g. `const x: [:0] = "FIDO_2_0"`) are treated as text strings and
-`u8` slices without sentinel terminator as byte strings.
-
 ##### Stringify Options
 
-You can pass options to the `stringify` function to influence its behaviour.
+You can pass options to the `stringify` function to influence its behavior. Without passing any
+options, `stringify` will behave as follows:
 
-This includes:
+* Enums will be serialized to their textual representation
+* `u8` slices will be serialized to byte strings
+* For structs and unions:
+    * `null` fields are skipped by default
+    * fields of type `std.mem.Allocator` are always skipped.
+    * the names of fields are serialized to text strings
 
-* `allocator` - The allocator to be used (if necessary)
-* `skip_null_fields` - Struct fields that are null will not be included in the CBOR map (default is `true`)
-* `slice_as_text` - Convert an u8 slice into a CBOR text string (default is `false`)
-* `enum_as_text`- Use the field name instead of the numerical value to represent a enum (default is `true`)
-* `field_settings` - Lets you influence how `stringify` treats specific fileds. The settings set using `field_settings` override the default settings.
-* `from_cborStringify` - Flag to break infinity loops (see Overriding stringfy)
+You can modify that behavior by changing the default options, e.g.:
+
+```zig
+const EcdsaP256Key = struct {
+    /// kty:
+    kty: u8 = 2,
+    /// alg:
+    alg: i8 = -7,
+    /// crv:
+    crv: u8 = 1,
+    /// x-coordinate
+    x: [32]u8,
+    /// y-coordinate
+    y: [32]u8,
+
+    pub fn new(k: EcdsaP256.PublicKey) @This() {                                                                                                                                         
+        const xy = k.toUncompressedSec1();
+        return .{
+            .x = xy[1..33].*,
+            .y = xy[33..65].*,
+        };
+    }
+};
+
+//...
+
+try stringify(k, .{ .field_settings = &.{
+    .{ .name = "kty", .field_options = .{ .alias = "1", .serialization_type = .Integer } },
+    .{ .name = "alg", .field_options = .{ .alias = "3", .serialization_type = .Integer } },
+    .{ .name = "crv", .field_options = .{ .alias = "-1", .serialization_type = .Integer } },
+    .{ .name = "x", .field_options = .{ .alias = "-2", .serialization_type = .Integer } },
+    .{ .name = "y", .field_options = .{ .alias = "-3", .serialization_type = .Integer } },
+} }, str.writer());
+```
+
+Here we define a alias for every field of the struct and tell `serialize` that it should treat
+those aliases as integers instead of text strings.
+
+__See `Options` and `FieldSettings` in `src/parse.zig` for all available options!__
 
 #### Deserialization
 

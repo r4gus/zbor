@@ -38,30 +38,6 @@ pub const StringifyError = error{
     InvalidPairCount,
 };
 
-/// Options for deserializing CBOR data
-pub const ParseOptions = struct {
-    /// An allocator required if `parse` needs to allocate memory
-    /// for slices and pointers
-    allocator: ?Allocator = null,
-
-    /// How to behave if a CBOR map has two or more keys with
-    /// the same value
-    duplicate_field_behavior: enum {
-        /// Use the first one
-        UseFirst,
-        /// Don't allow duplicates
-        Error,
-    } = .Error,
-
-    /// Ignore CBOR map keys that were not expected
-    ignore_unknown_fields: bool = true,
-
-    /// Settings for specific fields that override the default options.
-    /// For `parse`, only the alias option is relevant.
-    field_settings: []const FieldSettings = &.{},
-    from_cborParse: bool = false,
-};
-
 /// Deserialize a CBOR data item into a Zig data structure
 pub fn parse(
     /// The type to deserialize to
@@ -69,7 +45,7 @@ pub fn parse(
     /// The data item to deserialize
     item: DataItem,
     /// Options to effect the behaviour of this function
-    options: ParseOptions,
+    options: Options,
 ) ParseError!T {
     switch (@typeInfo(T)) {
         .Bool => {
@@ -124,8 +100,10 @@ pub fn parse(
         .Struct => |structInfo| {
             // Custom parse function overrides default behaviour
             const has_parse = comptime std.meta.trait.hasFn("cborParse")(T);
-            if (has_parse and !options.from_cborParse) {
-                return T.cborParse(item, options);
+            if (has_parse and !options.from_callback) {
+                var o = options;
+                o.from_callback = true;
+                return T.cborParse(item, o);
             }
 
             switch (item.getType()) {
@@ -150,7 +128,7 @@ pub fn parse(
                             // Is there an alias specified?
                             for (options.field_settings) |fs| {
                                 if (std.mem.eql(u8, field.name, fs.name)) {
-                                    if (fs.alias) |alias| {
+                                    if (fs.field_options.alias) |alias| {
                                         name = alias;
                                     }
                                 }
@@ -179,7 +157,7 @@ pub fn parse(
                                 }
 
                                 var child_options = options;
-                                child_options.from_cborParse = false;
+                                child_options.from_callback = false;
                                 @field(r, field.name) = try parse(
                                     field.type,
                                     kv.value,
@@ -330,8 +308,10 @@ pub fn parse(
         .Union => |unionInfo| {
             // Custom parse function overrides default behaviour
             const has_parse = comptime std.meta.trait.hasFn("cborParse")(T);
-            if (has_parse and !options.from_cborParse) {
-                return T.cborParse(item, options);
+            if (has_parse and !options.from_callback) {
+                var o = options;
+                o.from_callback = true;
+                return T.cborParse(item, o);
             }
 
             if (unionInfo.tag_type) |_| {
@@ -359,13 +339,11 @@ pub fn parse(
 }
 
 /// Options to influence the behavior of the stringify function
-pub const StringifyOptions = struct {
-    /// Struct fields that are null will not be included in the CBOR map.
-    skip_null_fields: bool = true,
-    /// Convert an u8 slice into a CBOR text string.
-    slice_as_text: bool = false,
-    /// Use the field name instead of the numerical value to represent a enum.
-    enum_as_text: bool = true,
+pub const Options = struct {
+    /// What a enum value should be serialized to
+    enum_serialization_type: SerializationType = .TextString,
+    /// What a slice value should be serialized to
+    slice_serialization_type: SerializationType = .ByteString,
     /// Pass an optional allocator. This might be useful when implementing
     /// a own cborStringify method for a struct or union.
     allocator: ?std.mem.Allocator = null,
@@ -373,27 +351,52 @@ pub const StringifyOptions = struct {
     field_settings: []const FieldSettings = &.{},
     /// Stringfiy called from cborStringify. This falg is used to prevent infinite recursion:
     /// stringify -> cborStringify -> stringify -> cborStringify -> stringify ...
-    from_cborStringify: bool = false,
+    from_callback: bool = false,
+    /// How to behave if a CBOR map has two or more keys with
+    /// the same value
+    duplicate_field_behavior: enum {
+        /// Use the first one
+        UseFirst,
+        /// Don't allow duplicates
+        Error,
+    } = .Error,
+    /// Ignore CBOR map keys that were not expected
+    ignore_unknown_fields: bool = true,
+};
+
+pub const SerializationType = enum {
+    ByteString,
+    TextString,
+    Integer,
+};
+
+pub const SkipBehavior = enum {
+    /// Don't skip (default)
+    None,
+    /// Skip only if the field is null
+    SkipIfNull,
+    /// Always skip (e.g. fields of type std.mem.Allocator)
+    Skip,
 };
 
 /// Options for a specific field specified by `name`
 pub const FieldSettings = struct {
     /// The name of the field
     name: []const u8,
-    /// The alternative name of the field
-    alias: ?[]const u8 = null,
-    /// Options specific for the given field
-    options: struct {
-        /// Don't serialize the given field
-        skip: bool = false,
-        /// Don't serialize the given filed if it's null
-        skip_if_null: bool = true,
-        /// Convert the field into a CBOR text string (only if u8 slice)
-        slice_as_text: bool = false,
-        /// Use the field name instead of its numerical value (only if enum)
-        enum_as_text: bool = true,
-        key_as_string: bool = true,
+    /// Options for the field name
+    field_options: struct {
+        /// The alternative name of the field
+        alias: ?[]const u8 = null,
+        /// What the field name should be serialized to
+        ///
+        /// Please note that ByteString and TextString will always succeed
+        /// while Integer might fail if the string can't be interpreted as
+        /// a number.
+        serialization_type: SerializationType = .TextString,
+        skip: SkipBehavior = .SkipIfNull,
     } = .{},
+    /// Options specific for the given field
+    value_options: Options = .{},
 };
 
 /// Serialize the given value to CBOR
@@ -401,7 +404,7 @@ pub fn stringify(
     /// The value to serialize
     value: anytype,
     /// Options to influence the functions behaviour
-    options: StringifyOptions,
+    options: Options,
     /// A writer
     out: anytype,
 ) StringifyError!void {
@@ -456,8 +459,13 @@ pub fn stringify(
         },
         .Array => |arrayInfo| {
             if (arrayInfo.child == u8) {
-                const valid_utf8 = std.unicode.utf8ValidateSlice(value[0..]);
-                head = if (options.slice_as_text and valid_utf8) 0x60 else 0x40;
+                head = switch (options.slice_serialization_type) {
+                    .TextString => blk: {
+                        break :blk if (std.unicode.utf8ValidateSlice(value[0..])) 0x60 else 0x40;
+                    },
+                    // Otherwise it can only be ByteString or Integer (and Integer doesn't make sense in this context).
+                    else => 0x40,
+                };
             } else {
                 head = 0x80;
             }
@@ -476,8 +484,12 @@ pub fn stringify(
         .Struct => |S| {
             // Custom stringify function overrides default behaviour
             const has_stringify = comptime std.meta.trait.hasFn("cborStringify")(T);
-            if (has_stringify and !options.from_cborStringify) {
-                return value.cborStringify(options, out);
+            if (has_stringify and !options.from_callback) {
+                // its probably better its set here otherwise people might forget
+                // to set it which leads to infinite loops.
+                var o = options;
+                o.from_callback = true;
+                return value.cborStringify(o, out);
             }
 
             head = 0xa0; // Struct becomes a Map.
@@ -487,19 +499,23 @@ pub fn stringify(
                 // don't include void fields
                 if (Field.type == void) continue;
 
-                // dont't include (optional) null fields
                 var emit_field = true;
-                if (@typeInfo(Field.type) == .Optional) {
-                    if (options.skip_null_fields) {
-                        if (@field(value, Field.name) == null) {
-                            emit_field = false;
-                        }
+
+                var field_setting: ?FieldSettings = null;
+                for (options.field_settings) |fs| {
+                    if (std.mem.eql(u8, Field.name, fs.name)) {
+                        field_setting = fs;
                     }
                 }
 
-                for (options.field_settings) |fs| {
-                    if (std.mem.eql(u8, Field.name, fs.name)) {
-                        if (fs.options.skip) emit_field = false;
+                if (field_setting != null and field_setting.?.field_options.skip == .Skip) {
+                    emit_field = false;
+                }
+
+                // dont't include (optional) null fields
+                if (emit_field and @typeInfo(Field.type) == .Optional) {
+                    if (((field_setting != null and field_setting.?.field_options.skip == .SkipIfNull) or field_setting == null) and @field(value, Field.name) == null) {
+                        emit_field = false;
                     }
                 }
 
@@ -515,46 +531,50 @@ pub fn stringify(
                 // don't include void fields
                 if (Field.type == void) continue;
 
-                // dont't include (optional) null fields
                 var emit_field = true;
-                if (@typeInfo(Field.type) == .Optional) {
-                    if (options.skip_null_fields) {
-                        if (@field(value, Field.name) == null) {
-                            emit_field = false;
-                        }
-                    }
-                }
-
-                // the flag shouldn't have an effect on the children.
-                // It's only purpose is to prevent an infinite loop on the same level.
                 var child_options = options;
-                child_options.from_cborStringify = false;
-                var key_options = options;
-                key_options.slice_as_text = true;
                 var name: []const u8 = Field.name[0..];
+                var name_st: SerializationType = .TextString;
 
+                var field_setting: ?FieldSettings = null;
                 for (options.field_settings) |fs| {
                     if (std.mem.eql(u8, Field.name, fs.name)) {
-                        // Ignore the given field
-                        if (fs.options.skip) emit_field = false;
-                        // We found settings for the given field
-                        child_options.skip_null_fields = fs.options.skip_if_null;
-                        child_options.slice_as_text = fs.options.slice_as_text;
-                        child_options.enum_as_text = fs.options.enum_as_text;
-
-                        key_options.slice_as_text = fs.options.key_as_string;
-
-                        if (fs.alias) |alias| {
-                            name = alias;
-                        }
+                        field_setting = fs;
+                        break;
                     }
                 }
+
+                if (field_setting != null and field_setting.?.field_options.skip == .Skip) {
+                    emit_field = false;
+                }
+
+                // dont't include (optional) null fields
+                if (emit_field and @typeInfo(Field.type) == .Optional) {
+                    if (((field_setting != null and field_setting.?.field_options.skip == .SkipIfNull) or field_setting == null) and @field(value, Field.name) == null) {
+                        emit_field = false;
+                    }
+                }
+
+                if (field_setting != null) {
+                    child_options = field_setting.?.value_options;
+
+                    if (field_setting.?.field_options.alias) |alias| {
+                        name = alias;
+                    }
+
+                    name_st = field_setting.?.field_options.serialization_type;
+                }
+
                 if (emit_field) {
-                    if (s2n(name)) |nr| { // int key
-                        try stringify(nr, key_options, out); // key
+                    child_options.from_callback = false;
+
+                    const nr = s2n(name);
+                    if (name_st == .Integer and nr != null) { // int key
+                        try stringify(nr.?, Options{}, out); // key
                     } else { // str key
-                        child_options.slice_as_text = true;
-                        try stringify(name, key_options, out); // key
+                        try stringify(name, Options{
+                            .slice_serialization_type = name_st,
+                        }, out); // key
                     }
 
                     try stringify(@field(value, Field.name), child_options, out); // value
@@ -574,9 +594,13 @@ pub fn stringify(
         .Pointer => |ptr_info| switch (ptr_info.size) {
             .Slice => {
                 if (ptr_info.child == u8) {
-                    const is_sentinel = ptr_info.sentinel != null;
-                    const valid_utf8 = std.unicode.utf8ValidateSlice(value);
-                    head = if ((is_sentinel or options.slice_as_text) and valid_utf8) 0x60 else 0x40;
+                    head = switch (options.slice_serialization_type) {
+                        .TextString => blk: {
+                            break :blk if (std.unicode.utf8ValidateSlice(value[0..])) 0x60 else 0x40;
+                        },
+                        // Otherwise it can only be ByteString or Integer (and Integer doesn't make sense in this context).
+                        else => 0x40,
+                    };
                 } else {
                     head = 0x80;
                 }
@@ -600,21 +624,19 @@ pub fn stringify(
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
         },
         .Enum => |enumInfo| {
-            head = if (options.enum_as_text) 0x60 else 0;
-
-            if (options.enum_as_text) {
+            if (options.enum_serialization_type == .TextString) {
                 const tmp = @intFromEnum(value);
                 inline for (enumInfo.fields) |field| {
                     if (field.value == tmp) {
                         v = @as(u64, @intCast(field.name.len));
-                        try encode(out, head, v);
+                        try encode(out, 0x60, v);
                         try out.writeAll(field.name);
                         return;
                     }
                 }
             } else {
                 const tmp = @intFromEnum(value);
-                if (tmp < 0) head = 0x20;
+                head = if (tmp < 0) 0x20 else 0;
                 v = @as(u64, @intCast(if (tmp < 0) -(tmp + 1) else tmp));
                 try encode(out, head, v);
                 return;
@@ -622,7 +644,9 @@ pub fn stringify(
         },
         .Union => {
             const has_stringify = comptime std.meta.trait.hasFn("cborStringify")(T);
-            if (has_stringify and !options.from_cborStringify) {
+            if (has_stringify and !options.from_callback) {
+                var o = options;
+                o.from_callback = true;
                 return value.cborStringify(options, out);
             }
 
@@ -685,7 +709,7 @@ fn encode(out: anytype, head: u8, v: u64) !void {
     }
 }
 
-fn testStringify(e: []const u8, v: anytype, o: StringifyOptions) !void {
+fn testStringify(e: []const u8, v: anytype, o: Options) !void {
     const allocator = std.testing.allocator;
     var str = std.ArrayList(u8).init(allocator);
     defer str.deinit();
@@ -920,50 +944,50 @@ test "stringify pointer" {
 }
 
 test "stringify slice" {
-    const s1: [:0]const u8 = "a";
-    try testStringify("\x61\x61", s1, .{});
+    const s1: []const u8 = "a";
+    try testStringify("\x61\x61", s1, .{ .slice_serialization_type = .TextString });
 
-    const s2: [:0]const u8 = "IETF";
-    try testStringify("\x64\x49\x45\x54\x46", s2, .{});
+    const s2: []const u8 = "IETF";
+    try testStringify("\x64\x49\x45\x54\x46", s2, .{ .slice_serialization_type = .TextString });
 
-    const s3: [:0]const u8 = "\"\\";
-    try testStringify("\x62\x22\x5c", s3, .{});
+    const s3: []const u8 = "\"\\";
+    try testStringify("\x62\x22\x5c", s3, .{ .slice_serialization_type = .TextString });
 
     const b1: []const u8 = &.{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 };
-    try testStringify(&.{ 0x58, 0x19, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 }, b1, .{ .slice_as_text = false });
+    try testStringify(&.{ 0x58, 0x19, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 }, b1, .{ .slice_serialization_type = .ByteString });
 
     const b2: []const u8 = "\x10\x11\x12\x13\x14";
-    try testStringify("\x45\x10\x11\x12\x13\x14", b2, .{ .slice_as_text = false });
+    try testStringify("\x45\x10\x11\x12\x13\x14", b2, .{ .slice_serialization_type = .ByteString });
 }
 
 test "stringify struct: 1" {
     const Info = struct {
-        versions: []const [:0]const u8,
+        versions: []const []const u8,
     };
 
     const i = Info{
         .versions = &.{"FIDO_2_0"},
     };
 
-    try testStringify("\xa1\x68\x76\x65\x72\x73\x69\x6f\x6e\x73\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30", i, .{});
+    try testStringify("\xa1\x68\x76\x65\x72\x73\x69\x6f\x6e\x73\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30", i, .{ .field_settings = &.{.{ .name = "versions", .value_options = .{ .slice_serialization_type = .TextString } }} });
 }
 
 test "stringify struct: 2" {
     const Info = struct {
-        @"1": []const [:0]const u8,
+        @"1": []const []const u8,
     };
 
     const i = Info{
         .@"1" = &.{"FIDO_2_0"},
     };
 
-    try testStringify("\xa1\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30", i, .{});
+    try testStringify("\xa1\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30", i, .{ .field_settings = &.{.{ .name = "1", .field_options = .{ .serialization_type = .Integer }, .value_options = .{ .slice_serialization_type = .TextString } }} });
 }
 
 test "stringify struct: 3" {
     const Info = struct {
-        @"1": []const [:0]const u8,
-        @"2": []const [:0]const u8,
+        @"1": []const []const u8,
+        @"2": []const []const u8,
         @"3": []const u8,
     };
 
@@ -973,13 +997,17 @@ test "stringify struct: 3" {
         .@"3" = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f",
     };
 
-    try testStringify("\xa3\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f", i, .{});
+    try testStringify("\xa3\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f", i, .{ .field_settings = &.{
+        .{ .name = "1", .field_options = .{ .serialization_type = .Integer }, .value_options = .{ .slice_serialization_type = .TextString } },
+        .{ .name = "2", .field_options = .{ .serialization_type = .Integer }, .value_options = .{ .slice_serialization_type = .TextString } },
+        .{ .name = "3", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+    } });
 }
 
 test "stringify struct: 4" {
     const Info = struct {
-        @"1": []const [:0]const u8,
-        @"2": []const [:0]const u8,
+        @"1": []const []const u8,
+        @"2": []const []const u8,
         @"3": []const u8,
         @"4": struct {
             plat: bool,
@@ -1007,7 +1035,14 @@ test "stringify struct: 4" {
         .@"6" = null,
     };
 
-    try testStringify("\xa4\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x04\xa4\x64\x70\x6c\x61\x74\xf5\x62\x72\x6b\xf5\x62\x75\x70\xf5\x62\x75\x76\xf4", i, .{});
+    try testStringify("\xa4\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x04\xa4\x64\x70\x6c\x61\x74\xf5\x62\x72\x6b\xf5\x62\x75\x70\xf5\x62\x75\x76\xf4", i, .{ .field_settings = &.{
+        .{ .name = "1", .field_options = .{ .serialization_type = .Integer }, .value_options = .{ .slice_serialization_type = .TextString } },
+        .{ .name = "2", .field_options = .{ .serialization_type = .Integer }, .value_options = .{ .slice_serialization_type = .TextString } },
+        .{ .name = "3", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+        .{ .name = "4", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+        .{ .name = "5", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+        .{ .name = "6", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+    } });
 }
 
 test "stringify struct: 5" {
@@ -1026,7 +1061,7 @@ test "stringify struct: 5" {
         .y = Level.low,
     };
 
-    try testStringify("\xA2\x61\x78\x64\x68\x69\x67\x68\x61\x79\x0B", x, .{ .field_settings = &.{.{ .name = "y", .options = .{ .enum_as_text = false } }} });
+    try testStringify("\xA2\x61\x78\x64\x68\x69\x67\x68\x61\x79\x0B", x, .{ .field_settings = &.{.{ .name = "y", .value_options = .{ .enum_serialization_type = .Integer } }} });
 }
 
 test "parse struct: 5" {
@@ -1091,8 +1126,8 @@ test "stringify enum: 1" {
     const high = Level.high;
     const low = Level.low;
 
-    try testStringify("\x07", high, .{ .enum_as_text = false });
-    try testStringify("\x0b", low, .{ .enum_as_text = false });
+    try testStringify("\x07", high, .{ .enum_serialization_type = .Integer });
+    try testStringify("\x0b", low, .{ .enum_serialization_type = .Integer });
 }
 
 test "stringify enum: 2" {
@@ -1115,8 +1150,8 @@ test "stringify enum: 4" {
         low = -11,
     };
 
-    try testStringify("\x26", Level.high, .{ .enum_as_text = false });
-    try testStringify("\x2a", Level.low, .{ .enum_as_text = false });
+    try testStringify("\x26", Level.high, .{ .enum_serialization_type = .Integer });
+    try testStringify("\x2a", Level.low, .{ .enum_serialization_type = .Integer });
 }
 
 test "parse enum: 1" {
@@ -1197,7 +1232,15 @@ test "serialize EcdsaP256Key" {
     var str = std.ArrayList(u8).init(allocator);
     defer str.deinit();
 
-    try stringify(k, .{}, str.writer());
+    try stringify(k, .{
+        .field_settings = &.{
+            .{ .name = "1", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+            .{ .name = "3", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+            .{ .name = "-1", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+            .{ .name = "-2", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+            .{ .name = "-3", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+        },
+    }, str.writer());
 
     try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.items);
 }
@@ -1233,11 +1276,11 @@ test "serialize EcdsP256Key using alias" {
     defer str.deinit();
 
     try stringify(k, .{ .field_settings = &.{
-        .{ .name = "kty", .alias = "1" },
-        .{ .name = "alg", .alias = "3" },
-        .{ .name = "crv", .alias = "-1" },
-        .{ .name = "x", .alias = "-2" },
-        .{ .name = "y", .alias = "-3" },
+        .{ .name = "kty", .field_options = .{ .alias = "1", .serialization_type = .Integer } },
+        .{ .name = "alg", .field_options = .{ .alias = "3", .serialization_type = .Integer } },
+        .{ .name = "crv", .field_options = .{ .alias = "-1", .serialization_type = .Integer } },
+        .{ .name = "x", .field_options = .{ .alias = "-2", .serialization_type = .Integer } },
+        .{ .name = "y", .field_options = .{ .alias = "-3", .serialization_type = .Integer } },
     } }, str.writer());
 
     try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.items);
@@ -1260,11 +1303,11 @@ test "deserialize EcdsP256Key using alias" {
     const di = try DataItem.new("\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52");
 
     const x = try parse(EcdsaP256Key, di, .{ .field_settings = &.{
-        .{ .name = "kty", .alias = "1" },
-        .{ .name = "alg", .alias = "3" },
-        .{ .name = "crv", .alias = "-1" },
-        .{ .name = "x", .alias = "-2" },
-        .{ .name = "y", .alias = "-3" },
+        .{ .name = "kty", .field_options = .{ .alias = "1", .serialization_type = .Integer } },
+        .{ .name = "alg", .field_options = .{ .alias = "3", .serialization_type = .Integer } },
+        .{ .name = "crv", .field_options = .{ .alias = "-1", .serialization_type = .Integer } },
+        .{ .name = "x", .field_options = .{ .alias = "-2", .serialization_type = .Integer } },
+        .{ .name = "y", .field_options = .{ .alias = "-3", .serialization_type = .Integer } },
     } });
 
     try std.testing.expectEqual(@as(u8, @intCast(2)), x.kty);
@@ -1287,16 +1330,16 @@ test "deserialize EcdsP256Key using alias 2" {
         /// y-coordinate
         y: [32]u8,
 
-        pub fn cborParse(item: DataItem, options: ParseOptions) !@This() {
+        pub fn cborParse(item: DataItem, options: Options) !@This() {
             _ = options;
             return try parse(@This(), item, .{
-                .from_cborParse = true, // prevent infinite loops
+                .from_callback = true, // prevent infinite loops
                 .field_settings = &.{
-                    .{ .name = "kty", .alias = "1" },
-                    .{ .name = "alg", .alias = "3" },
-                    .{ .name = "crv", .alias = "-1" },
-                    .{ .name = "x", .alias = "-2" },
-                    .{ .name = "y", .alias = "-3" },
+                    .{ .name = "kty", .field_options = .{ .alias = "1", .serialization_type = .Integer } },
+                    .{ .name = "alg", .field_options = .{ .alias = "3", .serialization_type = .Integer } },
+                    .{ .name = "crv", .field_options = .{ .alias = "-1", .serialization_type = .Integer } },
+                    .{ .name = "x", .field_options = .{ .alias = "-2", .serialization_type = .Integer } },
+                    .{ .name = "y", .field_options = .{ .alias = "-3", .serialization_type = .Integer } },
                 },
             });
         }
@@ -1334,13 +1377,18 @@ test "overload struct 1" {
             b: u64 = 0x1122334455667788,
         },
 
-        pub fn cborStringify(self: *const @This(), options: StringifyOptions, out: anytype) !void {
+        pub fn cborStringify(self: *const @This(), options: Options, out: anytype) !void {
+            // We could also pass the given options to stringify if we expect
+            // specific settings.
+            _ = options;
 
             // First stringify the 'y' struct
             const allocator = std.testing.allocator;
             var o = std.ArrayList(u8).init(allocator);
             defer o.deinit();
-            try stringify(self.y, options, o.writer());
+            try stringify(self.y, .{ .field_settings = &.{
+                .{ .name = "a", .value_options = .{ .slice_serialization_type = .TextString } },
+            } }, o.writer());
 
             // Then use the Builder to alter the CBOR output
             var b = try build.Builder.withType(allocator, .Map);
@@ -1407,12 +1455,12 @@ test "parse get assertion request 1" {
         .{
             .allocator = allocator,
             .field_settings = &.{
-                .{ .name = "rpId", .alias = "1", .options = .{} },
-                .{ .name = "clientDataHash", .alias = "2", .options = .{} },
-                .{ .name = "allowList", .alias = "3", .options = .{} },
-                .{ .name = "options", .alias = "5", .options = .{} },
-                .{ .name = "pinUvAuthParam", .alias = "6", .options = .{} },
-                .{ .name = "pinUvAuthProtocol", .alias = "7", .options = .{} },
+                .{ .name = "rpId", .field_options = .{ .alias = "1", .serialization_type = .Integer } },
+                .{ .name = "clientDataHash", .field_options = .{ .alias = "2", .serialization_type = .Integer } },
+                .{ .name = "allowList", .field_options = .{ .alias = "3", .serialization_type = .Integer } },
+                .{ .name = "options", .field_options = .{ .alias = "5", .serialization_type = .Integer } },
+                .{ .name = "pinUvAuthParam", .field_options = .{ .alias = "6", .serialization_type = .Integer } },
+                .{ .name = "pinUvAuthProtocol", .field_options = .{ .alias = "7", .serialization_type = .Integer } },
             },
         },
     );
@@ -1440,7 +1488,8 @@ test "skip serializing field #1" {
     defer str.deinit();
 
     try stringify(s, .{ .field_settings = &.{
-        .{ .name = "b", .options = .{ .skip = true } },
+        .{ .name = "b", .field_options = .{ .skip = .Skip } },
+        .{ .name = "c", .value_options = .{ .slice_serialization_type = .TextString } },
     } }, str.writer());
 
     try std.testing.expectEqualSlices(u8, "\xa2\x61\x61\x18\x20\x61\x63\x65\x61\x62\x63\x64\x65", str.items);
@@ -1465,7 +1514,8 @@ test "skip serializing field #2" {
     defer str.deinit();
 
     try stringify(s, .{ .field_settings = &.{
-        .{ .name = "b", .options = .{ .skip = true } },
+        .{ .name = "a", .value_options = .{ .slice_serialization_type = .TextString } },
+        .{ .name = "b", .field_options = .{ .skip = .Skip } },
     } }, str.writer());
 
     try std.testing.expectEqualSlices(u8, "\xa1\x61\x61\x65\x61\x62\x63\x64\x65", str.items);

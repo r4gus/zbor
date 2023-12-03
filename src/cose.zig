@@ -11,8 +11,7 @@ const ArrayIterator = cbor.ArrayIterator;
 const parse_ = @import("parse.zig");
 const stringify = parse_.stringify;
 const parse = parse_.parse;
-const StringifyOptions = parse_.StringifyOptions;
-const ParseOptions = parse_.ParseOptions;
+const Options = parse_.Options;
 
 const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
 
@@ -353,32 +352,89 @@ pub const Key = union(KeyTag) {
         }
     }
 
-    pub fn cborStringify(self: *const @This(), options: StringifyOptions, out: anytype) !void {
+    pub fn cborStringify(self: *const @This(), options: Options, out: anytype) !void {
         _ = options;
         return stringify(self, .{
-            .from_cborStringify = true,
+            .from_callback = true,
             .field_settings = &.{
-                .{ .name = "kty", .alias = "1", .options = .{ .enum_as_text = false } },
-                .{ .name = "alg", .alias = "3", .options = .{ .enum_as_text = false } },
-                .{ .name = "crv", .alias = "-1", .options = .{ .enum_as_text = false } },
-                .{ .name = "x", .alias = "-2", .options = .{} },
-                .{ .name = "y", .alias = "-3", .options = .{} },
-                .{ .name = "d", .alias = "-4", .options = .{} },
+                .{
+                    .name = "kty",
+                    .field_options = .{
+                        .alias = "1",
+                        .serialization_type = .Integer,
+                    },
+                    .value_options = .{ .enum_serialization_type = .Integer },
+                },
+                .{
+                    .name = "alg",
+                    .field_options = .{
+                        .alias = "3",
+                        .serialization_type = .Integer,
+                    },
+                    .value_options = .{ .enum_serialization_type = .Integer },
+                },
+                .{
+                    .name = "crv",
+                    .field_options = .{
+                        .alias = "-1",
+                        .serialization_type = .Integer,
+                    },
+                    .value_options = .{ .enum_serialization_type = .Integer },
+                },
+                .{ .name = "x", .field_options = .{
+                    .alias = "-2",
+                    .serialization_type = .Integer,
+                } },
+                .{ .name = "y", .field_options = .{
+                    .alias = "-3",
+                    .serialization_type = .Integer,
+                } },
+                .{ .name = "d", .field_options = .{
+                    .alias = "-4",
+                    .serialization_type = .Integer,
+                } },
             },
         }, out);
     }
 
-    pub fn cborParse(item: cbor.DataItem, options: ParseOptions) !@This() {
+    pub fn cborParse(item: cbor.DataItem, options: Options) !@This() {
         return try parse(@This(), item, .{
             .allocator = options.allocator,
-            .from_cborParse = true, // prevent infinite loops
+            .from_callback = true, // prevent infinite loops
             .field_settings = &.{
-                .{ .name = "kty", .alias = "1", .options = .{} },
-                .{ .name = "alg", .alias = "3", .options = .{} },
-                .{ .name = "crv", .alias = "-1", .options = .{} },
-                .{ .name = "x", .alias = "-2", .options = .{} },
-                .{ .name = "y", .alias = "-3", .options = .{} },
-                .{ .name = "d", .alias = "-4", .options = .{} },
+                .{
+                    .name = "kty",
+                    .field_options = .{
+                        .alias = "1",
+                        .serialization_type = .Integer,
+                    },
+                },
+                .{
+                    .name = "alg",
+                    .field_options = .{
+                        .alias = "3",
+                        .serialization_type = .Integer,
+                    },
+                },
+                .{
+                    .name = "crv",
+                    .field_options = .{
+                        .alias = "-1",
+                        .serialization_type = .Integer,
+                    },
+                },
+                .{ .name = "x", .field_options = .{
+                    .alias = "-2",
+                    .serialization_type = .Integer,
+                } },
+                .{ .name = "y", .field_options = .{
+                    .alias = "-3",
+                    .serialization_type = .Integer,
+                } },
+                .{ .name = "d", .field_options = .{
+                    .alias = "-4",
+                    .serialization_type = .Integer,
+                } },
             },
         });
     }
