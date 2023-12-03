@@ -16,8 +16,10 @@ pub const ArrayIterator = cbor.ArrayIterator;
 
 pub const ParseError = parser.ParseError;
 pub const StringifyError = parser.StringifyError;
-pub const ParseOptions = parser.ParseOptions;
-pub const StringifyOptions = parser.StringifyOptions;
+pub const Options = parser.Options;
+pub const SerializationType = parser.SerializationType;
+pub const SkipBehavior = parser.SkipBehavior;
+pub const FieldSettings = parser.FieldSettings;
 pub const parse = parser.parse;
 pub const stringify = parser.stringify;
 
