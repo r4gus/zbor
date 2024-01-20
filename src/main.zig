@@ -27,7 +27,7 @@ pub const Builder = build.Builder;
 pub const ContainerType = build.ContainerType;
 
 // TODO: can we somehow read this from build.zig.zon???
-pub const VERSION: []const u8 = "0.11.2";
+pub const VERSION: []const u8 = "0.12.3";
 
 test {
     _ = cbor;

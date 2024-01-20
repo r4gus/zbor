@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+title: zbor
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: David Pierre
+    family-names: Sugar
+    orcid: "https://orcid.org/0009-0007-0056-602X"
+repository-code: 'https://github.com/r4gus/zbor'
+abstract: 'CBOR parser written in Zig'
+version: 0.12.3
+date-released: 2024-01-20
+keywords:
+    - cbor
+    - rfc8949
+    - zig
+license: MIT
