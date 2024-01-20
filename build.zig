@@ -39,4 +39,14 @@ pub fn build(b: *std.build.Builder) !void {
 
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&b.addRunArtifact(lib_tests).step);
+
+    // Creates a step for fuzz testing.
+    const fuzz_tests = b.addTest(.{
+        .root_source_file = .{ .path = "src/fuzz.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const fuzz_test_step = b.step("fuzz", "Run fuzz tests");
+    fuzz_test_step.dependOn(&b.addRunArtifact(fuzz_tests).step);
 }

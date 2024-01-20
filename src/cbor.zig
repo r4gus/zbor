@@ -281,6 +281,7 @@ pub const ArrayIterator = struct {
 
 /// Move the index `i` to the beginning of the next data item.
 fn burn(data: []const u8, i: *usize) ?void {
+    if (i.* >= data.len) return null;
     var offset: usize = 0;
     const len = if (additionalInfo(data[i.*..], &offset)) |v| @as(usize, @intCast(v)) else return null;
 
@@ -314,6 +315,12 @@ fn burn(data: []const u8, i: *usize) ?void {
         },
         0xe0...0xfb => i.* += offset,
         else => return null,
+    }
+
+    if (i.* > data.len) {
+        // this indicates an error
+        i.* = data.len;
+        return null;
     }
 }
 
@@ -362,7 +369,7 @@ fn additionalInfo(data: []const u8, l: ?*usize) ?u64 {
 /// Returns true if the given data is well formed, false otherwise.
 pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
     if (i.* >= data.len) return false;
-    const ib = data[i.*];
+    const ib: u8 = data[i.*];
     i.* += 1;
     const mt = ib >> 5;
     const ai = ib & 0x1f;
@@ -394,7 +401,8 @@ pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
         },
         5 => {
             var j: usize = 0;
-            while (j < val * 2) : (j += 1) {
+            while (j < val) : (j += 1) {
+                if (!validate(data, i, false)) return false;
                 if (!validate(data, i, false)) return false;
             }
         },
