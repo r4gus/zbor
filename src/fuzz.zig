@@ -14,7 +14,7 @@ test "fuzz DataItem.new" {
     var i: usize = 0;
     while (i < ROUNDS) : (i += 1) {
         const bytes_to_allocate = std.crypto.random.intRangeAtMost(usize, 1, 128);
-        var mem = try allocator.alloc(u8, bytes_to_allocate);
+        const mem = try allocator.alloc(u8, bytes_to_allocate);
         defer allocator.free(mem);
         std.crypto.random.bytes(mem);
 
@@ -35,7 +35,7 @@ test "fuzz parse(Config, ...)" {
     var i: usize = 0;
     while (i < ROUNDS) : (i += 1) {
         const bytes_to_allocate = std.crypto.random.intRangeAtMost(usize, 1, 128);
-        var mem = try allocator.alloc(u8, bytes_to_allocate);
+        const mem = try allocator.alloc(u8, bytes_to_allocate);
         defer allocator.free(mem);
         std.crypto.random.bytes(mem);
 
