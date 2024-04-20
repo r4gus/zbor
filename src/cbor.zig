@@ -92,7 +92,7 @@ pub const DataItem = struct {
         if (T != Type.ByteString and T != Type.TextString) return null;
 
         var begin: usize = 0;
-        var len = if (additionalInfo(self.data, &begin)) |v| @as(usize, @intCast(v)) else return null;
+        const len = if (additionalInfo(self.data, &begin)) |v| @as(usize, @intCast(v)) else return null;
 
         return self.data[begin .. begin + len];
     }
@@ -106,7 +106,7 @@ pub const DataItem = struct {
         if (T != Type.Array) return null;
 
         var begin: usize = 0;
-        var len = if (additionalInfo(self.data, &begin)) |v| @as(usize, @intCast(v)) else return null;
+        const len = if (additionalInfo(self.data, &begin)) |v| @as(usize, @intCast(v)) else return null;
 
         // Get to the end of the array
         var end: usize = 0;
@@ -129,7 +129,7 @@ pub const DataItem = struct {
         if (T != Type.Map) return null;
 
         var begin: usize = 0;
-        var len = if (additionalInfo(self.data, &begin)) |v| @as(usize, @intCast(v)) else return null;
+        const len = if (additionalInfo(self.data, &begin)) |v| @as(usize, @intCast(v)) else return null;
 
         // Get to the end of the map
         var end: usize = 0;
@@ -198,7 +198,7 @@ pub const DataItem = struct {
         if (T != Type.Tagged) return null;
 
         var begin: usize = 0;
-        var nr = if (additionalInfo(self.data, &begin)) |v| v else return null;
+        const nr = if (additionalInfo(self.data, &begin)) |v| v else return null;
 
         return Tag{
             .nr = nr,

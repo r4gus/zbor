@@ -290,7 +290,7 @@ pub const Key = union(KeyTag) {
                         const sig = try signer.finalize();
                         var buffer: [EcdsaP256Sha256.Signature.der_encoded_max_length]u8 = undefined;
                         const der = sig.toDer(&buffer);
-                        var mem = try allocator.alloc(u8, der.len);
+                        const mem = try allocator.alloc(u8, der.len);
                         @memcpy(mem, der);
                         return mem;
                     },
@@ -485,7 +485,7 @@ test "es256 sign verify 1" {
     const allocator = std.testing.allocator;
     const msg = "Hello, World!";
 
-    var kp1 = try EcdsaP256Sha256.KeyPair.create(null);
+    const kp1 = try EcdsaP256Sha256.KeyPair.create(null);
 
     // Create a signature via cose key struct
     var cosep256 = Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key);
@@ -509,8 +509,8 @@ test "es256 sign verify 1" {
 }
 
 test "copy secure #1" {
-    var kp1 = try EcdsaP256Sha256.KeyPair.create(null);
+    const kp1 = try EcdsaP256Sha256.KeyPair.create(null);
     var cosep256 = Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key);
-    var cpy = cosep256.copySecure();
+    const cpy = cosep256.copySecure();
     try std.testing.expectEqual(cpy.P256.d, null);
 }

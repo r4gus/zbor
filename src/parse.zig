@@ -99,7 +99,7 @@ pub fn parse(
         },
         .Struct => |structInfo| {
             // Custom parse function overrides default behaviour
-            const has_parse = comptime std.meta.trait.hasFn("cborParse")(T);
+            const has_parse = comptime std.meta.hasFn(T, "cborParse");
             if (has_parse and !options.from_callback) {
                 var o = options;
                 o.from_callback = true;
@@ -228,11 +228,11 @@ pub fn parse(
                 .ByteString, .TextString => {
                     if (arrayInfo.child != u8) return ParseError.UnexpectedItem;
 
-                    var v = if (item.string()) |x| x else return ParseError.Malformed;
+                    const v = if (item.string()) |x| x else return ParseError.Malformed;
                     var r: T = undefined;
 
                     if (v.len > r[0..].len) return ParseError.Overflow;
-                    std.mem.copy(u8, r[0..v.len], v);
+                    std.mem.copyForwards(u8, r[0..v.len], v);
 
                     return r;
                 },
@@ -267,7 +267,7 @@ pub fn parse(
 
                             var r: []ptrInfo.child = try allocator.alloc(ptrInfo.child, v.len + sentinel);
                             errdefer allocator.free(r);
-                            std.mem.copy(ptrInfo.child, r[0..], v[0..]);
+                            std.mem.copyForwards(ptrInfo.child, r[0..], v[0..]);
                             if (ptrInfo.sentinel) |some| {
                                 const sentinel_value = @as(*align(1) const ptrInfo.child, @ptrCast(some)).*;
                                 r[r.len - 1] = sentinel_value;
@@ -307,7 +307,7 @@ pub fn parse(
         },
         .Union => |unionInfo| {
             // Custom parse function overrides default behaviour
-            const has_parse = comptime std.meta.trait.hasFn("cborParse")(T);
+            const has_parse = comptime std.meta.hasFn(T, "cborParse");
             if (has_parse and !options.from_callback) {
                 var o = options;
                 o.from_callback = true;
@@ -483,7 +483,7 @@ pub fn stringify(
         },
         .Struct => |S| {
             // Custom stringify function overrides default behaviour
-            const has_stringify = comptime std.meta.trait.hasFn("cborStringify")(T);
+            const has_stringify = comptime std.meta.hasFn(T, "cborStringify");
             if (has_stringify and !options.from_callback) {
                 // its probably better its set here otherwise people might forget
                 // to set it which leads to infinite loops.
@@ -643,7 +643,7 @@ pub fn stringify(
             }
         },
         .Union => {
-            const has_stringify = comptime std.meta.trait.hasFn("cborStringify")(T);
+            const has_stringify = comptime std.meta.hasFn(T, "cborStringify");
             if (has_stringify and !options.from_callback) {
                 var o = options;
                 o.from_callback = true;
@@ -914,7 +914,7 @@ test "parse pointer" {
 test "parse slice" {
     const allocator = std.testing.allocator;
 
-    var e1: []const u8 = &.{ 1, 2, 3, 4, 5 };
+    const e1: []const u8 = &.{ 1, 2, 3, 4, 5 };
     const di1 = try DataItem.new("\x45\x01\x02\x03\x04\x05");
     const c1 = try parse([]const u8, di1, .{ .allocator = allocator });
     defer allocator.free(c1);
@@ -1529,8 +1529,8 @@ test "assign allocator to allocator fields #1" {
         b: std.mem.Allocator,
     };
 
-    var di = try DataItem.new("\xa1\x61\x61\x65\x61\x62\x63\x64\x65");
-    var x = try parse(S, di, .{ .allocator = allocator });
+    const di = try DataItem.new("\xa1\x61\x61\x65\x61\x62\x63\x64\x65");
+    const x = try parse(S, di, .{ .allocator = allocator });
     defer allocator.free(x.a);
 
     try std.testing.expectEqualSlices(u8, "abcde", x.a);

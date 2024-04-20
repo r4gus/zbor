@@ -199,7 +199,7 @@ pub const Builder = struct {
             try self.moveUp();
         }
 
-        var s = self.stack.items[0].raw.toOwnedSlice();
+        const s = self.stack.items[0].raw.toOwnedSlice();
         self.stack.deinit();
         return s;
     }

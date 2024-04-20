@@ -10,8 +10,8 @@ authors:
     orcid: "https://orcid.org/0009-0007-0056-602X"
 repository-code: 'https://github.com/r4gus/zbor'
 abstract: 'CBOR parser written in Zig'
-version: 0.12.3
-date-released: 2024-01-20
+version: 0.13.0
+date-released: 2024-04-20
 keywords:
     - cbor
     - rfc8949
