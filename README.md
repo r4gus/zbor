@@ -33,7 +33,7 @@ First add this library as dependency to your `build.zig.zon` file:
     .dependencies = .{
         .zbor = .{
             .url = "https://github.com/r4gus/zbor/archive/master.tar.gz",
-            .hash = "1220bfd0526e76937238e2268ea69e97de6b79744d934e4fabd98e0d6e7a8d8e4740",
+            .hash = <hash>,
         }
     },
 }
@@ -172,6 +172,12 @@ try stringify(i, .{}, str.writer());
 
 > Note: Compile time floats are always encoded as single precision floats (f32). Please use `@floatCast`
 > before passing a float to `stringify()`.
+
+The `stringify()` function is convenient but also adds extra overhead. If you want full control
+over the serialization process you can use the following functions defined in `zbor.build`: `writeInt`,
+`writeByteString`, `writeTextString`, `writeTag`, `writeSimple`, `writeArray`, `writeMap`. For more
+details check out the [manual serialization example](examples/manual_serialization.zig) and the
+corresponding [source code](src/build.zig).
 
 ##### Stringify Options
 

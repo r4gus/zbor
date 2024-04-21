@@ -51,4 +51,25 @@ pub fn build(b: *std.Build) !void {
 
     const fuzz_test_step = b.step("fuzz", "Run fuzz tests");
     fuzz_test_step.dependOn(&b.addRunArtifact(fuzz_tests).step);
+
+    // Examples
+    // ---------------------------------------------------
+    const examples: [2][2][]const u8 = .{
+        .{ "examples/manual_serialization.zig", "manual_serialization" },
+        .{ "examples/automatic_serialization.zig", "automatic_serialization" },
+    };
+
+    for (examples) |entry| {
+        const path, const name = entry;
+
+        const example = b.addExecutable(.{
+            .name = name,
+            .root_source_file = .{ .path = path },
+            .target = target,
+            .optimize = optimize,
+        });
+        example.root_module.addImport("zbor", zbor_module);
+        //example.addModule("zbor", zbor_module);
+        b.installArtifact(example);
+    }
 }

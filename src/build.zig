@@ -1,6 +1,60 @@
 const std = @import("std");
 const cbor = @import("cbor.zig");
 
+/// Serialize an integer into a CBOR integer (major type 0 or 1).
+pub fn writeInt(writer: anytype, value: i65) !void {
+    const h: u8 = if (value < 0) 0x20 else 0;
+    const v: u64 = @as(u64, @intCast(if (value < 0) -(value + 1) else value));
+    try encode(writer, h, v);
+}
+
+/// Serialize a slice to a CBOR byte string (major type 2).
+pub fn writeByteString(writer: anytype, value: []const u8) !void {
+    const h: u8 = 0x40;
+    const v: u64 = @as(u64, @intCast(value.len));
+    try encode(writer, h, v);
+    try writer.writeAll(value);
+}
+
+/// Serialize a slice to a CBOR text string (major type 3).
+pub fn writeTextString(writer: anytype, value: []const u8) !void {
+    const h: u8 = 0x60;
+    const v: u64 = @as(u64, @intCast(value.len));
+    try encode(writer, h, v);
+    try writer.writeAll(value);
+}
+
+/// Serialize a tag.
+///
+/// You MUST serialize another data item right after calling this function.
+pub fn writeTag(writer: anytype, tag: u64) !void {
+    const h: u8 = 0xc0;
+    const v: u64 = tag;
+    try encode(writer, h, v);
+}
+
+/// Serialize a simple value.
+pub fn writeSimple(writer: anytype, simple: u8) !void {
+    if (24 <= simple and simple <= 31) return error.ReservedValue;
+    const h: u8 = 0xf0;
+    const v: u64 = @as(u64, @intCast(simple));
+    try encode(writer, h, v);
+}
+
+/// Write the header of an array to `writer`.
+///
+/// You must write exactly `len` data items to `writer` afterwards.
+pub inline fn writeArray(writer: anytype, len: u64) !void {
+    try encode(writer, 0x80, len);
+}
+
+/// Write the header of a map to `writer`.
+///
+/// You must write exactly `len` key-value pairs (data items) to `writer` afterwards.
+pub inline fn writeMap(writer: anytype, len: u64) !void {
+    try encode(writer, 0xa0, len);
+}
+
 /// Type of a Builder container
 pub const ContainerType = enum {
     Root,
@@ -65,9 +119,7 @@ pub const Builder = struct {
     /// On error all allocated memory is freed. After this
     /// point one MUST NOT access the builder!
     pub fn pushInt(self: *@This(), value: i65) !void {
-        const h: u8 = if (value < 0) 0x20 else 0;
-        const v: u64 = @as(u64, @intCast(if (value < 0) -(value + 1) else value));
-        encode(self.top().raw.writer(), h, v) catch |e| {
+        writeInt(self.top().raw.writer(), value) catch |e| {
             self.unwind();
             return e;
         };
@@ -79,13 +131,7 @@ pub const Builder = struct {
     /// On error all allocated memory is freed. After this
     /// point one MUST NOT access the builder!
     pub fn pushByteString(self: *@This(), value: []const u8) !void {
-        const h: u8 = 0x40;
-        const v: u64 = @as(u64, @intCast(value.len));
-        encode(self.top().raw.writer(), h, v) catch |e| {
-            self.unwind();
-            return e;
-        };
-        self.top().raw.appendSlice(value) catch |e| {
+        writeByteString(self.top().raw.writer(), value) catch |e| {
             self.unwind();
             return e;
         };
@@ -97,13 +143,7 @@ pub const Builder = struct {
     /// On error all allocated memory is freed. After this
     /// point one MUST NOT access the builder!
     pub fn pushTextString(self: *@This(), value: []const u8) !void {
-        const h: u8 = 0x60;
-        const v: u64 = @as(u64, @intCast(value.len));
-        encode(self.top().raw.writer(), h, v) catch |e| {
-            self.unwind();
-            return e;
-        };
-        self.top().raw.appendSlice(value) catch |e| {
+        writeTextString(self.top().raw.writer(), value) catch |e| {
             self.unwind();
             return e;
         };
@@ -117,9 +157,7 @@ pub const Builder = struct {
     /// On error all allocated memory is freed. After this
     /// point one MUST NOT access the builder!
     pub fn pushTag(self: *@This(), tag: u64) !void {
-        const h: u8 = 0xc0;
-        const v: u64 = tag;
-        encode(self.top().raw.writer(), h, v) catch |e| {
+        writeTag(self.top().raw.writer(), tag) catch |e| {
             self.unwind();
             return e;
         };
@@ -130,11 +168,7 @@ pub const Builder = struct {
     /// On error (except for ReservedValue) all allocated memory is freed.
     /// After this point one MUST NOT access the builder!
     pub fn pushSimple(self: *@This(), simple: u8) !void {
-        if (24 <= simple and simple <= 31) return error.ReservedValue;
-
-        const h: u8 = 0xf0;
-        const v: u64 = @as(u64, @intCast(simple));
-        encode(self.top().raw.writer(), h, v) catch |e| {
+        writeSimple(self.top().raw.writer(), simple) catch |e| {
             self.unwind();
             return e;
         };
@@ -208,16 +242,17 @@ pub const Builder = struct {
         const e = self.stack.pop();
         defer e.raw.deinit();
 
-        const h: u8 = switch (e.t) {
-            .Array => 0x80,
-            .Map => 0xa0,
+        switch (e.t) {
+            .Array => writeArray(self.top().raw.writer(), e.cnt) catch |err| {
+                self.unwind();
+                return err;
+            },
+            .Map => writeMap(self.top().raw.writer(), e.cnt / 2) catch |err| {
+                self.unwind();
+                return err;
+            },
             .Root => unreachable,
-        };
-        const v: u64 = if (e.t == .Map) e.cnt / 2 else e.cnt;
-        encode(self.top().raw.writer(), h, v) catch |err| {
-            self.unwind();
-            return err;
-        };
+        }
         self.top().raw.appendSlice(e.raw.items) catch |err| {
             self.unwind();
             return err;
@@ -230,21 +265,6 @@ pub const Builder = struct {
         return &self.stack.items[self.stack.items.len - 1];
     }
 
-    fn encode(out: anytype, head: u8, v: u64) !void {
-        switch (v) {
-            0x00...0x17 => {
-                try out.writeByte(head | @as(u8, @intCast(v)));
-            },
-            0x18...0xff => {
-                try out.writeByte(head | 24);
-                try out.writeByte(@as(u8, @intCast(v)));
-            },
-            0x0100...0xffff => try cbor.encode_2(out, head, v),
-            0x00010000...0xffffffff => try cbor.encode_4(out, head, v),
-            0x0000000100000000...0xffffffffffffffff => try cbor.encode_8(out, head, v),
-        }
-    }
-
     /// Free all allocated memory on error. This is meant
     /// to prevent memory leaks if the builder throws an error.
     fn unwind(self: *@This()) void {
@@ -255,6 +275,21 @@ pub const Builder = struct {
         self.stack.deinit();
     }
 };
+
+fn encode(out: anytype, head: u8, v: u64) !void {
+    switch (v) {
+        0x00...0x17 => {
+            try out.writeByte(head | @as(u8, @intCast(v)));
+        },
+        0x18...0xff => {
+            try out.writeByte(head | 24);
+            try out.writeByte(@as(u8, @intCast(v)));
+        },
+        0x0100...0xffff => try cbor.encode_2(out, head, v),
+        0x00010000...0xffffffff => try cbor.encode_4(out, head, v),
+        0x0000000100000000...0xffffffffffffffff => try cbor.encode_8(out, head, v),
+    }
+}
 
 fn testInt(expected: []const u8, i: i65) !void {
     const allocator = std.testing.allocator;
