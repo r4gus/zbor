@@ -29,7 +29,7 @@ pub const ContainerType = build.ContainerType;
 // TODO: can we somehow read this from build.zig.zon???
 pub const VERSION: []const u8 = "0.13.0";
 
-test {
+test "main tests" {
     _ = cbor;
     _ = parser;
     _ = cose;
