@@ -18,23 +18,24 @@ to share some ideas feel free to open an issue or write me a mail, but please be
 
 ## Getting started
 
-To use this library you can either add it directly as a module or use the
-Zig package manager to fetchi it as dependency.
+First add this library as a dependency to your `build.zig.zon` file:
 
-### Zig package manager
-
-First add this library as dependency to your `build.zig.zon` file:
-
-```zon
+```zig
 .{
     .name = "your-project",
     .version = 0.0.1,
 
     .dependencies = .{
         .zbor = .{
+            // For a specific release use:
+            // .url = "https://github.com/r4gus/zbor/archive/refs/tags/0.13.1.tar.gz",
+            // For the current master use:
             .url = "https://github.com/r4gus/zbor/archive/master.tar.gz",
             .hash = <hash>,
         }
+    },
+    .paths = .{
+        // Your paths...
     },
 }
 ```
@@ -42,51 +43,27 @@ First add this library as dependency to your `build.zig.zon` file:
 then within you `build.zig` add the following code:
 
 ```zig
+// First fetch the dependency...
 const zbor_dep = b.dependency("zbor", .{
     .target = target,
     .optimize = optimize,
 });
 const zbor_module = zbor_dep.module("zbor");
 
-// If you have a module that has zbor as a dependency:
+// If you have a module that has zbor as a dependency...
 const your_module = b.addModule("your-module", .{
-    .source_file = .{ .path = "src/main.zig" },
-    .dependencies = &.{
+    .root_source_file = .{ .path = "src/main.zig" },
+    .imports = &.{
         .{ .name = "zbor", .module = zbor_module },
     },
 });
 
-// Or as a dependency for a executable:
-exe.addModule("zbor", zbor_module);
+// Or as a dependency for a executable...
+exe.root_module.addImport("zbor", zbor_module);
 ```
 
-#### Hash
-
-The easiest way to get the required hash is to use a wrong one and then copy the correct one
-from the error message.
-
-### As a module
-
-First add the library to your project, e.g., as a submodule:
-
-```
-your-project$ mkdir libs
-your-project$ git submodule add https://github.com/r4gus/zbor.git libs/zbor
-```
-
-Then add the following line to your `build.zig` file.
-
-```zig
-// Create a new module
-var zbor_module = b.createModule(.{
-    .source_file = .{ .path = "libs/zbor/src/main.zig" },
-});
-
-// create your exe ...
-
-// Add the module to your exe/ lib
-exe.addModule("zbor", zbor_module);
-```
+> The easiest way to get the required __hash__ is to use a wrong one and then copy the correct one
+> from the error message.
 
 ## Usage
 
