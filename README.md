@@ -274,7 +274,7 @@ const Foo = struct {
         b: u64 = 0x1122334455667788,
     },
 
-    pub fn cborStringify(self: *const @This(), options: StringifyOptions, out: anytype) !void {
+    pub fn cborStringify(self: *const @This(), options: Options, out: anytype) !void {
 
         // First stringify the 'y' struct
         const allocator = std.testing.allocator;
@@ -317,25 +317,25 @@ const EcdsaP256Key = struct {
     /// y-coordinate
     y: [32]u8,
 
-    pub fn cborParse(item: DataItem, options: ParseOptions) !@This() {
+    pub fn cborParse(item: DataItem, options: Options) !@This() {
         _ = options;
         return try parse(@This(), item, .{
-            .from_cborParse = true, // prevent infinite loops
+            .from_callback = true, // prevent infinite loops
             .field_settings = &.{
-                .{ .name = "kty", .alias = "1" },
-                .{ .name = "alg", .alias = "3" },
-                .{ .name = "crv", .alias = "-1" },
-                .{ .name = "x", .alias = "-2" },
-                .{ .name = "y", .alias = "-3" },
+                .{ .name = "kty", .field_options = .{ .alias = "1" } },
+                .{ .name = "alg", .field_options = .{ .alias = "3" } },
+                .{ .name = "crv", .field_options = .{ .alias = "-1" } },
+                .{ .name = "x", .field_options = .{ .alias = "-2" } },
+                .{ .name = "y", .field_options = .{ .alias = "-3" } },
             },
         });
     }
 };
 ```
 
-The `ParseOptions` can be used to indirectly pass an `Allocator` to the function.
+The `Options` can be used to indirectly pass an `Allocator` to the function.
 
-Please make sure to set `from_cborParse` to `true` when calling recursively into `parse(self)` to prevent infinite loops.
+Please make sure to set `from_callback` to `true` when calling recursively into `parse(self)` to prevent infinite loops.
 
 #### Structs with fields of type `std.mem.Allocator`
 
