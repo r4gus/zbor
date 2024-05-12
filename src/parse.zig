@@ -2,7 +2,6 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const cbor = @import("cbor.zig");
-const Error = cbor.Error;
 const Type = cbor.Type;
 const DataItem = cbor.DataItem;
 const Tag = cbor.Tag;
@@ -302,7 +301,7 @@ pub fn parse(
                         else => return ParseError.UnexpectedItem,
                     }
                 },
-                else => return Error.UnsupportedType,
+                else => return ParseError.UnsupportedType,
             }
         },
         .Union => |unionInfo| {
@@ -334,7 +333,7 @@ pub fn parse(
                 @compileError("Unable to parse into untagged union '" ++ @typeName(T) ++ "'");
             }
         },
-        else => return Error.UnsupportedType,
+        else => return ParseError.UnsupportedType,
     }
 }
 

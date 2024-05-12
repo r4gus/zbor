@@ -1,7 +1,6 @@
 const std = @import("std");
 
 const cbor = @import("cbor.zig");
-const Error = cbor.Error;
 const Type = cbor.Type;
 const DataItem = cbor.DataItem;
 const Tag = cbor.Tag;
