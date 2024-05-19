@@ -15,6 +15,74 @@ const encode_2 = cbor.encode_2;
 const encode_4 = cbor.encode_4;
 const encode_8 = cbor.encode_8;
 
+pub const ArrayBackedSliceType = enum {
+    Byte,
+    Text,
+    Other,
+};
+
+/// Wrapper for a array with an arbitrary type `U`.
+pub fn ArrayBackedSlice(
+    comptime size: usize,
+    comptime U: type,
+    comptime t: ArrayBackedSliceType,
+) type {
+    const T = [size]U;
+
+    return struct {
+        buffer: T = .{0} ** size,
+        len: usize = 0,
+
+        pub fn get(self: *const @This()) []const U {
+            return self.buffer[0..self.len];
+        }
+
+        pub fn set(self: *@This(), v: []const u8) !void {
+            if (v.len > self.buffer.len) return error.BufferTooSmall;
+            @memcpy(self.buffer[0..v.len], v);
+            self.len = v.len;
+        }
+
+        pub fn cborStringify(self: *const @This(), options: Options, out: anytype) !void {
+            switch (t) {
+                .Byte => try build.writeByteString(out, self.get()),
+                .Text => try build.writeTextString(out, self.get()),
+                .Other => try stringify(self.get(), options, out),
+            }
+        }
+
+        pub fn cborParse(item: DataItem, options: Options) !@This() {
+            if (item.array()) |*v_| {
+                var v = v_.*;
+                var r: T = undefined;
+                var i: usize = 0;
+
+                while (i < r.len) : (i += 1) {
+                    r[i] = try parse(
+                        U,
+                        if (v.next()) |x| x else break,
+                        options,
+                    );
+                }
+
+                return .{
+                    .buffer = r,
+                    .len = i,
+                };
+            } else if (item.string()) |v| {
+                if (U != u8) return ParseError.UnexpectedItem;
+                var r: T = undefined;
+                if (v.len > r[0..].len) return ParseError.Overflow;
+                std.mem.copyForwards(u8, r[0..v.len], v);
+                return .{
+                    .buffer = r,
+                    .len = v.len,
+                };
+            } else return ParseError.UnexpectedItem;
+        }
+    };
+}
+
 pub const ParseError = error{
     UnsupportedType,
     UnexpectedItem,
@@ -1533,4 +1601,23 @@ test "assign allocator to allocator fields #1" {
     defer allocator.free(x.a);
 
     try std.testing.expectEqualSlices(u8, "abcde", x.a);
+}
+
+test "ArrayBackedSlice test #1" {
+    const allocator = std.testing.allocator;
+
+    const S64B = ArrayBackedSlice(64, u8, .Byte);
+    var x = S64B{};
+    try x.set("\x01\x02\x03\x04");
+
+    var str = std.ArrayList(u8).init(allocator);
+    defer str.deinit();
+
+    try stringify(x, .{}, str.writer());
+    try std.testing.expectEqualSlices(u8, "\x44\x01\x02\x03\x04", str.items);
+
+    const di = try DataItem.new(str.items);
+    const y = try parse(S64B, di, .{});
+
+    try std.testing.expectEqualSlices(u8, "\x01\x02\x03\x04", y.get());
 }
