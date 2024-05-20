@@ -357,3 +357,28 @@ pub fn cborStringify(self: *const @This(), options: cbor.StringifyOptions, out: 
 
 When using `parse` make sure you pass a allocator to the function. The passed allocator will be assigned
 to the field of type `std.mem.Allocator`.
+
+### ArrayBackedSlice
+
+This library offers a convenient function named ArrayBackedSlice, which enables you to create a wrapper for an array of any size and type. This wrapper implements the cborStringify and cborParse methods, allowing it to seamlessly replace slices (e.g., []const u8) with an array.
+
+```zig
+test "ArrayBackedSlice test" {
+    const allocator = std.testing.allocator;
+
+    const S64B = ArrayBackedSlice(64, u8, .Byte);
+    var x = S64B{};
+    try x.set("\x01\x02\x03\x04");
+
+    var str = std.ArrayList(u8).init(allocator);
+    defer str.deinit();
+
+    try stringify(x, .{}, str.writer());
+    try std.testing.expectEqualSlices(u8, "\x44\x01\x02\x03\x04", str.items);
+
+    const di = try DataItem.new(str.items);
+    const y = try parse(S64B, di, .{});
+
+    try std.testing.expectEqualSlices(u8, "\x01\x02\x03\x04", y.get());
+}
+```
