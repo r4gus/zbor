@@ -30,8 +30,17 @@ pub fn ArrayBackedSlice(
     const T = [size]U;
 
     return struct {
-        buffer: T = .{0} ** size,
+        buffer: T = undefined,
         len: usize = 0,
+
+        pub fn fromSlice(s: ?[]const U) !?@This() {
+            if (s == null) return null;
+            if (s.?.len > size) return error.BufferTooSmall;
+            var x = @This(){};
+            @memcpy(x.buffer[0..s.?.len], s.?);
+            x.len = s.?.len;
+            return x;
+        }
 
         pub fn get(self: *const @This()) []const U {
             return self.buffer[0..self.len];
