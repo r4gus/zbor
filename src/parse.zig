@@ -56,7 +56,17 @@ pub fn ArrayBackedSlice(
             switch (t) {
                 .Byte => try build.writeByteString(out, self.get()),
                 .Text => try build.writeTextString(out, self.get()),
-                .Other => try stringify(self.get(), options, out),
+                .Other => {
+                    // Make sure this is set to false otherwise, nested cborStringify calls
+                    // are prevented.
+                    //
+                    // TODO: This will backfire for nested ArrayBackedSlices, maybe its
+                    // time to switch to a unique identifier based to the given cborStringify
+                    // function.
+                    var o = options;
+                    o.from_callback = false;
+                    try stringify(self.get(), o, out);
+                },
             }
         }
 
