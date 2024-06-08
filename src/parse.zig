@@ -33,6 +33,36 @@ pub fn ArrayBackedSlice(
         buffer: T = undefined,
         len: usize = 0,
 
+        pub const ByteWriter = struct {
+            raw: []u8,
+            i: *usize,
+
+            pub fn writeAll(self: *const @This(), in: []const u8) !void {
+                if (self.raw.len - self.i.* < in.len) {
+                    return error.OutOfMemory;
+                }
+                @memcpy(self.raw[self.i.* .. self.i.* + in.len], in);
+                self.i.* += in.len;
+            }
+
+            pub fn writeByte(self: *const @This(), in: u8) !void {
+                if (self.i.* >= self.raw.len) {
+                    return error.OutOfMemory;
+                }
+                self.raw[self.i.*] = in;
+                self.i.* += 1;
+            }
+        };
+
+        pub fn byteWriter(self: *@This()) !ByteWriter {
+            if (U != u8) return error.WrongType;
+
+            return .{
+                .raw = &self.buffer,
+                .i = &self.len,
+            };
+        }
+
         pub fn fromSlice(s: ?[]const U) !?@This() {
             if (s == null) return null;
             if (s.?.len > size) return error.BufferTooSmall;
@@ -43,6 +73,10 @@ pub fn ArrayBackedSlice(
         }
 
         pub fn get(self: *const @This()) []const U {
+            return self.buffer[0..self.len];
+        }
+
+        pub fn getMut(self: *@This()) []U {
             return self.buffer[0..self.len];
         }
 

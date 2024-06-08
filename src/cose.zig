@@ -181,6 +181,20 @@ pub const Key = union(KeyTag) {
         d: ?[32]u8 = null,
     },
 
+    pub fn getAlg(self: *const @This()) Algorithm {
+        switch (self.*) {
+            .P256 => |k| return k.alg,
+        }
+    }
+
+    pub fn getPrivKey(self: *const @This()) []const u8 {
+        switch (self.*) {
+            .P256 => |k| {
+                return if (k.d) |d| d[0..] else null;
+            },
+        }
+    }
+
     pub fn copySecure(self: *const @This()) @This() {
         switch (self.*) {
             .P256 => |k| {
