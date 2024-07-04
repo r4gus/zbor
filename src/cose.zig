@@ -301,7 +301,7 @@ pub const Key = union(KeyTag) {
 
                         // Sign the data
                         const sig = try signer.finalize();
-                        var buffer: [EcdsaP256Sha256.Signature.der_encoded_max_length]u8 = undefined;
+                        var buffer: [EcdsaP256Sha256.Signature.der_encoded_length_max]u8 = undefined;
                         const der = sig.toDer(&buffer);
                         const mem = try allocator.alloc(u8, der.len);
                         @memcpy(mem, der);

@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) !void {
     //lib.install();
 
     const zbor_module = b.addModule("zbor", .{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) !void {
 
     // Creates a step for unit testing.
     const lib_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -44,7 +44,7 @@ pub fn build(b: *std.Build) !void {
 
     // Creates a step for fuzz testing.
     const fuzz_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/fuzz.zig" },
+        .root_source_file = b.path("src/fuzz.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -64,7 +64,7 @@ pub fn build(b: *std.Build) !void {
 
         const example = b.addExecutable(.{
             .name = name,
-            .root_source_file = .{ .path = path },
+            .root_source_file = b.path(path),
             .target = target,
             .optimize = optimize,
         });
