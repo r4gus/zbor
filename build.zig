@@ -54,9 +54,10 @@ pub fn build(b: *std.Build) !void {
 
     // Examples
     // ---------------------------------------------------
-    const examples: [2][2][]const u8 = .{
+    const examples: [3][2][]const u8 = .{
         .{ "examples/manual_serialization.zig", "manual_serialization" },
         .{ "examples/automatic_serialization.zig", "automatic_serialization" },
+        .{ "examples/automatic_serialization2.zig", "automatic_serialization2" },
     };
 
     for (examples) |entry| {
