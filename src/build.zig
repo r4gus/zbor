@@ -49,6 +49,23 @@ pub fn writeFalse(writer: anytype) !void {
     try writeSimple(writer, 20);
 }
 
+pub fn writeFloat(writer: anytype, f: anytype) !void {
+    const T = @TypeOf(f);
+    const TInf = @typeInfo(T);
+
+    switch (TInf) {
+        .Float => |float| {
+            switch (float.bits) {
+                16 => try cbor.encode_2(writer, 0xe0, @as(u64, @intCast(@as(u16, @bitCast(f))))),
+                32 => try cbor.encode_4(writer, 0xe0, @as(u64, @intCast(@as(u32, @bitCast(f))))),
+                64 => try cbor.encode_8(writer, 0xe0, @as(u64, @intCast(@as(u64, @bitCast(f))))),
+                else => @compileError("Float must be 16, 32 or 64 Bits wide"),
+            }
+        },
+        else => return error.NotAFloat,
+    }
+}
+
 /// Write the header of an array to `writer`.
 ///
 /// You must write exactly `len` data items to `writer` afterwards.
@@ -450,4 +467,44 @@ test "write true false" {
 
     try std.testing.expectEqual(@as(u8, 0xf5), arr.items[0]);
     try std.testing.expectEqual(@as(u8, 0xf4), arr.items[1]);
+}
+
+test "write float #1" {
+    const allocator = std.testing.allocator;
+    var arr = std.ArrayList(u8).init(allocator);
+    defer arr.deinit();
+
+    try writeFloat(arr.writer(), @as(f16, @floatCast(0.0)));
+
+    try std.testing.expectEqualSlices(u8, "\xf9\x00\x00", arr.items);
+}
+
+test "write float #2" {
+    const allocator = std.testing.allocator;
+    var arr = std.ArrayList(u8).init(allocator);
+    defer arr.deinit();
+
+    try writeFloat(arr.writer(), @as(f16, @floatCast(-0.0)));
+
+    try std.testing.expectEqualSlices(u8, "\xf9\x80\x00", arr.items);
+}
+
+test "write float #3" {
+    const allocator = std.testing.allocator;
+    var arr = std.ArrayList(u8).init(allocator);
+    defer arr.deinit();
+
+    try writeFloat(arr.writer(), @as(f32, @floatCast(3.4028234663852886e+38)));
+
+    try std.testing.expectEqualSlices(u8, "\xfa\x7f\x7f\xff\xff", arr.items);
+}
+
+test "write float #4" {
+    const allocator = std.testing.allocator;
+    var arr = std.ArrayList(u8).init(allocator);
+    defer arr.deinit();
+
+    try writeFloat(arr.writer(), @as(f64, @floatCast(-4.1)));
+
+    try std.testing.expectEqualSlices(u8, "\xfb\xc0\x10\x66\x66\x66\x66\x66\x66", arr.items);
 }

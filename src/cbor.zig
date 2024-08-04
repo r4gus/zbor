@@ -189,6 +189,45 @@ pub const DataItem = struct {
         }
     }
 
+    pub fn isFloat16(self: @This()) bool {
+        if (self.data.len < 3) return false;
+        return self.data[0] == 0xf9;
+    }
+
+    pub fn getFloat16(self: @This()) ?f16 {
+        if (!self.isFloat16()) return null;
+        if (additionalInfo(self.data, null)) |v| {
+            return @floatCast(@as(f16, @bitCast(@as(u16, @intCast(v)))));
+        }
+        return null;
+    }
+
+    pub fn isFloat32(self: @This()) bool {
+        if (self.data.len < 5) return false;
+        return self.data[0] == 0xfa;
+    }
+
+    pub fn getFloat32(self: @This()) ?f32 {
+        if (!self.isFloat32()) return null;
+        if (additionalInfo(self.data, null)) |v| {
+            return @floatCast(@as(f32, @bitCast(@as(u32, @intCast(v)))));
+        }
+        return null;
+    }
+
+    pub fn isFloat64(self: @This()) bool {
+        if (self.data.len < 9) return false;
+        return self.data[0] == 0xfb;
+    }
+
+    pub fn getFloat64(self: @This()) ?f64 {
+        if (!self.isFloat64()) return null;
+        if (additionalInfo(self.data, null)) |v| {
+            return @floatCast(@as(f64, @bitCast(@as(u64, @intCast(v)))));
+        }
+        return null;
+    }
+
     /// Decode the given DataItem into a Tag
     ///
     /// This function will return null if the DataItem
@@ -673,6 +712,12 @@ test "deserialize float" {
     const di4 = try DataItem.new("\xfb\x7e\x37\xe4\x3c\x88\x00\x75\x9c");
     try std.testing.expectEqual(Type.Float, di4.getType());
     try std.testing.expectApproxEqAbs(di4.float().?, 1.0e+300, 0.000000001);
+
+    try std.testing.expectEqual(@as(f16, 0.0), (try DataItem.new("\xf9\x00\x00")).getFloat16().?);
+    try std.testing.expectEqual(@as(f16, -0.0), (try DataItem.new("\xf9\x80\x00")).getFloat16().?);
+    try std.testing.expectEqual(@as(f16, 65504.0), (try DataItem.new("\xf9\x7b\xff")).getFloat16().?);
+    try std.testing.expectEqual(@as(f32, 3.4028234663852886e+38), (try DataItem.new("\xfa\x7f\x7f\xff\xff")).getFloat32().?);
+    try std.testing.expectEqual(@as(f64, -4.1), (try DataItem.new("\xfb\xc0\x10\x66\x66\x66\x66\x66\x66")).getFloat64().?);
 }
 
 test "deserialize tagged" {
