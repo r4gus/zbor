@@ -36,9 +36,17 @@ pub fn writeTag(writer: anytype, tag: u64) !void {
 /// Serialize a simple value.
 pub fn writeSimple(writer: anytype, simple: u8) !void {
     if (24 <= simple and simple <= 31) return error.ReservedValue;
-    const h: u8 = 0xf0;
+    const h: u8 = 0xe0;
     const v: u64 = @as(u64, @intCast(simple));
     try encode(writer, h, v);
+}
+
+pub fn writeTrue(writer: anytype) !void {
+    try writeSimple(writer, 21);
+}
+
+pub fn writeFalse(writer: anytype) !void {
+    try writeSimple(writer, 20);
 }
 
 /// Write the header of an array to `writer`.
@@ -429,4 +437,17 @@ test "stringify simple using builder 1" {
     defer allocator.free(x);
 
     try std.testing.expectEqualSlices(u8, "\xf8\xff", x);
+}
+
+test "write true false" {
+    const allocator = std.testing.allocator;
+
+    var arr = std.ArrayList(u8).init(allocator);
+    defer arr.deinit();
+
+    try writeTrue(arr.writer());
+    try writeFalse(arr.writer());
+
+    try std.testing.expectEqual(@as(u8, 0xf5), arr.items[0]);
+    try std.testing.expectEqual(@as(u8, 0xf4), arr.items[1]);
 }
