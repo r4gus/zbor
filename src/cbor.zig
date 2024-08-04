@@ -72,7 +72,7 @@ pub const DataItem = struct {
     /// Decode the given DataItem into an integer
     ///
     /// The function will return null if the given DataItems doesn't have the
-    /// tpye Type.Int.
+    /// type Type.Int.
     pub fn int(self: @This()) ?i65 {
         if (self.data[0] <= 0x1b and self.data[0] >= 0x00) {
             return @as(i65, @intCast(if (additionalInfo(self.data, null)) |v| v else return null));
@@ -86,7 +86,7 @@ pub const DataItem = struct {
     /// Decode the given DataItem into a string
     ///
     /// The function will return null if the given DataItems doesn't have the
-    /// tpye Type.ByteString or Type.TextString.
+    /// type Type.ByteString or Type.TextString.
     pub fn string(self: @This()) ?[]const u8 {
         const T = Type.fromByte(self.data[0]);
         if (T != Type.ByteString and T != Type.TextString) return null;
