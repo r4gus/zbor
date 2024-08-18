@@ -469,7 +469,7 @@ pub const Options = struct {
     allocator: ?std.mem.Allocator = null,
     /// Settings for specific fields that override the default options
     field_settings: []const FieldSettings = &.{},
-    /// Stringfiy called from cborStringify. This falg is used to prevent infinite recursion:
+    /// Stringfiy called from cborStringify. This flag is used to prevent infinite recursion:
     /// stringify -> cborStringify -> stringify -> cborStringify -> stringify ...
     from_callback: bool = false,
     /// How to behave if a CBOR map has two or more keys with
