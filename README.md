@@ -18,6 +18,12 @@ to share some ideas feel free to open an issue or write me a mail, but please be
 
 ## Getting started
 
+Versions
+| Zig version | zbor version |
+|:-----------:|:------------:|
+| 0.13.0      | 0.15.0, 0.15.1, 0.15.2 |
+| 0.14.0      | 0.16.0 |
+
 First add this library as a dependency to your `build.zig.zon` file:
 
 ```zig

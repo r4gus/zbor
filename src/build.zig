@@ -54,7 +54,7 @@ pub fn writeFloat(writer: anytype, f: anytype) !void {
     const TInf = @typeInfo(T);
 
     switch (TInf) {
-        .Float => |float| {
+        .float => |float| {
             switch (float.bits) {
                 16 => try cbor.encode_2(writer, 0xe0, @as(u64, @intCast(@as(u16, @bitCast(f))))),
                 32 => try cbor.encode_4(writer, 0xe0, @as(u64, @intCast(@as(u32, @bitCast(f))))),

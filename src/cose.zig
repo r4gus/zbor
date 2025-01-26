@@ -246,7 +246,10 @@ pub const Key = union(KeyTag) {
     /// // Use the key pair...
     /// ```
     pub fn es256(seed: ?[32]u8) !@This() {
-        const kp = try EcdsaP256Sha256.KeyPair.create(seed);
+        const kp = if (seed) |seed_|
+            try EcdsaP256Sha256.KeyPair.generateDeterministic(seed_)
+        else
+            EcdsaP256Sha256.KeyPair.generate();
         const sec1 = kp.public_key.toUncompressedSec1();
         const pk = kp.secret_key.toBytes();
         return .{ .P256 = .{
@@ -498,7 +501,7 @@ test "es256 sign verify 1" {
     const allocator = std.testing.allocator;
     const msg = "Hello, World!";
 
-    const kp1 = try EcdsaP256Sha256.KeyPair.create(null);
+    const kp1 = EcdsaP256Sha256.KeyPair.generate();
 
     // Create a signature via cose key struct
     var cosep256 = Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key);
@@ -522,7 +525,7 @@ test "es256 sign verify 1" {
 }
 
 test "copy secure #1" {
-    const kp1 = try EcdsaP256Sha256.KeyPair.create(null);
+    const kp1 = EcdsaP256Sha256.KeyPair.generate();
     var cosep256 = Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key);
     const cpy = cosep256.copySecure();
     try std.testing.expectEqual(cpy.P256.d, null);

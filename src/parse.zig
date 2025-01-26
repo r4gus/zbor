@@ -314,7 +314,7 @@ pub fn parse(
                                     if (field.type == std.mem.Allocator and options.allocator != null) {
                                         // Assign the allocator that was provided by the caller
                                         @field(r, field.name) = options.allocator.?;
-                                    } else if (field.default_value) |default_ptr| {
+                                    } else if (field.default_value_ptr) |default_ptr| {
                                         if (!field.is_comptime) {
                                             const default = @as(*align(1) const field.type, @ptrCast(default_ptr)).*;
                                             @field(r, field.name) = default;
@@ -365,14 +365,14 @@ pub fn parse(
             const allocator = options.allocator orelse return ParseError.AllocatorRequired;
 
             switch (ptrInfo.size) {
-                .One => {
+                .one => {
                     // We use *ptrInfo.child instead of T to allow const and non-const types
                     const r: *ptrInfo.child = try allocator.create(ptrInfo.child);
                     errdefer allocator.destroy(r);
                     r.* = try parse(ptrInfo.child, item, options);
                     return r;
                 },
-                .Slice => {
+                .slice => {
                     switch (item.getType()) {
                         .ByteString, .TextString => {
                             const v = if (item.string()) |x| x else return ParseError.Malformed;
@@ -381,14 +381,14 @@ pub fn parse(
                             }
 
                             var sentinel: usize = 0;
-                            if (ptrInfo.sentinel != null) {
+                            if (ptrInfo.sentinel_ptr != null) {
                                 sentinel += 1;
                             }
 
                             var r: []ptrInfo.child = try allocator.alloc(ptrInfo.child, v.len + sentinel);
                             errdefer allocator.free(r);
                             std.mem.copyForwards(ptrInfo.child, r[0..], v[0..]);
-                            if (ptrInfo.sentinel) |some| {
+                            if (ptrInfo.sentinel_ptr) |some| {
                                 const sentinel_value = @as(*align(1) const ptrInfo.child, @ptrCast(some)).*;
                                 r[r.len - 1] = sentinel_value;
                                 return r[0 .. r.len - 1 :sentinel_value];
@@ -410,7 +410,7 @@ pub fn parse(
                                 arraylist.appendAssumeCapacity(x);
                             }
 
-                            if (ptrInfo.sentinel) |some| {
+                            if (ptrInfo.sentinel_ptr) |some| {
                                 const sentinel_value = @as(*align(1) const ptrInfo.child, @ptrCast(some)).*;
                                 try arraylist.append(sentinel_value);
                                 const output = try arraylist.toOwnedSlice();
@@ -550,7 +550,7 @@ pub fn stringify(
         .float, .comptime_float => {
             head = 0xe0;
             switch (TInf) {
-                .Float => |float| {
+                .float => |float| {
                     switch (float.bits) {
                         16 => try encode_2(out, head, @as(u64, @intCast(@as(u16, @bitCast(value))))),
                         32 => try encode_4(out, head, @as(u64, @intCast(@as(u32, @bitCast(value))))),
@@ -559,7 +559,7 @@ pub fn stringify(
                     }
                     return;
                 },
-                .ComptimeFloat => {
+                .comptime_float => {
                     // Comptime floats are always encoded as single precision floats
                     try encode_4(out, head, @as(u64, @intCast(@as(u32, @bitCast(@as(f32, @floatCast(value)))))));
                     return;
@@ -712,7 +712,7 @@ pub fn stringify(
             }
         },
         .pointer => |ptr_info| switch (ptr_info.size) {
-            .Slice => {
+            .slice => {
                 if (ptr_info.child == u8) {
                     head = switch (options.slice_serialization_type) {
                         .TextString => blk: {
@@ -737,7 +737,7 @@ pub fn stringify(
                 }
                 return;
             },
-            .One => {
+            .one => {
                 try stringify(value.*, options, out);
                 return;
             },
@@ -770,7 +770,7 @@ pub fn stringify(
                 return value.cborStringify(options, out);
             }
 
-            const info = @typeInfo(T).Union;
+            const info = @typeInfo(T).@"union";
             if (info.tag_type) |UnionTagType| {
                 inline for (info.fields) |u_field| {
                     if (value == @field(UnionTagType, u_field.name)) {
