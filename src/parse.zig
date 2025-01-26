@@ -168,20 +168,20 @@ pub fn parse(
     options: Options,
 ) ParseError!T {
     switch (@typeInfo(T)) {
-        .Bool => {
+        .bool => {
             return switch (item.getType()) {
                 .False => false,
                 .True => true,
                 else => ParseError.UnexpectedItem,
             };
         },
-        .Float, .ComptimeFloat => {
+        .float, .comptime_float => {
             return switch (item.getType()) {
                 .Float => if (item.float()) |x| @as(T, @floatCast(x)) else return ParseError.Malformed,
                 else => ParseError.UnexpectedItem,
             };
         },
-        .Int, .ComptimeInt => {
+        .int, .comptime_int => {
             switch (item.getType()) {
                 .Int => {
                     const v = if (item.int()) |x| x else return ParseError.Malformed;
@@ -193,13 +193,13 @@ pub fn parse(
                 else => return ParseError.UnexpectedItem,
             }
         },
-        .Optional => |optionalInfo| {
+        .optional => |optionalInfo| {
             return switch (item.getType()) {
                 .Null, .Undefined => null,
                 else => try parse(optionalInfo.child, item, options),
             };
         },
-        .Enum => |enumInfo| {
+        .@"enum" => |enumInfo| {
             switch (item.getType()) {
                 .Int => {
                     const v = if (item.int()) |x| x else return ParseError.Malformed;
@@ -217,7 +217,7 @@ pub fn parse(
                 else => return ParseError.UnexpectedItem,
             }
         },
-        .Struct => |structInfo| {
+        .@"struct" => |structInfo| {
             // Custom parse function overrides default behaviour
             const has_parse = comptime std.meta.hasFn(T, "cborParse");
             if (has_parse and !options.from_callback) {
@@ -288,7 +288,7 @@ pub fn parse(
                                     const I = @typeInfo(@TypeOf(@field(r, field.name)));
 
                                     switch (I) {
-                                        .Pointer => |ptrInfo| {
+                                        .pointer => |ptrInfo| {
                                             _ = ptrInfo;
                                         },
                                         else => {},
@@ -309,7 +309,7 @@ pub fn parse(
                     inline for (structInfo.fields, 0..) |field, i| {
                         if (!fields_seen[i]) {
                             switch (@typeInfo(field.type)) {
-                                .Optional => @field(r, field.name) = null,
+                                .optional => @field(r, field.name) = null,
                                 else => {
                                     if (field.type == std.mem.Allocator and options.allocator != null) {
                                         // Assign the allocator that was provided by the caller
@@ -332,7 +332,7 @@ pub fn parse(
                 else => return ParseError.UnexpectedItem,
             }
         },
-        .Array => |arrayInfo| {
+        .array => |arrayInfo| {
             switch (item.getType()) {
                 .Array => {
                     var v = if (item.array()) |x| x else return ParseError.Malformed;
@@ -361,7 +361,7 @@ pub fn parse(
                 },
             }
         },
-        .Pointer => |ptrInfo| {
+        .pointer => |ptrInfo| {
             const allocator = options.allocator orelse return ParseError.AllocatorRequired;
 
             switch (ptrInfo.size) {
@@ -425,7 +425,7 @@ pub fn parse(
                 else => return ParseError.UnsupportedType,
             }
         },
-        .Union => |unionInfo| {
+        .@"union" => |unionInfo| {
             // Custom parse function overrides default behaviour
             const has_parse = comptime std.meta.hasFn(T, "cborParse");
             if (has_parse and !options.from_callback) {
@@ -469,7 +469,7 @@ pub const Options = struct {
     allocator: ?std.mem.Allocator = null,
     /// Settings for specific fields that override the default options
     field_settings: []const FieldSettings = &.{},
-    /// Stringfiy called from cborStringify. This falg is used to prevent infinite recursion:
+    /// Stringfiy called from cborStringify. This flag is used to prevent infinite recursion:
     /// stringify -> cborStringify -> stringify -> cborStringify -> stringify ...
     from_callback: bool = false,
     /// How to behave if a CBOR map has two or more keys with
@@ -541,13 +541,13 @@ pub fn stringify(
     if (T == std.mem.Allocator) return;
 
     switch (TInf) {
-        .Int, .ComptimeInt => {
+        .int, .comptime_int => {
             head = if (value < 0) 0x20 else 0;
             v = @as(u64, @intCast(if (value < 0) -(value + 1) else value));
             try encode(out, head, v);
             return;
         },
-        .Float, .ComptimeFloat => {
+        .float, .comptime_float => {
             head = 0xe0;
             switch (TInf) {
                 .Float => |float| {
@@ -567,17 +567,17 @@ pub fn stringify(
                 else => unreachable,
             }
         },
-        .Bool, .Null => {
+        .bool, .null => {
             head = 0xe0;
             v = switch (TInf) {
-                .Bool => if (value) 21 else 20,
-                .Null => 22,
+                .bool => if (value) 21 else 20,
+                .null => 22,
                 else => unreachable,
             };
             try encode(out, head, v);
             return;
         },
-        .Array => |arrayInfo| {
+        .array => |arrayInfo| {
             if (arrayInfo.child == u8) {
                 head = switch (options.slice_serialization_type) {
                     .TextString => blk: {
@@ -601,7 +601,7 @@ pub fn stringify(
             }
             return;
         },
-        .Struct => |S| {
+        .@"struct" => |S| {
             // Custom stringify function overrides default behaviour
             const has_stringify = comptime std.meta.hasFn(T, "cborStringify");
             if (has_stringify and !options.from_callback) {
@@ -633,7 +633,7 @@ pub fn stringify(
                 }
 
                 // dont't include (optional) null fields
-                if (emit_field and @typeInfo(Field.type) == .Optional) {
+                if (emit_field and @typeInfo(Field.type) == .optional) {
                     if (((field_setting != null and field_setting.?.field_options.skip == .SkipIfNull) or field_setting == null) and @field(value, Field.name) == null) {
                         emit_field = false;
                     }
@@ -669,7 +669,7 @@ pub fn stringify(
                 }
 
                 // dont't include (optional) null fields
-                if (emit_field and @typeInfo(Field.type) == .Optional) {
+                if (emit_field and @typeInfo(Field.type) == .optional) {
                     if (((field_setting != null and field_setting.?.field_options.skip == .SkipIfNull) or field_setting == null) and @field(value, Field.name) == null) {
                         emit_field = false;
                     }
@@ -702,7 +702,7 @@ pub fn stringify(
             }
             return;
         },
-        .Optional => {
+        .optional => {
             if (value) |payload| {
                 try stringify(payload, options, out);
                 return;
@@ -711,7 +711,7 @@ pub fn stringify(
                 return;
             }
         },
-        .Pointer => |ptr_info| switch (ptr_info.size) {
+        .pointer => |ptr_info| switch (ptr_info.size) {
             .Slice => {
                 if (ptr_info.child == u8) {
                     head = switch (options.slice_serialization_type) {
@@ -743,7 +743,7 @@ pub fn stringify(
             },
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
         },
-        .Enum => |enumInfo| {
+        .@"enum" => |enumInfo| {
             if (options.enum_serialization_type == .TextString) {
                 const tmp = @intFromEnum(value);
                 inline for (enumInfo.fields) |field| {
@@ -762,7 +762,7 @@ pub fn stringify(
                 return;
             }
         },
-        .Union => {
+        .@"union" => {
             const has_stringify = comptime std.meta.hasFn(T, "cborStringify");
             if (has_stringify and !options.from_callback) {
                 var o = options;
