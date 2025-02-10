@@ -9,7 +9,7 @@ const User = struct {
     pub fn cborStringify(self: *const @This(), options: zbor.Options, out: anytype) !void {
         return zbor.stringify(self, .{
             .allocator = options.allocator,
-            .from_callback = true,
+            .ignore_override = true,
             .field_settings = &.{
                 .{ .name = "id", .value_options = .{ .slice_serialization_type = .ByteString } },
                 .{ .name = "name", .value_options = .{ .slice_serialization_type = .TextString } },

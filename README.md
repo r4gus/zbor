@@ -22,28 +22,13 @@ Versions
 | Zig version | zbor version |
 |:-----------:|:------------:|
 | 0.13.0      | 0.15.0, 0.15.1, 0.15.2 |
-| 0.14.0      | 0.16.0 |
+| 0.14.0      | 0.16.0, 0.17.0 |
 
 First add this library as a dependency to your `build.zig.zon` file:
 
-```zig
-.{
-    .name = "your-project",
-    .version = 0.0.1,
-
-    .dependencies = .{
-        .zbor = .{
-            // For a specific release use:
-            // .url = "https://github.com/r4gus/zbor/archive/refs/tags/0.13.1.tar.gz",
-            // For the current master use:
-            .url = "https://github.com/r4gus/zbor/archive/master.tar.gz",
-            .hash = <hash>,
-        }
-    },
-    .paths = .{
-        // Your paths...
-    },
-}
+```bash
+# Replace <VERSION TAG> with the version you want to use
+zig fetch --save https://github.com/r4gus/zbor/archive/refs/tags/<VERSION TAG>.tar.gz
 ```
 
 then within you `build.zig` add the following code:
@@ -67,9 +52,6 @@ const your_module = b.addModule("your-module", .{
 // Or as a dependency for a executable...
 exe.root_module.addImport("zbor", zbor_module);
 ```
-
-> The easiest way to get the required __hash__ is to use a wrong one and then copy the correct one
-> from the error message.
 
 ## Usage
 
@@ -234,10 +216,12 @@ You can pass options to the `parse` function to influence its behaviour.
 This includes:
 
 * `allocator` - The allocator to be used. This is required if your data type has any pointers, slices, etc.
-* `duplicate_field_behavior` - How to handle duplicate fields (`.UseFirst`, `.Error`)
-* `ignore_unknown_fields` - Ignore unknown fields (default is `true`)
-* `field_settings` - Lets you specify aliases for struct fields
-* `from_cborParse` - Flag to break infinity loops (see Overriding parse)
+* `duplicate_field_behavior` - How to handle duplicate fields (`.UseFirst`, `.Error`).
+    * `.UseFirst` - Use the first field.
+    * `.Error` - Return an error if there are multiple fields with the same name.
+* `ignore_unknown_fields` - Ignore unknown fields (default is `true`).
+* `field_settings` - Lets you specify aliases for struct fields. Examples on how to use `field_settings` can be found in the _examples_ directory and within defined tests.
+* `ignore_override` - Flag to break infinity loops. This has to be set to `true` if you override the behavior using `cborParse` or `cborStringify`.
 
 #### Builder
 
@@ -304,7 +288,7 @@ const Foo = struct {
 
 The `StringifyOptions` can be used to indirectly pass an `Allocator` to the function.
 
-Please make sure to set `from_cborStringify` to `true` when calling recursively into `stringify(self)` to prevent infinite loops.
+Please make sure to set `ignore_override` to `true` when calling recursively into `stringify(self)` to prevent infinite loops.
 
 #### Overriding parse
 
@@ -326,7 +310,7 @@ const EcdsaP256Key = struct {
     pub fn cborParse(item: DataItem, options: Options) !@This() {
         _ = options;
         return try parse(@This(), item, .{
-            .from_callback = true, // prevent infinite loops
+            .ignore_override = true, // prevent infinite loops
             .field_settings = &.{
                 .{ .name = "kty", .field_options = .{ .alias = "1" } },
                 .{ .name = "alg", .field_options = .{ .alias = "3" } },
@@ -341,7 +325,7 @@ const EcdsaP256Key = struct {
 
 The `Options` can be used to indirectly pass an `Allocator` to the function.
 
-Please make sure to set `from_callback` to `true` when calling recursively into `parse(self)` to prevent infinite loops.
+Please make sure to set `ignore_override` to `true` when calling recursively into `parse(self)` to prevent infinite loops.
 
 #### Structs with fields of type `std.mem.Allocator`
 
@@ -353,7 +337,7 @@ pub fn cborStringify(self: *const @This(), options: cbor.StringifyOptions, out: 
     _ = options;
 
     try cbor.stringify(self, .{
-        .from_cborStringify = true,
+        .ignore_override = true,
         .field_settings = &.{
             .{ .name = "allocator", .options = .{ .skip = true } },
         },

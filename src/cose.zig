@@ -371,7 +371,7 @@ pub const Key = union(KeyTag) {
     pub fn cborStringify(self: *const @This(), options: Options, out: anytype) !void {
         _ = options;
         return stringify(self, .{
-            .from_callback = true,
+            .ignore_override = true,
             .field_settings = &.{
                 .{
                     .name = "kty",
@@ -416,7 +416,7 @@ pub const Key = union(KeyTag) {
     pub fn cborParse(item: cbor.DataItem, options: Options) !@This() {
         return try parse(@This(), item, .{
             .allocator = options.allocator,
-            .from_callback = true, // prevent infinite loops
+            .ignore_override = true, // prevent infinite loops
             .field_settings = &.{
                 .{
                     .name = "kty",

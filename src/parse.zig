@@ -98,7 +98,7 @@ pub fn ArrayBackedSlice(
                     // time to switch to a unique identifier based to the given cborStringify
                     // function.
                     var o = options;
-                    o.from_callback = false;
+                    o.ignore_override = false;
                     try stringify(self.get(), o, out);
                 },
             }
@@ -220,9 +220,9 @@ pub fn parse(
         .@"struct" => |structInfo| {
             // Custom parse function overrides default behaviour
             const has_parse = comptime std.meta.hasFn(T, "cborParse");
-            if (has_parse and !options.from_callback) {
+            if (has_parse and !options.ignore_override) {
                 var o = options;
-                o.from_callback = true;
+                o.ignore_override = true;
                 return T.cborParse(item, o);
             }
 
@@ -277,7 +277,7 @@ pub fn parse(
                                 }
 
                                 var child_options = options;
-                                child_options.from_callback = false;
+                                child_options.ignore_override = false;
                                 @field(r, field.name) = try parse(
                                     field.type,
                                     kv.value,
@@ -428,9 +428,9 @@ pub fn parse(
         .@"union" => |unionInfo| {
             // Custom parse function overrides default behaviour
             const has_parse = comptime std.meta.hasFn(T, "cborParse");
-            if (has_parse and !options.from_callback) {
+            if (has_parse and !options.ignore_override) {
                 var o = options;
-                o.from_callback = true;
+                o.ignore_override = true;
                 return T.cborParse(item, o);
             }
 
@@ -471,7 +471,7 @@ pub const Options = struct {
     field_settings: []const FieldSettings = &.{},
     /// Stringfiy called from cborStringify. This flag is used to prevent infinite recursion:
     /// stringify -> cborStringify -> stringify -> cborStringify -> stringify ...
-    from_callback: bool = false,
+    ignore_override: bool = false,
     /// How to behave if a CBOR map has two or more keys with
     /// the same value
     duplicate_field_behavior: enum {
@@ -604,11 +604,11 @@ pub fn stringify(
         .@"struct" => |S| {
             // Custom stringify function overrides default behaviour
             const has_stringify = comptime std.meta.hasFn(T, "cborStringify");
-            if (has_stringify and !options.from_callback) {
+            if (has_stringify and !options.ignore_override) {
                 // its probably better its set here otherwise people might forget
                 // to set it which leads to infinite loops.
                 var o = options;
-                o.from_callback = true;
+                o.ignore_override = true;
                 return value.cborStringify(o, out);
             }
 
@@ -686,7 +686,7 @@ pub fn stringify(
                 }
 
                 if (emit_field) {
-                    child_options.from_callback = false;
+                    child_options.ignore_override = false;
 
                     const nr = s2n(name);
                     if (name_st == .Integer and nr != null) { // int key
@@ -764,9 +764,9 @@ pub fn stringify(
         },
         .@"union" => {
             const has_stringify = comptime std.meta.hasFn(T, "cborStringify");
-            if (has_stringify and !options.from_callback) {
+            if (has_stringify and !options.ignore_override) {
                 var o = options;
-                o.from_callback = true;
+                o.ignore_override = true;
                 return value.cborStringify(options, out);
             }
 
@@ -1453,7 +1453,7 @@ test "deserialize EcdsP256Key using alias 2" {
         pub fn cborParse(item: DataItem, options: Options) !@This() {
             _ = options;
             return try parse(@This(), item, .{
-                .from_callback = true, // prevent infinite loops
+                .ignore_override = true, // prevent infinite loops
                 .field_settings = &.{
                     .{ .name = "kty", .field_options = .{ .alias = "1", .serialization_type = .Integer } },
                     .{ .name = "alg", .field_options = .{ .alias = "3", .serialization_type = .Integer } },

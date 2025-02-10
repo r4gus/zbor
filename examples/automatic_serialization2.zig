@@ -64,7 +64,7 @@ pub const Message = struct {
 
     pub fn cborStringify(self: Self, o: cbor.Options, out: anytype) !void {
         try cbor.stringify(self, .{
-            .from_callback = true,
+            .ignore_override = true,
             .field_settings = &.{
                 .{
                     .name = "id", // the name of the affected struct field
@@ -101,7 +101,7 @@ pub const Message = struct {
 
     pub fn cborParse(item: cbor.DataItem, o: cbor.Options) !Self {
         return try cbor.parse(Self, item, .{
-            .from_callback = true, // prevent infinite loops
+            .ignore_override = true, // prevent infinite loops
             .field_settings = &.{
                 .{
                     .name = "id", // the name of the affected struct field
@@ -157,7 +157,7 @@ pub const Headers = struct {
 
     pub fn cborStringify(self: Self, o: cbor.Options, out: anytype) !void {
         try cbor.stringify(self, .{
-            .from_callback = true,
+            .ignore_override = true,
             .field_settings = &.{
                 .{
                     .name = "token",
@@ -171,7 +171,7 @@ pub const Headers = struct {
 
     pub fn cborParse(item: cbor.DataItem, o: cbor.Options) !Self {
         return try cbor.parse(Self, item, .{
-            .from_callback = true, // prevent infinite loops
+            .ignore_override = true, // prevent infinite loops
             .field_settings = &.{
                 .{
                     .name = "token",
