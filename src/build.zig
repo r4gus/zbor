@@ -264,7 +264,7 @@ pub const Builder = struct {
     }
 
     fn moveUp(self: *@This()) !void {
-        const e = self.stack.pop();
+        const e = self.stack.pop().?;
         defer e.raw.deinit();
 
         switch (e.t) {
@@ -294,7 +294,7 @@ pub const Builder = struct {
     /// to prevent memory leaks if the builder throws an error.
     fn unwind(self: *@This()) void {
         while (self.stack.items.len > 0) {
-            const e = self.stack.pop();
+            const e = self.stack.pop().?;
             e.raw.deinit();
         }
         self.stack.deinit();
