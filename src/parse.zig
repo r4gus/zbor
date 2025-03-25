@@ -155,9 +155,7 @@ pub const ParseError = error{
 
 pub const StringifyError = error{
     UnsupportedItem,
-    OutOfMemory,
     InvalidPairCount,
-    NoSpaceLeft,
 };
 
 /// Deserialize a CBOR data item into a Zig data structure
@@ -529,7 +527,7 @@ pub fn stringify(
     options: Options,
     /// A writer
     out: anytype,
-) StringifyError!void {
+) (StringifyError || @TypeOf(out).Error)!void {
     const T = @TypeOf(value);
     const TInf = @typeInfo(T);
     var head: u8 = 0;
@@ -1049,7 +1047,7 @@ test "parse slice" {
     try std.testing.expectEqualSlices(u8, e2[0..], c2);
 }
 
-test "stringify to fixed buffer allocator" {
+test "stringify to fixed buffer stream" {
     var array: [3]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&array);
     const writer = fbs.writer();
