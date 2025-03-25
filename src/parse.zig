@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const build = @import("build.zig");
 const cbor = @import("cbor.zig");
 const Type = cbor.Type;
 const DataItem = cbor.DataItem;
@@ -154,7 +155,6 @@ pub const ParseError = error{
 
 pub const StringifyError = error{
     UnsupportedItem,
-    OutOfMemory,
     InvalidPairCount,
 };
 
@@ -527,7 +527,7 @@ pub fn stringify(
     options: Options,
     /// A writer
     out: anytype,
-) StringifyError!void {
+) (StringifyError || @TypeOf(out).Error)!void {
     const T = @TypeOf(value);
     const TInf = @typeInfo(T);
     var head: u8 = 0;
@@ -1047,6 +1047,16 @@ test "parse slice" {
     try std.testing.expectEqualSlices(u8, e2[0..], c2);
 }
 
+test "stringify to fixed buffer stream" {
+    var array: [3]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&array);
+    const writer = fbs.writer();
+    const value: i16 = -32700;
+    const expected: []const u8 = &.{ 0x39, 0x7f, 0xbb };
+    try stringify(value, .{}, writer);
+    try std.testing.expectEqualSlices(u8, expected, fbs.getWritten());
+}
+
 test "stringify simple value" {
     try testStringify("\xf4", false, .{});
     try testStringify("\xf5", true, .{});
@@ -1486,8 +1496,6 @@ test "serialize tagged union: 1" {
 
     try testStringify("\xa0", a, .{});
 }
-
-const build = @import("build.zig");
 
 test "overload struct 1" {
     const Foo = struct {
