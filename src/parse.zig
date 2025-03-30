@@ -38,7 +38,11 @@ pub fn ArrayBackedSlice(
             raw: []u8,
             i: *usize,
 
-            pub fn writeAll(self: *const @This(), in: []const u8) !void {
+            pub const Error = error{
+                OutOfMemory,
+            };
+
+            pub fn writeAll(self: *const @This(), in: []const u8) Error!void {
                 if (self.raw.len - self.i.* < in.len) {
                     return error.OutOfMemory;
                 }
@@ -46,7 +50,7 @@ pub fn ArrayBackedSlice(
                 self.i.* += in.len;
             }
 
-            pub fn writeByte(self: *const @This(), in: u8) !void {
+            pub fn writeByte(self: *const @This(), in: u8) Error!void {
                 if (self.i.* >= self.raw.len) {
                     return error.OutOfMemory;
                 }
