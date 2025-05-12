@@ -25,13 +25,13 @@ pub fn main() !void {
     defer di.deinit();
     const writer = di.writer();
 
-    try zbor.build.writeMap(writer, 3);
-    try zbor.build.writeTextString(writer, "id");
-    try zbor.build.writeByteString(writer, user.id);
-    try zbor.build.writeTextString(writer, "name");
-    try zbor.build.writeTextString(writer, user.name);
-    try zbor.build.writeTextString(writer, "displayName");
-    try zbor.build.writeTextString(writer, user.displayName);
+    try zbor.builder.writeMap(writer, 3);
+    try zbor.builder.writeTextString(writer, "id");
+    try zbor.builder.writeByteString(writer, user.id);
+    try zbor.builder.writeTextString(writer, "name");
+    try zbor.builder.writeTextString(writer, user.name);
+    try zbor.builder.writeTextString(writer, "displayName");
+    try zbor.builder.writeTextString(writer, user.displayName);
 
     try stdout.writer().print("expected: {s}\ngot: {s}\nmatches: {any}\n", .{
         std.fmt.fmtSliceHexLower(expected),

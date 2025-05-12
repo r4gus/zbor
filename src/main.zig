@@ -5,7 +5,7 @@ const testing = std.testing;
 const cbor = @import("cbor.zig");
 const parser = @import("parse.zig");
 pub const cose = @import("cose.zig");
-pub const build = @import("build.zig");
+pub const builder = @import("builder.zig");
 
 pub const Type = cbor.Type;
 pub const DataItem = cbor.DataItem;
@@ -23,8 +23,8 @@ pub const FieldSettings = parser.FieldSettings;
 pub const parse = parser.parse;
 pub const stringify = parser.stringify;
 
-pub const Builder = build.Builder;
-pub const ContainerType = build.ContainerType;
+pub const Builder = builder.Builder;
+pub const ContainerType = builder.ContainerType;
 
 pub const ArrayBackedSlice = parser.ArrayBackedSlice;
 pub const ArrayBackedSliceType = parser.ArrayBackedSliceType;
@@ -36,5 +36,5 @@ test "main tests" {
     _ = cbor;
     _ = parser;
     _ = cose;
-    _ = build;
+    _ = builder;
 }
