@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const build = @import("build.zig");
+const builder = @import("builder.zig");
 const cbor = @import("cbor.zig");
 const Type = cbor.Type;
 const DataItem = cbor.DataItem;
@@ -93,8 +93,8 @@ pub fn ArrayBackedSlice(
 
         pub fn cborStringify(self: *const @This(), options: Options, out: anytype) !void {
             switch (t) {
-                .Byte => try build.writeByteString(out, self.get()),
-                .Text => try build.writeTextString(out, self.get()),
+                .Byte => try builder.writeByteString(out, self.get()),
+                .Text => try builder.writeTextString(out, self.get()),
                 .Other => {
                     // Make sure this is set to false otherwise, nested cborStringify calls
                     // are prevented.
@@ -1523,7 +1523,7 @@ test "overload struct 1" {
             } }, o.writer());
 
             // Then use the Builder to alter the CBOR output
-            var b = try build.Builder.withType(allocator, .Map);
+            var b = try builder.Builder.withType(allocator, .Map);
             try b.pushTextString("x");
             try b.pushInt(self.x);
             try b.pushTextString("y");
