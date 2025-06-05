@@ -468,6 +468,9 @@ pub const Options = struct {
     enum_serialization_type: SerializationType = .TextString,
     /// What a slice value should be serialized to
     slice_serialization_type: SerializationType = .ByteString,
+    /// Whether an array should be serialized as definite or indefinite
+    /// In the case of indefinite arrays, a break marker will be added after the array to signal the end of the array.
+    array_serialization_type: ArraySerializationType = .ArrayDefinite,
     /// Pass an optional allocator. This might be useful when implementing
     /// a own cborStringify method for a struct or union.
     allocator: ?std.mem.Allocator = null,
@@ -492,6 +495,11 @@ pub const SerializationType = enum {
     ByteString,
     TextString,
     Integer,
+};
+
+pub const ArraySerializationType = enum {
+    ArrayDefinite,
+    ArrayIndefinite,
 };
 
 pub const SkipBehavior = enum {
@@ -591,7 +599,11 @@ pub fn stringify(
                     else => 0x40,
                 };
             } else {
-                head = 0x80;
+                if (options.array_serialization_type == .ArrayDefinite) {
+                    head = 0x80;
+                } else {
+                    head = 0x9f;
+                }
             }
             v = @as(u64, @intCast(value.len));
             try encode(out, head, v);
@@ -602,6 +614,9 @@ pub fn stringify(
                 for (value) |x| {
                     try stringify(x, options, out);
                 }
+            }
+            if (head == 0x9f and options.array_serialization_type == .ArrayIndefinite) {
+                try out.writeByte(0xff);
             }
             return;
         },
@@ -1334,6 +1349,16 @@ test "parse enum: 3" {
 
     try std.testing.expectEqual(Level.high, x1);
     try std.testing.expectEqual(Level.low, x2);
+}
+
+test "stringify array: definite and indefinite" {
+    const array = [_]u16{ 500, 2 };
+    try testStringify("\x82\x19\x01\xf4\x02", array, .{ .array_serialization_type = .ArrayDefinite });
+    try testStringify("\x9f\x19\x01\xf4\x02\xff", array, .{ .array_serialization_type = .ArrayIndefinite });
+
+    const nested = [2][2]u16{ .{ 500, 2 }, .{ 500, 2 } };
+    try testStringify("\x82\x82\x19\x01\xf4\x02\x82\x19\x01\xf4\x02", nested, .{ .array_serialization_type = .ArrayDefinite });
+    try testStringify("\x9f\x9f\x19\x01\xf4\x02\xff\x9f\x19\x01\xf4\x02\xff\xff", nested, .{ .array_serialization_type = .ArrayIndefinite });
 }
 
 test "serialize EcdsaP256Key" {
