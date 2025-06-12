@@ -14,6 +14,8 @@ pub const Type = enum {
     ArrayIndef,
     /// Map of pairs of data items (MT 5)
     Map,
+    /// Indefinite map of pairs of data items (MT 5)
+    MapIndef,
     /// False (MT 7)
     False,
     /// True (MT 7)
@@ -42,6 +44,7 @@ pub const Type = enum {
             0x80...0x9b => .Array,
             0x9f => .ArrayIndef,
             0xa0...0xbb => .Map,
+            0xbf => .MapIndef,
             0xf4 => .False,
             0xf5 => .True,
             0xf6 => .Null,
@@ -133,7 +136,6 @@ pub const DataItem = struct {
         return IndefArrayIterator{
             .data = self.data[1..],
             .i = 0,
-            .count = 0,
         };
     }
 
@@ -156,6 +158,20 @@ pub const DataItem = struct {
             .data = self.data[begin..end],
             .len = len,
             .count = 0,
+            .i = 0,
+        };
+    }
+
+    /// Decode the given DataItem into an indefinite map
+    ///
+    /// This function will return an IndefMapIterator on success and null if
+    /// the given DataItem doesn't have the type Type.MapIndef.
+    pub fn mapIndef(self: @This()) ?IndefMapIterator {
+        const T = Type.fromByte(self.data[0]);
+        if (T != Type.MapIndef) return null;
+
+        return IndefMapIterator{
+            .data = self.data[1..],
             .i = 0,
         };
     }
@@ -310,6 +326,36 @@ pub const MapIterator = struct {
     }
 };
 
+pub const IndefMapIterator = struct {
+    data: []const u8,
+    i: usize,
+
+    /// Get the next key Pair
+    ///
+    /// Returns null after the last element.
+    pub fn next(self: *@This()) ?Pair {
+
+        // break marker means iterator is done
+        const T = Type.fromByte(self.data[self.i]);
+        if (T == Type.Break) return null;
+
+        var new_i: usize = self.i;
+        if (burn(self.data, &new_i) == null) return null;
+        const k = DataItem.new(self.data[self.i..new_i]) catch {
+            unreachable; // this can only be if DataItem hasn't been instantiated with new()
+        };
+        self.i = new_i;
+
+        if (burn(self.data, &new_i) == null) return null;
+        const v = DataItem.new(self.data[self.i..new_i]) catch {
+            unreachable; // this can only be if DataItem hasn't been instantiated with new()
+        };
+        self.i = new_i;
+
+        return Pair{ .key = k, .value = v };
+    }
+};
+
 /// Iterator for iterating over an array, returned by DataItem.array()
 pub const ArrayIterator = struct {
     data: []const u8,
@@ -339,11 +385,10 @@ pub const ArrayIterator = struct {
 pub const IndefArrayIterator = struct {
     data: []const u8,
     i: usize,
-    count: usize,
 
     pub fn next(self: *@This()) ?DataItem {
         // break marker means iterator is done
-        const T = Type.fromByte(self.data[0]);
+        const T = Type.fromByte(self.data[self.i]);
         if (T == Type.Break) return null;
 
         var new_i: usize = self.i;
@@ -352,7 +397,6 @@ pub const IndefArrayIterator = struct {
         }
         const tmp = self.data[self.i..new_i];
         self.i = new_i;
-        self.count += 1;
 
         return DataItem.new(tmp) catch {
             unreachable;
@@ -455,15 +499,17 @@ fn additionalInfo(data: []const u8, l: ?*usize) ?u64 {
     }
 }
 
+/// Check if CBOR data, which we expect to be an indefinite length array, is valid.
+///
+/// An indefinite array is a sequence of data items that are not tagged with a length
+/// and instead are terminated by a break marker (0xff).
+///
+/// The data items in the indefinite array can be of any type, including other indefinite
+/// arrays.
 fn valid_indefinite(data: []const u8, i: *usize, mt: u8, breakable: bool) bool {
     if (i.* >= data.len) return false;
     switch (mt) {
-        2, 3 => {
-            while (validate(data, i, false, true)) {
-                if (data[i.*] != mt) return false;
-            }
-            return true;
-        },
+        2, 3 => return false, // We don't support indefinite length *strings*.
         4 => while (validate(data, i, false, true)) {},
         5 => while (validate(data, i, false, true)) if (!validate(data, i, false, true)) return false,
         7 => return breakable,
@@ -818,6 +864,9 @@ test "well formed" {
     // Indefinite length arrays
     try validateTest("\x9f\x81\xff", true);
     try validateTest("\x9f\x82\x9f\x81\x9f\x9f\xff\xff\xff\xff", true);
+
+    // Indefinite length maps
+    try validateTest("\xbf\x61\x61\x01\x61\x62\x9f\x02\x03\xff\xff", true);
 }
 
 test "malformed" {

@@ -349,6 +349,19 @@ pub fn parse(
 
                     return r;
                 },
+                .ArrayIndef => {
+                    var array = if (item.arrayIndef()) |x| x else return ParseError.Malformed;
+
+                    var r: T = undefined;
+
+                    var i: usize = 0;
+                    while (array.next()) |v| : (i += 1) {
+                        if (i >= arrayInfo.len) return ParseError.Overflow;
+                        r[i] = try parse(arrayInfo.child, v, options);
+                    }
+
+                    return r;
+                },
                 .ByteString, .TextString => {
                     if (arrayInfo.child != u8) return ParseError.UnexpectedItem;
 
@@ -411,6 +424,29 @@ pub fn parse(
                             while (v.next()) |elem| {
                                 try arraylist.ensureUnusedCapacity(1);
                                 const x = try parse(ptrInfo.child, elem, options);
+                                arraylist.appendAssumeCapacity(x);
+                            }
+
+                            if (ptrInfo.sentinel_ptr) |some| {
+                                const sentinel_value = @as(*align(1) const ptrInfo.child, @ptrCast(some)).*;
+                                try arraylist.append(sentinel_value);
+                                const output = try arraylist.toOwnedSlice();
+                                return output[0 .. output.len - 1 :sentinel_value];
+                            }
+
+                            return arraylist.toOwnedSlice();
+                        },
+                        .ArrayIndef => {
+                            var array = if (item.arrayIndef()) |x| x else return ParseError.Malformed;
+                            var arraylist = std.ArrayList(ptrInfo.child).init(allocator);
+                            errdefer {
+                                // TODO: take care of children
+                                arraylist.deinit();
+                            }
+
+                            while (array.next()) |v| {
+                                try arraylist.ensureUnusedCapacity(1);
+                                const x = try parse(ptrInfo.child, v, options);
                                 arraylist.appendAssumeCapacity(x);
                             }
 
@@ -1032,6 +1068,24 @@ test "parse array: 2" {
     try std.testing.expectEqualSlices(?u8, e[0..], x[0..]);
 }
 
+test "parse array indefinite: 1" {
+    const e = [5]u8{ 1, 2, 3, 4, 5 };
+    const di = try DataItem.new("\x9f\x01\x02\x03\x04\x05\xff");
+
+    const x = try parse([5]u8, di, .{});
+
+    try std.testing.expectEqualSlices(u8, e[0..], x[0..]);
+}
+
+test "parse array indefinite: 2, we want less than is present" {
+    const di = try DataItem.new("\x9f\x01\x02\x03\x04\x05\xff");
+
+    // We expect three items, but the indefinite array contains five.
+    const x = parse([3]u8, di, .{});
+
+    try std.testing.expectError(ParseError.Overflow, x);
+}
+
 test "parse pointer" {
     const allocator = std.testing.allocator;
 
@@ -1064,6 +1118,34 @@ test "parse slice" {
     const c2 = try parse([]u8, di2, .{ .allocator = allocator });
     defer allocator.free(c2);
     try std.testing.expectEqualSlices(u8, e2[0..], c2);
+}
+
+test "parse slice: indefinite" {
+    const allocator = std.testing.allocator;
+
+    const e1: []const u8 = &.{ 1, 2, 3, 4, 5 };
+    const di1 = try DataItem.new("\x9f\x01\x02\x03\x04\x05\xff");
+    const c1 = try parse([]const u8, di1, .{ .allocator = allocator });
+    defer allocator.free(c1);
+    try std.testing.expectEqualSlices(u8, e1, c1);
+}
+
+test "parse slice: indefinite, unknown length" {
+    const allocator = std.testing.allocator;
+    var random = std.Random.DefaultPrng.init(std.testing.random_seed);
+    // Generate a random indefinite length array
+    var bytes = std.ArrayList(u8).init(allocator);
+    defer bytes.deinit();
+    try bytes.appendSlice("\x9f");
+    while (random.random().int(u8) % 200 != 0) {
+        const byte = random.random().int(u8) % 10;
+        try bytes.append(byte);
+    }
+    try bytes.appendSlice("\xff");
+    const di1 = try DataItem.new(bytes.items);
+    const c1 = try parse([]const u8, di1, .{ .allocator = allocator });
+    defer allocator.free(c1);
+    // No assert, we just want to make sure it doesn't crash
 }
 
 test "stringify to fixed buffer stream" {
@@ -1356,9 +1438,9 @@ test "stringify array: definite and indefinite" {
     try testStringify("\x82\x19\x01\xf4\x02", array, .{ .array_serialization_type = .ArrayDefinite });
     try testStringify("\x9f\x19\x01\xf4\x02\xff", array, .{ .array_serialization_type = .ArrayIndefinite });
 
-    const nested = [2][2]u16{ .{ 500, 2 }, .{ 500, 2 } };
-    try testStringify("\x82\x82\x19\x01\xf4\x02\x82\x19\x01\xf4\x02", nested, .{ .array_serialization_type = .ArrayDefinite });
-    try testStringify("\x9f\x9f\x19\x01\xf4\x02\xff\x9f\x19\x01\xf4\x02\xff\xff", nested, .{ .array_serialization_type = .ArrayIndefinite });
+    const nested = [2][2]u16{ .{ 500, 2 }, .{ 500, 7 } };
+    try testStringify("\x82\x82\x19\x01\xf4\x02\x82\x19\x01\xf4\x07", nested, .{ .array_serialization_type = .ArrayDefinite });
+    try testStringify("\x9f\x9f\x19\x01\xf4\x02\xff\x9f\x19\x01\xf4\x07\xff\xff", nested, .{ .array_serialization_type = .ArrayIndefinite });
 }
 
 test "serialize EcdsaP256Key" {
