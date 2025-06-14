@@ -10,8 +10,12 @@ pub const Type = enum {
     TextString,
     /// Array of data items (MT 4)
     Array,
+    /// Indefinite array of data items (MT 4)
+    ArrayIndef,
     /// Map of pairs of data items (MT 5)
     Map,
+    /// Indefinite map of pairs of data items (MT 5)
+    MapIndef,
     /// False (MT 7)
     False,
     /// True (MT 7)
@@ -26,6 +30,8 @@ pub const Type = enum {
     Tagged,
     /// Floating point value (MT 7)
     Float,
+    /// Break (MT 7)
+    Break,
     /// Unknown data item
     Unknown,
 
@@ -36,7 +42,9 @@ pub const Type = enum {
             0x40...0x5b => .ByteString,
             0x60...0x7b => .TextString,
             0x80...0x9b => .Array,
+            0x9f => .ArrayIndef,
             0xa0...0xbb => .Map,
+            0xbf => .MapIndef,
             0xf4 => .False,
             0xf5 => .True,
             0xf6 => .Null,
@@ -44,6 +52,7 @@ pub const Type = enum {
             0xe0...0xf3, 0xf8 => .Simple,
             0xc0...0xdb => .Tagged,
             0xf9...0xfb => .Float,
+            0xff => .Break,
             else => .Unknown,
         };
     }
@@ -60,7 +69,7 @@ pub const DataItem = struct {
     /// before returning a DataItem. Returns an error if the data is malformed.
     pub fn new(data: []const u8) !@This() {
         var i: usize = 0;
-        if (!validate(data, &i, false)) return error.Malformed;
+        if (!validate(data, &i, false, false)) return error.Malformed;
         return .{ .data = data };
     }
 
@@ -120,6 +129,16 @@ pub const DataItem = struct {
         };
     }
 
+    pub fn arrayIndef(self: @This()) ?IndefArrayIterator {
+        const T = Type.fromByte(self.data[0]);
+        if (T != Type.ArrayIndef) return null;
+
+        return IndefArrayIterator{
+            .data = self.data[1..],
+            .i = 0,
+        };
+    }
+
     /// Decode the given DataItem into a map
     ///
     /// This function will return an MapIterator on success and null if
@@ -139,6 +158,20 @@ pub const DataItem = struct {
             .data = self.data[begin..end],
             .len = len,
             .count = 0,
+            .i = 0,
+        };
+    }
+
+    /// Decode the given DataItem into an indefinite map
+    ///
+    /// This function will return an IndefMapIterator on success and null if
+    /// the given DataItem doesn't have the type Type.MapIndef.
+    pub fn mapIndef(self: @This()) ?IndefMapIterator {
+        const T = Type.fromByte(self.data[0]);
+        if (T != Type.MapIndef) return null;
+
+        return IndefMapIterator{
+            .data = self.data[1..],
             .i = 0,
         };
     }
@@ -293,6 +326,36 @@ pub const MapIterator = struct {
     }
 };
 
+pub const IndefMapIterator = struct {
+    data: []const u8,
+    i: usize,
+
+    /// Get the next key Pair
+    ///
+    /// Returns null after the last element.
+    pub fn next(self: *@This()) ?Pair {
+
+        // break marker means iterator is done
+        const T = Type.fromByte(self.data[self.i]);
+        if (T == Type.Break) return null;
+
+        var new_i: usize = self.i;
+        if (burn(self.data, &new_i) == null) return null;
+        const k = DataItem.new(self.data[self.i..new_i]) catch {
+            unreachable; // this can only be if DataItem hasn't been instantiated with new()
+        };
+        self.i = new_i;
+
+        if (burn(self.data, &new_i) == null) return null;
+        const v = DataItem.new(self.data[self.i..new_i]) catch {
+            unreachable; // this can only be if DataItem hasn't been instantiated with new()
+        };
+        self.i = new_i;
+
+        return Pair{ .key = k, .value = v };
+    }
+};
+
 /// Iterator for iterating over an array, returned by DataItem.array()
 pub const ArrayIterator = struct {
     data: []const u8,
@@ -318,6 +381,29 @@ pub const ArrayIterator = struct {
     }
 };
 
+/// Iterator for iterating over an indefinite length array, returned by DataItem.arrayIndef()
+pub const IndefArrayIterator = struct {
+    data: []const u8,
+    i: usize,
+
+    pub fn next(self: *@This()) ?DataItem {
+        // break marker means iterator is done
+        const T = Type.fromByte(self.data[self.i]);
+        if (T == Type.Break) return null;
+
+        var new_i: usize = self.i;
+        if (burn(self.data, &new_i) == null) {
+            return null;
+        }
+        const tmp = self.data[self.i..new_i];
+        self.i = new_i;
+
+        return DataItem.new(tmp) catch {
+            unreachable;
+        };
+    }
+};
+
 /// Move the index `i` to the beginning of the next data item.
 fn burn(data: []const u8, i: *usize) ?void {
     if (i.* >= data.len) return null;
@@ -337,6 +423,15 @@ fn burn(data: []const u8, i: *usize) ?void {
                     return null;
                 }
             }
+        },
+        0x9f => {
+            i.* += offset;
+            while (data[i.*] != 0xff) {
+                if (burn(data, i) == null) {
+                    return null;
+                }
+            }
+            i.* += 1;
         },
         0xa0...0xbb => {
             i.* += offset;
@@ -395,8 +490,32 @@ fn additionalInfo(data: []const u8, l: ?*usize) ?u64 {
             if (l != null) l.?.* = 9;
             return @as(u64, @intCast(unsigned_64(data[1..9])));
         },
+        0x1f => {
+            if (data.len < 1) return null;
+            if (l != null) l.?.* = 1;
+            return 0x00;
+        },
         else => return null,
     }
+}
+
+/// Check if CBOR data, which we expect to be an indefinite length array, is valid.
+///
+/// An indefinite array is a sequence of data items that are not tagged with a length
+/// and instead are terminated by a break marker (0xff).
+///
+/// The data items in the indefinite array can be of any type, including other indefinite
+/// arrays.
+fn valid_indefinite(data: []const u8, i: *usize, mt: u8, breakable: bool) bool {
+    if (i.* >= data.len) return false;
+    switch (mt) {
+        2, 3 => return false, // We don't support indefinite length *strings*.
+        4 => while (validate(data, i, false, true)) {},
+        5 => while (validate(data, i, false, true)) if (!validate(data, i, false, true)) return false,
+        7 => return breakable,
+        else => return false,
+    }
+    return true;
 }
 
 /// Check if the given CBOR data is well formed
@@ -406,7 +525,7 @@ fn additionalInfo(data: []const u8, l: ?*usize) ?u64 {
 /// * `check_len` - It's important that `data` doesn't contain any extra bytes at the end [Yes/no]
 ///
 /// Returns true if the given data is well formed, false otherwise.
-pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
+pub fn validate(data: []const u8, i: *usize, check_len: bool, breakable: bool) bool {
     if (i.* >= data.len) return false;
     const ib: u8 = data[i.*];
     i.* += 1;
@@ -426,7 +545,7 @@ pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
             i.* += bytes;
         },
         28, 29, 30 => return false,
-        31 => return false, // we dont support indefinite length items for now
+        31 => return valid_indefinite(data, i, mt, breakable),
         else => {},
     }
 
@@ -435,17 +554,17 @@ pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
         4 => {
             var j: usize = 0;
             while (j < val) : (j += 1) {
-                if (!validate(data, i, false)) return false;
+                if (!validate(data, i, false, breakable)) return false;
             }
         },
         5 => {
             var j: usize = 0;
             while (j < val) : (j += 1) {
-                if (!validate(data, i, false)) return false;
-                if (!validate(data, i, false)) return false;
+                if (!validate(data, i, false, breakable)) return false;
+                if (!validate(data, i, false, breakable)) return false;
             }
         },
-        6 => if (!validate(data, i, false)) return false,
+        6 => if (!validate(data, i, false, breakable)) return false,
         7 => if (ai == 24 and val < 32) return false,
         else => {},
     }
@@ -729,7 +848,7 @@ test "deserialize tagged" {
 
 fn validateTest(data: []const u8, expected: bool) !void {
     var i: usize = 0;
-    try std.testing.expectEqual(expected, validate(data, &i, true));
+    try std.testing.expectEqual(expected, validate(data, &i, true, false));
 }
 
 test "well formed" {
@@ -741,6 +860,13 @@ test "well formed" {
     try validateTest("\x18\x19", true);
     try validateTest("\x18\x64", true);
     try validateTest("\x19\x03\xe8", true);
+
+    // Indefinite length arrays
+    try validateTest("\x9f\x81\xff", true);
+    try validateTest("\x9f\x82\x9f\x81\x9f\x9f\xff\xff\xff\xff", true);
+
+    // Indefinite length maps
+    try validateTest("\xbf\x61\x61\x01\x61\x62\x9f\x02\x03\xff\xff", true);
 }
 
 test "malformed" {
@@ -829,6 +955,4 @@ test "malformed" {
     try validateTest("\xa1\xff\x00", false);
     try validateTest("\xa1\x00\xff", false);
     try validateTest("\xa2\x00\x00\xff", false);
-    try validateTest("\x9f\x81\xff", false);
-    try validateTest("\x9f\x82\x9f\x81\x9f\x9f\xff\xff\xff\xff", false);
 }
