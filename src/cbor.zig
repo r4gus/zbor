@@ -513,7 +513,11 @@ fn valid_indefinite(data: []const u8, i: *usize, mt: u8, breakable: bool) bool {
     if (i.* >= data.len) return false;
     switch (mt) {
         2, 3 => return false, // We don't support indefinite length *strings*.
-        4 => while (validate(data, i, false, true)) {},
+        4 => {
+            while (i.* < data.len and Type.fromByte(data[i.*]) != .Break and validate(data, i, false, true)) {}
+            if (i.* >= data.len or Type.fromByte(data[i.*]) != .Break) return false;
+            i.* += 1; // we move the cursor over the Break-code
+        },
         5 => while (validate(data, i, false, true)) if (!validate(data, i, false, true)) return false,
         7 => return breakable,
         else => return false,
@@ -865,8 +869,10 @@ test "well formed" {
     try validateTest("\x19\x03\xe8", true);
 
     // Indefinite length arrays
-    try validateTest("\x9f\x81\xff", true);
-    try validateTest("\x9f\x82\x9f\x81\x9f\x9f\xff\xff\xff\xff", true);
+    try validateTest("\x9f\x01\xff", true);
+    try validateTest("\x9f\x01\x9f\x02\x9f\x9f\xff\xff\xff\xff", true);
+    try validateTest("\x9f\x82\x02\x03\x9f\x04\x05\xff\xff", true);
+    try validateTest("\x9f\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19\xff", true);
 
     // Indefinite length maps
     try validateTest("\xbf\x61\x61\x01\x61\x62\x9f\x02\x03\xff\xff", true);
@@ -958,4 +964,8 @@ test "malformed" {
     try validateTest("\xa1\xff\x00", false);
     try validateTest("\xa1\x00\xff", false);
     try validateTest("\xa2\x00\x00\xff", false);
+
+    // Break missing in a indefinate-length array or map
+    try validateTest("\x9f\x82\x02\x03\x9f\x04\x05\xff", false);
+    try validateTest("\x9f\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19", false);
 }
