@@ -641,8 +641,14 @@ pub fn stringify(
                     head = 0x9f;
                 }
             }
-            v = @as(u64, @intCast(value.len));
-            try encode(out, head, v);
+
+            if (options.array_serialization_type == .ArrayDefinite) {
+                // The length is only encoded for non indefinite length DIs.
+                v = @as(u64, @intCast(value.len));
+                try encode(out, head, v);
+            } else {
+                try out.writeByte(head);
+            }
 
             if (arrayInfo.child == u8) {
                 try out.writeAll(value[0..]);
@@ -1434,9 +1440,12 @@ test "parse enum: 3" {
 }
 
 test "stringify array: definite and indefinite" {
-    const array = [_]u16{ 500, 2 };
-    try testStringify("\x82\x19\x01\xf4\x02", array, .{ .array_serialization_type = .ArrayDefinite });
-    try testStringify("\x9f\x19\x01\xf4\x02\xff", array, .{ .array_serialization_type = .ArrayIndefinite });
+    const array1 = [_]u16{ 500, 2 };
+    try testStringify("\x82\x19\x01\xf4\x02", array1, .{ .array_serialization_type = .ArrayDefinite });
+    try testStringify("\x9f\x19\x01\xf4\x02\xff", array1, .{ .array_serialization_type = .ArrayIndefinite });
+
+    const array2 = [_]u16{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
+    try testStringify("\x9f\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19\x18\x1a\x18\x1b\x18\x1c\x18\x1d\x18\x1e\x18\x1f\xff", array2, .{ .array_serialization_type = .ArrayIndefinite });
 
     const nested = [2][2]u16{ .{ 500, 2 }, .{ 500, 7 } };
     try testStringify("\x82\x82\x19\x01\xf4\x02\x82\x19\x01\xf4\x07", nested, .{ .array_serialization_type = .ArrayDefinite });
