@@ -334,6 +334,7 @@ pub const IndefMapIterator = struct {
     ///
     /// Returns null after the last element.
     pub fn next(self: *@This()) ?Pair {
+        if (self.i >= self.data.len) return null;
 
         // break marker means iterator is done
         const T = Type.fromByte(self.data[self.i]);
@@ -387,6 +388,8 @@ pub const IndefArrayIterator = struct {
     i: usize,
 
     pub fn next(self: *@This()) ?DataItem {
+        if (self.i >= self.data.len) return null;
+
         // break marker means iterator is done
         const T = Type.fromByte(self.data[self.i]);
         if (T == Type.Break) return null;
