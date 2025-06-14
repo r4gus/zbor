@@ -69,7 +69,7 @@ pub const DataItem = struct {
     /// before returning a DataItem. Returns an error if the data is malformed.
     pub fn new(data: []const u8) !@This() {
         var i: usize = 0;
-        if (!validate(data, &i, false, false)) return error.Malformed;
+        if (!validate(data, &i, false)) return error.Malformed;
         return .{ .data = data };
     }
 
@@ -502,29 +502,6 @@ fn additionalInfo(data: []const u8, l: ?*usize) ?u64 {
     }
 }
 
-/// Check if CBOR data, which we expect to be an indefinite length array, is valid.
-///
-/// An indefinite array is a sequence of data items that are not tagged with a length
-/// and instead are terminated by a break marker (0xff).
-///
-/// The data items in the indefinite array can be of any type, including other indefinite
-/// arrays.
-fn valid_indefinite(data: []const u8, i: *usize, mt: u8, breakable: bool) bool {
-    if (i.* >= data.len) return false;
-    switch (mt) {
-        2, 3 => return false, // We don't support indefinite length *strings*.
-        4 => {
-            while (i.* < data.len and Type.fromByte(data[i.*]) != .Break and validate(data, i, false, true)) {}
-            if (i.* >= data.len or Type.fromByte(data[i.*]) != .Break) return false;
-            i.* += 1; // we move the cursor over the Break-code
-        },
-        5 => while (validate(data, i, false, true)) if (!validate(data, i, false, true)) return false,
-        7 => return breakable,
-        else => return false,
-    }
-    return true;
-}
-
 /// Check if the given CBOR data is well formed
 ///
 /// * `data` - Raw CBOR data
@@ -532,7 +509,7 @@ fn valid_indefinite(data: []const u8, i: *usize, mt: u8, breakable: bool) bool {
 /// * `check_len` - It's important that `data` doesn't contain any extra bytes at the end [Yes/no]
 ///
 /// Returns true if the given data is well formed, false otherwise.
-pub fn validate(data: []const u8, i: *usize, check_len: bool, breakable: bool) bool {
+pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
     if (i.* >= data.len) return false;
     const ib: u8 = data[i.*];
     i.* += 1;
@@ -552,7 +529,31 @@ pub fn validate(data: []const u8, i: *usize, check_len: bool, breakable: bool) b
             i.* += bytes;
         },
         28, 29, 30 => return false,
-        31 => return valid_indefinite(data, i, mt, breakable),
+        31 => {
+            // Check if CBOR data, which we expect to be an indefinite length array, is valid.
+            //
+            // An indefinite array is a sequence of data items that are not tagged with a length
+            // and instead are terminated by a break marker (0xff).
+            //
+            // The data items in the indefinite array can be of any type, including other indefinite
+            // arrays.
+            switch (mt) {
+                2, 3 => return false, // We don't support indefinite length *strings*.
+                4 => {
+                    while (i.* < data.len and Type.fromByte(data[i.*]) != .Break and validate(data, i, false)) {}
+                    if (i.* >= data.len or Type.fromByte(data[i.*]) != .Break) return false;
+                    i.* += 1; // we move the cursor over the Break-code
+                },
+                5 => {
+                    while (i.* < data.len and Type.fromByte(data[i.*]) != .Break and validate(data, i, false) and validate(data, i, false)) {}
+                    if (i.* >= data.len or Type.fromByte(data[i.*]) != .Break) return false;
+                    i.* += 1; // we move the cursor over the Break-code
+                },
+                7 => return false, // we encountered a "stand alone" break-code
+                else => return false,
+            }
+            return true;
+        },
         else => {},
     }
 
@@ -561,17 +562,17 @@ pub fn validate(data: []const u8, i: *usize, check_len: bool, breakable: bool) b
         4 => {
             var j: usize = 0;
             while (j < val) : (j += 1) {
-                if (!validate(data, i, false, breakable)) return false;
+                if (!validate(data, i, false)) return false;
             }
         },
         5 => {
             var j: usize = 0;
             while (j < val) : (j += 1) {
-                if (!validate(data, i, false, breakable)) return false;
-                if (!validate(data, i, false, breakable)) return false;
+                if (!validate(data, i, false)) return false;
+                if (!validate(data, i, false)) return false;
             }
         },
-        6 => if (!validate(data, i, false, breakable)) return false,
+        6 => if (!validate(data, i, false)) return false,
         7 => if (ai == 24 and val < 32) return false,
         else => {},
     }
@@ -855,7 +856,7 @@ test "deserialize tagged" {
 
 fn validateTest(data: []const u8, expected: bool) !void {
     var i: usize = 0;
-    try std.testing.expectEqual(expected, validate(data, &i, true, false));
+    try std.testing.expectEqual(expected, validate(data, &i, true));
 }
 
 test "well formed" {
@@ -875,7 +876,9 @@ test "well formed" {
     try validateTest("\x9f\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19\xff", true);
 
     // Indefinite length maps
-    try validateTest("\xbf\x61\x61\x01\x61\x62\x9f\x02\x03\xff\xff", true);
+    try validateTest("\xbf\x63\x46\x75\x6e\x01\x63\x41\x6d\x74\x21\xff", true);
+    try validateTest("\xbf\x61\x61\x9f\x03\x04\xff\x61\x62\x9f\x02\x03\xff\xff", true);
+    try validateTest("\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64\xff\xff", true);
 }
 
 test "malformed" {
@@ -968,4 +971,10 @@ test "malformed" {
     // Break missing in a indefinate-length array or map
     try validateTest("\x9f\x82\x02\x03\x9f\x04\x05\xff", false);
     try validateTest("\x9f\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19", false);
+    try validateTest("\xbf\x63\x46\x75\x6e\x01\x63\x41\x6d\x74\x21", false);
+    try validateTest("\xbf\x61\x61\x9f\x03\x04\xff\x61\x62\x9f\x02\x03\xff", false);
+    try validateTest("\xbf\x61\x61\x9f\x03\x04\x61\x62\x9f\x02\x03\xff\xff", false);
+    try validateTest("\x9f\xbf\x61\x61\x61\x63\xbf\x61\x62\x61\x64\xff\xff", false);
+    try validateTest("\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64\xff", false);
+    try validateTest("\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64", false);
 }
