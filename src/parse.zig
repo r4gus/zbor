@@ -512,6 +512,10 @@ pub const Options = struct {
     /// Whether an array should be serialized as definite or indefinite
     /// In the case of indefinite arrays, a break marker will be added after the array to signal the end of the array.
     array_serialization_type: ArraySerializationType = .ArrayDefinite,
+    /// Wheter a map/struct should be serialized as a definite or indefinite CBOR map.
+    /// In the case of a indefinite map, a break marker 0xff will be added after the
+    /// map to signal the end.
+    map_serialization_type: MapSerializationType = .MapDefinite,
     /// Pass an optional allocator. This might be useful when implementing
     /// a own cborStringify method for a struct or union.
     allocator: ?std.mem.Allocator = null,
@@ -541,6 +545,11 @@ pub const SerializationType = enum {
 pub const ArraySerializationType = enum {
     ArrayDefinite,
     ArrayIndefinite,
+};
+
+pub const MapSerializationType = enum {
+    MapDefinite,
+    MapIndefinite,
 };
 
 pub const SkipBehavior = enum {
@@ -678,7 +687,11 @@ pub fn stringify(
                 return value.cborStringify(o, out);
             }
 
-            head = 0xa0; // Struct becomes a Map.
+            if (options.map_serialization_type == .MapDefinite) {
+                head = 0xa0; // Struct becomes a Map.
+            } else {
+                head = 0xbf; // Struct becomes a indefinite-length map
+            }
 
             // Count the number of fields that should be serialized
             inline for (S.fields) |Field| {
@@ -710,7 +723,11 @@ pub fn stringify(
                 }
             }
 
-            try encode(out, head, v);
+            if (options.map_serialization_type == .MapDefinite) {
+                try encode(out, head, v);
+            } else {
+                try out.writeByte(head);
+            }
 
             // Now serialize the actual fields
             inline for (S.fields) |Field| {
@@ -766,6 +783,7 @@ pub fn stringify(
                     try stringify(@field(value, Field.name), child_options, out); // value
                 }
             }
+            if (options.map_serialization_type == .MapIndefinite) try out.writeByte(0xff);
             return;
         },
         .optional => {
@@ -1853,4 +1871,61 @@ test "parse indefinite-length map {_ 'Fun': true, 'Amt': -2}" {
 
     try std.testing.expectEqual(true, s.Fun);
     try std.testing.expectEqual(@as(i16, -2), s.Amt);
+}
+
+test "serialize indefinite-length map {_ 'a': 1, 'b': [_ 2, 3]}" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        a: u16,
+        b: []const u16,
+    };
+
+    const s = S{
+        .a = 1,
+        .b = &.{ 2, 3 },
+    };
+
+    var arr = std.ArrayList(u8).init(allocator);
+    defer arr.deinit();
+
+    try stringify(
+        s,
+        .{
+            .allocator = allocator,
+            .map_serialization_type = .MapIndefinite,
+            .array_serialization_type = .ArrayIndefinite,
+        },
+        arr.writer(),
+    );
+
+    try std.testing.expectEqualSlices(u8, "\xbf\x61\x61\x01\x61\x62\x9f\x02\x03\xff\xff", arr.items);
+}
+
+test "serialize indefinite-length map {_ 'Fun': true, 'Amt': -2}" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        Fun: bool,
+        Amt: i16,
+    };
+
+    const s = S{
+        .Fun = true,
+        .Amt = -2,
+    };
+
+    var arr = std.ArrayList(u8).init(allocator);
+    defer arr.deinit();
+
+    try stringify(
+        s,
+        .{
+            .allocator = allocator,
+            .map_serialization_type = .MapIndefinite,
+        },
+        arr.writer(),
+    );
+
+    try std.testing.expectEqualSlices(u8, "\xbf\x63\x46\x75\x6e\xf5\x63\x41\x6d\x74\x21\xff", arr.items);
 }
