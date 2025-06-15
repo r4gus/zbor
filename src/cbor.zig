@@ -157,8 +157,6 @@ pub const DataItem = struct {
         return MapIterator{
             .data = self.data[begin..end],
             .len = len,
-            .count = 0,
-            .i = 0,
         };
     }
 
@@ -166,13 +164,14 @@ pub const DataItem = struct {
     ///
     /// This function will return an IndefMapIterator on success and null if
     /// the given DataItem doesn't have the type Type.MapIndef.
-    pub fn mapIndef(self: @This()) ?IndefMapIterator {
+    pub fn mapIndef(self: @This()) ?MapIterator {
         const T = Type.fromByte(self.data[0]);
         if (T != Type.MapIndef) return null;
 
-        return IndefMapIterator{
+        return .{
             .data = self.data[1..],
-            .i = 0,
+            .len = 0, // we don't know the actual number of expected items
+            .indef = true,
         };
     }
 
@@ -299,16 +298,25 @@ pub const Pair = struct {
 pub const MapIterator = struct {
     data: []const u8,
     len: usize,
-    count: usize,
-    i: usize,
+    count: usize = 0,
+    i: usize = 0,
+    indef: bool = false,
 
     /// Get the next key Pair
     ///
     /// Returns null after the last element.
     pub fn next(self: *@This()) ?Pair {
-        if (self.count >= self.len) return null;
-        var new_i: usize = self.i;
+        if (self.i >= self.data.len) return null;
 
+        if (self.indef) {
+            // break marker means iterator is done
+            const t = Type.fromByte(self.data[self.i]);
+            if (t == Type.Break) return null;
+        } else {
+            if (self.count >= self.len) return null;
+        }
+
+        var new_i: usize = self.i;
         if (burn(self.data, &new_i) == null) return null;
         const k = DataItem.new(self.data[self.i..new_i]) catch {
             unreachable; // this can only be if DataItem hasn't been instantiated with new()
@@ -322,37 +330,6 @@ pub const MapIterator = struct {
         self.i = new_i;
 
         self.count += 1;
-        return Pair{ .key = k, .value = v };
-    }
-};
-
-pub const IndefMapIterator = struct {
-    data: []const u8,
-    i: usize,
-
-    /// Get the next key Pair
-    ///
-    /// Returns null after the last element.
-    pub fn next(self: *@This()) ?Pair {
-        if (self.i >= self.data.len) return null;
-
-        // break marker means iterator is done
-        const T = Type.fromByte(self.data[self.i]);
-        if (T == Type.Break) return null;
-
-        var new_i: usize = self.i;
-        if (burn(self.data, &new_i) == null) return null;
-        const k = DataItem.new(self.data[self.i..new_i]) catch {
-            unreachable; // this can only be if DataItem hasn't been instantiated with new()
-        };
-        self.i = new_i;
-
-        if (burn(self.data, &new_i) == null) return null;
-        const v = DataItem.new(self.data[self.i..new_i]) catch {
-            unreachable; // this can only be if DataItem hasn't been instantiated with new()
-        };
-        self.i = new_i;
-
         return Pair{ .key = k, .value = v };
     }
 };
