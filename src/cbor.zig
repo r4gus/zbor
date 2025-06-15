@@ -530,13 +530,11 @@ pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
         },
         28, 29, 30 => return false,
         31 => {
-            // Check if CBOR data, which we expect to be an indefinite length array, is valid.
-            //
-            // An indefinite array is a sequence of data items that are not tagged with a length
-            // and instead are terminated by a break marker (0xff).
-            //
-            // The data items in the indefinite array can be of any type, including other indefinite
-            // arrays.
+            // Check if CBOR data, which we expect to be an indefinite length array,
+            // is valid. An indefinite array is a sequence of data items that are not
+            // tagged with a length and instead are terminated by a break marker (0xff).
+            // The data items in the indefinite array can be of any type, including
+            // other indefinite arrays.
             switch (mt) {
                 2, 3 => return false, // We don't support indefinite length *strings*.
                 4 => {
