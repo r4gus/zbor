@@ -21,8 +21,8 @@ to share some ideas feel free to open an issue or write me a mail, but please be
 Versions
 | Zig version | zbor version |
 |:-----------:|:------------:|
-| 0.13.0      | 0.15.0, 0.15.1, 0.15.2 |
-| 0.14.0      | 0.16.0, 0.17.0 |
+| 0.13.0      | 0.15 |
+| 0.14.0      | 0.16, 0.17 |
 
 First add this library as a dependency to your `build.zig.zon` file:
 
@@ -347,6 +347,64 @@ pub fn cborStringify(self: *const @This(), options: cbor.StringifyOptions, out: 
 
 When using `parse` make sure you pass a allocator to the function. The passed allocator will be assigned
 to the field of type `std.mem.Allocator`.
+
+#### Indefinite-length Data Items
+
+CBOR supports the serialization of many container types in two formats, definite and indefinite. For definite-length data items, the length is directly encoded into the data-items header. In contrast, indefinite-length data items are terminated by a break-byte `0xff`.
+
+Zbor currently supports indefinite-length encoding for both arrays and maps. The default serialization type for both types remains definite to support backwards compatibility. One can control the serialization type for arrays and maps via the serialization options. The two fields in question are `array_serialization_type` and `map_serialization_type`.
+
+##### Indefinite-length Arrays
+
+This is an example for serializing a array as indefinite-length map:
+```zig
+const array = [_]u16{ 500, 2 };
+
+var arr = std.ArrayList(u8).init(allocator);
+defer arr.deinit();
+
+try stringify(
+    array,
+    .{
+        .allocator = allocator,
+        .array_serialization_type = .ArrayIndefinite,
+    },
+    arr.writer(),
+);
+```
+
+For the de-serialization of indefinite-length arrays you don't have to do anything special. The `parse` function will automatically detect the encoding type for you.
+
+##### Indefinite-length Maps
+
+This is an example for serializing a struct as indefinite-length map:
+```zig
+const allocator = std.testing.allocator;
+
+const S = struct {
+    Fun: bool,
+    Amt: i16,
+};
+
+const s = S{
+    .Fun = true,
+    .Amt = -2,
+};
+
+var arr = std.ArrayList(u8).init(allocator);
+defer arr.deinit();
+
+try stringify(
+    s,
+    .{
+        .allocator = allocator,
+        .map_serialization_type = .MapIndefinite,
+    },
+    arr.writer(),
+);
+```
+
+For the de-serialization of indefinite-length maps you don't have to do anything special. The `parse` function will automatically detect the encoding type for you.
 
 ### ArrayBackedSlice
 
