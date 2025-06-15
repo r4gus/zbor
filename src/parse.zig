@@ -231,11 +231,16 @@ pub fn parse(
             }
 
             switch (item.getType()) {
-                .Map => {
+                .Map, .MapIndef => {
                     var r: T = undefined;
                     var fields_seen = [_]bool{false} ** structInfo.fields.len;
 
-                    var v = if (item.map()) |x| x else return ParseError.Malformed;
+                    var v = if (item.map()) |x|
+                        x
+                    else if (item.mapIndef()) |x|
+                        x
+                    else
+                        return ParseError.Malformed;
                     while (v.next()) |kv| {
                         var found = false;
 
@@ -1819,4 +1824,33 @@ test "ArrayBackedSlice test #1" {
     const y = try parse(S64B, di, .{});
 
     try std.testing.expectEqualSlices(u8, "\x01\x02\x03\x04", y.get());
+}
+
+test "parse indefinite-length map {_ 'a': 1, 'b': [_ 2, 3]}" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        a: u16,
+        b: []const u8,
+    };
+
+    const di = try DataItem.new("\xbf\x61\x61\x01\x61\x62\x9f\x02\x03\xff\xff");
+    const s = try parse(S, di, .{ .allocator = allocator });
+    defer allocator.free(s.b);
+
+    try std.testing.expectEqual(@as(u16, 1), s.a);
+    try std.testing.expectEqualSlices(u8, &.{ 2, 3 }, s.b);
+}
+
+test "parse indefinite-length map {_ 'Fun': true, 'Amt': -2}" {
+    const S = struct {
+        Fun: bool,
+        Amt: i16,
+    };
+
+    const di = try DataItem.new("\xbf\x63\x46\x75\x6e\xf5\x63\x41\x6d\x74\x21\xff");
+    const s = try parse(S, di, .{});
+
+    try std.testing.expectEqual(true, s.Fun);
+    try std.testing.expectEqual(@as(i16, -2), s.Amt);
 }
