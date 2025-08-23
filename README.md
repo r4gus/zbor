@@ -22,7 +22,8 @@ Versions
 | Zig version | zbor version |
 |:-----------:|:------------:|
 | 0.13.0      | 0.15 |
-| 0.14.0      | 0.16, 0.17 |
+| 0.14.x      | 0.16.x, 0.17.x, 0.18.x |
+| 0.15.x      | 0.19.0 |
 
 First add this library as a dependency to your `build.zig.zon` file:
 
