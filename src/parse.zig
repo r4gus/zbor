@@ -420,7 +420,7 @@ pub fn parse(
                         },
                         .Array => {
                             var v = if (item.array()) |x| x else return ParseError.Malformed;
-                            var arraylist = std.ArrayList(ptrInfo.child).init(allocator);
+                            var arraylist = std.array_list.Managed(ptrInfo.child).init(allocator);
                             errdefer {
                                 // TODO: take care of children
                                 arraylist.deinit();
@@ -443,7 +443,7 @@ pub fn parse(
                         },
                         .ArrayIndef => {
                             var array = if (item.arrayIndef()) |x| x else return ParseError.Malformed;
-                            var arraylist = std.ArrayList(ptrInfo.child).init(allocator);
+                            var arraylist = std.array_list.Managed(ptrInfo.child).init(allocator);
                             errdefer {
                                 // TODO: take care of children
                                 arraylist.deinit();
@@ -927,7 +927,7 @@ fn encode(out: anytype, head: u8, v: u64) !void {
 
 fn testStringify(e: []const u8, v: anytype, o: Options) !void {
     const allocator = std.testing.allocator;
-    var str = std.ArrayList(u8).init(allocator);
+    var str = std.array_list.Managed(u8).init(allocator);
     defer str.deinit();
 
     try stringify(v, o, str.writer());
@@ -1175,7 +1175,7 @@ test "parse slice: indefinite, unknown length" {
     const allocator = std.testing.allocator;
     var random = std.Random.DefaultPrng.init(std.testing.random_seed);
     // Generate a random indefinite length array
-    var bytes = std.ArrayList(u8).init(allocator);
+    var bytes = std.array_list.Managed(u8).init(allocator);
     defer bytes.deinit();
     try bytes.appendSlice("\x9f");
     while (random.random().int(u8) % 200 != 0) {
@@ -1392,7 +1392,7 @@ test "stringify enum: 1" {
     };
 
     const allocator = std.testing.allocator;
-    var str = std.ArrayList(u8).init(allocator);
+    var str = std.array_list.Managed(u8).init(allocator);
     defer str.deinit();
 
     const high = Level.high;
@@ -1409,7 +1409,7 @@ test "stringify enum: 2" {
     };
 
     const allocator = std.testing.allocator;
-    var str = std.ArrayList(u8).init(allocator);
+    var str = std.array_list.Managed(u8).init(allocator);
     defer str.deinit();
 
     try testStringify("\x64\x68\x69\x67\x68", Level.high, .{});
@@ -1520,7 +1520,7 @@ test "serialize EcdsaP256Key" {
     const k = EcdsaP256Key.new(try EcdsaP256.PublicKey.fromSec1("\x04\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52"));
 
     const allocator = std.testing.allocator;
-    var str = std.ArrayList(u8).init(allocator);
+    var str = std.array_list.Managed(u8).init(allocator);
     defer str.deinit();
 
     try stringify(k, .{
@@ -1563,7 +1563,7 @@ test "serialize EcdsP256Key using alias" {
     const k = EcdsaP256Key.new(try EcdsaP256.PublicKey.fromSec1("\x04\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52"));
 
     const allocator = std.testing.allocator;
-    var str = std.ArrayList(u8).init(allocator);
+    var str = std.array_list.Managed(u8).init(allocator);
     defer str.deinit();
 
     try stringify(k, .{ .field_settings = &.{
@@ -1673,7 +1673,7 @@ test "overload struct 1" {
 
             // First stringify the 'y' struct
             const allocator = std.testing.allocator;
-            var o = std.ArrayList(u8).init(allocator);
+            var o = std.array_list.Managed(u8).init(allocator);
             defer o.deinit();
             try stringify(self.y, .{ .field_settings = &.{
                 .{ .name = "a", .value_options = .{ .slice_serialization_type = .TextString } },
@@ -1773,7 +1773,7 @@ test "skip serializing field #1" {
         .c = "abcde".*,
     };
 
-    var str = std.ArrayList(u8).init(allocator);
+    var str = std.array_list.Managed(u8).init(allocator);
     defer str.deinit();
 
     try stringify(s, .{ .field_settings = &.{
@@ -1799,7 +1799,7 @@ test "skip serializing field #2" {
     @memcpy(s.a, "abcde");
     defer allocator.free(s.a);
 
-    var str = std.ArrayList(u8).init(allocator);
+    var str = std.array_list.Managed(u8).init(allocator);
     defer str.deinit();
 
     try stringify(s, .{ .field_settings = &.{
@@ -1832,7 +1832,7 @@ test "ArrayBackedSlice test #1" {
     var x = S64B{};
     try x.set("\x01\x02\x03\x04");
 
-    var str = std.ArrayList(u8).init(allocator);
+    var str = std.array_list.Managed(u8).init(allocator);
     defer str.deinit();
 
     try stringify(x, .{}, str.writer());
@@ -1886,7 +1886,7 @@ test "serialize indefinite-length map {_ 'a': 1, 'b': [_ 2, 3]}" {
         .b = &.{ 2, 3 },
     };
 
-    var arr = std.ArrayList(u8).init(allocator);
+    var arr = std.array_list.Managed(u8).init(allocator);
     defer arr.deinit();
 
     try stringify(
@@ -1915,7 +1915,7 @@ test "serialize indefinite-length map {_ 'Fun': true, 'Amt': -2}" {
         .Amt = -2,
     };
 
-    var arr = std.ArrayList(u8).init(allocator);
+    var arr = std.array_list.Managed(u8).init(allocator);
     defer arr.deinit();
 
     try stringify(

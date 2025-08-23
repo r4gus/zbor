@@ -462,7 +462,7 @@ test "cose Key p256 stringify #1" {
     const k = Key.fromP256Pub(.Es256, x);
 
     const allocator = std.testing.allocator;
-    var str = std.ArrayList(u8).init(allocator);
+    var str = std.array_list.Managed(u8).init(allocator);
     defer str.deinit();
 
     try stringify(k, .{}, str.writer());

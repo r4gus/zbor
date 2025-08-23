@@ -90,20 +90,20 @@ pub const ContainerType = enum {
 const Entry = struct {
     t: ContainerType = .Root,
     cnt: u64 = 0,
-    raw: std.ArrayList(u8),
+    raw: std.array_list.Managed(u8),
 
     pub fn new(allocator: std.mem.Allocator, t: ContainerType) @This() {
         return .{
             .t = t,
             .cnt = 0,
-            .raw = std.ArrayList(u8).init(allocator),
+            .raw = std.array_list.Managed(u8).init(allocator),
         };
     }
 };
 
 /// A Builder lets you dynamically generate CBOR data.
 pub const Builder = struct {
-    stack: std.ArrayList(Entry),
+    stack: std.array_list.Managed(Entry),
     allocator: std.mem.Allocator,
 
     /// Create a new builder.
@@ -118,7 +118,7 @@ pub const Builder = struct {
     /// On error all allocated memory is freed.
     pub fn withType(allocator: std.mem.Allocator, t: ContainerType) !@This() {
         var b = @This(){
-            .stack = std.ArrayList(Entry).init(allocator),
+            .stack = std.array_list.Managed(Entry).init(allocator),
             .allocator = allocator,
         };
 
@@ -459,7 +459,7 @@ test "stringify simple using builder 1" {
 test "write true false" {
     const allocator = std.testing.allocator;
 
-    var arr = std.ArrayList(u8).init(allocator);
+    var arr = std.array_list.Managed(u8).init(allocator);
     defer arr.deinit();
 
     try writeTrue(arr.writer());
@@ -471,7 +471,7 @@ test "write true false" {
 
 test "write float #1" {
     const allocator = std.testing.allocator;
-    var arr = std.ArrayList(u8).init(allocator);
+    var arr = std.array_list.Managed(u8).init(allocator);
     defer arr.deinit();
 
     try writeFloat(arr.writer(), @as(f16, @floatCast(0.0)));
@@ -481,7 +481,7 @@ test "write float #1" {
 
 test "write float #2" {
     const allocator = std.testing.allocator;
-    var arr = std.ArrayList(u8).init(allocator);
+    var arr = std.array_list.Managed(u8).init(allocator);
     defer arr.deinit();
 
     try writeFloat(arr.writer(), @as(f16, @floatCast(-0.0)));
@@ -491,7 +491,7 @@ test "write float #2" {
 
 test "write float #3" {
     const allocator = std.testing.allocator;
-    var arr = std.ArrayList(u8).init(allocator);
+    var arr = std.array_list.Managed(u8).init(allocator);
     defer arr.deinit();
 
     try writeFloat(arr.writer(), @as(f32, @floatCast(3.4028234663852886e+38)));
@@ -501,7 +501,7 @@ test "write float #3" {
 
 test "write float #4" {
     const allocator = std.testing.allocator;
-    var arr = std.ArrayList(u8).init(allocator);
+    var arr = std.array_list.Managed(u8).init(allocator);
     defer arr.deinit();
 
     try writeFloat(arr.writer(), @as(f64, @floatCast(-4.1)));
