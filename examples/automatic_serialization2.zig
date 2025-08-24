@@ -8,21 +8,21 @@ pub fn main() !void {
     var original_msg = Message.new("stack_id", "hello", "there");
 
     // serialize the message
-    var bytes = std.array_list.Managed(u8).init(allocator);
+    var bytes = std.Io.Writer.Allocating.init(allocator);
     defer bytes.deinit();
 
     original_msg.headers.token = "my cool client token that totally is awesome";
-    try original_msg.cborStringify(.{}, bytes.writer());
+    try original_msg.cborStringify(.{}, &bytes.writer);
 
     const expected = "\xa5\x00\x68\x73\x74\x61\x63\x6b\x5f\x69\x64\x01\x00\x02\x65\x68\x65\x6c\x6c\x6f\x03\x65\x74\x68\x65\x72\x65\x05\xa1\x00\x78\x2c\x6d\x79\x20\x63\x6f\x6f\x6c\x20\x63\x6c\x69\x65\x6e\x74\x20\x74\x6f\x6b\x65\x6e\x20\x74\x68\x61\x74\x20\x74\x6f\x74\x61\x6c\x6c\x79\x20\x69\x73\x20\x61\x77\x65\x73\x6f\x6d\x65";
-    if (!std.mem.eql(u8, expected, bytes.items)) {
+    if (!std.mem.eql(u8, expected, bytes.written())) {
         std.log.err("serialization failure! expected '{x}' but got '{x}'", .{
             expected,
-            bytes.items,
+            bytes.written(),
         });
     }
 
-    const di: cbor.DataItem = try cbor.DataItem.new(bytes.items);
+    const di: cbor.DataItem = try cbor.DataItem.new(bytes.written());
     const parsed_msg = try Message.cborParse(di, .{ .allocator = allocator });
 
     std.debug.print("msg {any}\n", .{parsed_msg});
@@ -62,7 +62,7 @@ pub const Message = struct {
         return ptr;
     }
 
-    pub fn cborStringify(self: Self, o: cbor.Options, out: anytype) !void {
+    pub fn cborStringify(self: Self, o: cbor.Options, out: *std.Io.Writer) !void {
         try cbor.stringify(self, .{
             .ignore_override = true,
             .field_settings = &.{
@@ -155,7 +155,7 @@ pub const Headers = struct {
         return ptr;
     }
 
-    pub fn cborStringify(self: Self, o: cbor.Options, out: anytype) !void {
+    pub fn cborStringify(self: Self, o: cbor.Options, out: *std.Io.Writer) !void {
         try cbor.stringify(self, .{
             .ignore_override = true,
             .field_settings = &.{

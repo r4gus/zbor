@@ -23,7 +23,7 @@ Versions
 |:-----------:|:------------:|
 | 0.13.0      | 0.15 |
 | 0.14.x      | 0.16.x, 0.17.x, 0.18.x |
-| 0.15.x      | 0.19.0 |
+| 0.15.x      | 0.19.0, 0.20.0 |
 
 First add this library as a dependency to your `build.zig.zon` file:
 
@@ -122,7 +122,7 @@ You can serialize Zig objects into CBOR using the `stringify()` function.
 
 ```zig
 const allocator = std.testing.allocator;
-var str = std.ArrayList(u8).init(allocator);
+var str = std.Io.Writer.Allocating.init(allocator);
 defer str.deinit();
 
 const Info = struct {
@@ -133,7 +133,7 @@ const i = Info{
     .versions = &.{"FIDO_2_0"},
 };
 
-try stringify(i, .{}, str.writer());
+try stringify(i, .{}, &str.writer);
 ```
 
 > Note: Compile time floats are always encoded as single precision floats (f32). Please use `@floatCast`
@@ -143,7 +143,7 @@ The `stringify()` function is convenient but also adds extra overhead. If you wa
 over the serialization process you can use the following functions defined in `zbor.build`: `writeInt`,
 `writeByteString`, `writeTextString`, `writeTag`, `writeSimple`, `writeArray`, `writeMap`. For more
 details check out the [manual serialization example](examples/manual_serialization.zig) and the
-corresponding [source code](src/build.zig).
+corresponding [source code](src/builder.zig).
 
 ##### Stringify Options
 
@@ -189,7 +189,7 @@ try stringify(k, .{ .field_settings = &.{
     .{ .name = "crv", .field_options = .{ .alias = "-1", .serialization_type = .Integer } },
     .{ .name = "x", .field_options = .{ .alias = "-2", .serialization_type = .Integer } },
     .{ .name = "y", .field_options = .{ .alias = "-3", .serialization_type = .Integer } },
-} }, str.writer());
+} }, &str.writer);
 ```
 
 Here we define a alias for every field of the struct and tell `serialize` that it should treat
@@ -265,20 +265,20 @@ const Foo = struct {
         b: u64 = 0x1122334455667788,
     },
 
-    pub fn cborStringify(self: *const @This(), options: Options, out: anytype) !void {
+    pub fn cborStringify(self: *const @This(), options: Options, out: *std.Io.Writer) !void {
 
         // First stringify the 'y' struct
         const allocator = std.testing.allocator;
-        var o = std.ArrayList(u8).init(allocator);
+        var o = std.Io.Writer.Allocating.init(allocator);
         defer o.deinit();
-        try stringify(self.y, options, o.writer());
+        try stringify(self.y, options, &o.writer);
 
         // Then use the Builder to alter the CBOR output
         var b = try build.Builder.withType(allocator, .Map);
         try b.pushTextString("x");
         try b.pushInt(self.x);
         try b.pushTextString("y");
-        try b.pushByteString(o.items);
+        try b.pushByteString(o.written());
         const x = try b.finish();
         defer allocator.free(x);
 
@@ -334,7 +334,7 @@ If you have a struct with a field of type `std.mem.Allocator` you have to overri
 funcation for that struct, e.g.:
 
 ```zig
-pub fn cborStringify(self: *const @This(), options: cbor.StringifyOptions, out: anytype) !void {
+pub fn cborStringify(self: *const @This(), options: cbor.StringifyOptions, out: *std.Io.Writer) !void {
     _ = options;
 
     try cbor.stringify(self, .{
@@ -361,7 +361,7 @@ This is an example for serializing a array as indefinite-length map:
 ```zig
 const array = [_]u16{ 500, 2 };
 
-var arr = std.ArrayList(u8).init(allocator);
+var arr = std.Io.Writer.Allocating.init(allocator);
 defer arr.deinit();
 
 try stringify(
@@ -370,7 +370,7 @@ try stringify(
         .allocator = allocator,
         .array_serialization_type = .ArrayIndefinite,
     },
-    arr.writer(),
+    &arr.writer,
 );
 ```
 
@@ -392,7 +392,7 @@ const s = S{
     .Amt = -2,
 };
 
-var arr = std.ArrayList(u8).init(allocator);
+var arr = std.Io.Writer.Allocating.init(allocator);
 defer arr.deinit();
 
 try stringify(
@@ -401,7 +401,7 @@ try stringify(
         .allocator = allocator,
         .map_serialization_type = .MapIndefinite,
     },
-    arr.writer(),
+    &arr.writer,
 );
 ```
 
@@ -419,13 +419,13 @@ test "ArrayBackedSlice test" {
     var x = S64B{};
     try x.set("\x01\x02\x03\x04");
 
-    var str = std.ArrayList(u8).init(allocator);
+    var str = std.Io.Writer.Allocating.init(allocator);
     defer str.deinit();
 
-    try stringify(x, .{}, str.writer());
-    try std.testing.expectEqualSlices(u8, "\x44\x01\x02\x03\x04", str.items);
+    try stringify(x, .{}, &str.writer);
+    try std.testing.expectEqualSlices(u8, "\x44\x01\x02\x03\x04", str.written());
 
-    const di = try DataItem.new(str.items);
+    const di = try DataItem.new(str.written());
     const y = try parse(S64B, di, .{});
 
     try std.testing.expectEqualSlices(u8, "\x01\x02\x03\x04", y.get());

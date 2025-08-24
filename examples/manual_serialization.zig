@@ -23,9 +23,9 @@ pub fn main() !void {
 
     const expected = "\xa3\x62\x69\x64\x44\x01\x23\x45\x67\x64\x6e\x61\x6d\x65\x6f\x62\x6f\x62\x40\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d\x6b\x64\x69\x73\x70\x6c\x61\x79\x4e\x61\x6d\x65\x63\x42\x6f\x62";
 
-    var di = std.array_list.Managed(u8).init(allocator);
+    var di = std.Io.Writer.Allocating.init(allocator);
     defer di.deinit();
-    const writer = di.writer();
+    const writer = &di.writer;
 
     try zbor.builder.writeMap(writer, 3);
     try zbor.builder.writeTextString(writer, "id");
@@ -37,8 +37,8 @@ pub fn main() !void {
 
     try stdout.print("expected: {x}\ngot: {x}\nmatches: {any}\n", .{
         expected,
-        di.items,
-        std.mem.eql(u8, expected, di.items),
+        di.written(),
+        std.mem.eql(u8, expected, di.written()),
     });
 
     try stdout.flush();

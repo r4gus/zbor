@@ -2,14 +2,14 @@ const std = @import("std");
 const cbor = @import("cbor.zig");
 
 /// Serialize an integer into a CBOR integer (major type 0 or 1).
-pub fn writeInt(writer: anytype, value: i65) !void {
+pub fn writeInt(writer: *std.Io.Writer, value: i65) !void {
     const h: u8 = if (value < 0) 0x20 else 0;
     const v: u64 = @as(u64, @intCast(if (value < 0) -(value + 1) else value));
     try encode(writer, h, v);
 }
 
 /// Serialize a slice to a CBOR byte string (major type 2).
-pub fn writeByteString(writer: anytype, value: []const u8) !void {
+pub fn writeByteString(writer: *std.Io.Writer, value: []const u8) !void {
     const h: u8 = 0x40;
     const v: u64 = @as(u64, @intCast(value.len));
     try encode(writer, h, v);
@@ -17,7 +17,7 @@ pub fn writeByteString(writer: anytype, value: []const u8) !void {
 }
 
 /// Serialize a slice to a CBOR text string (major type 3).
-pub fn writeTextString(writer: anytype, value: []const u8) !void {
+pub fn writeTextString(writer: *std.Io.Writer, value: []const u8) !void {
     const h: u8 = 0x60;
     const v: u64 = @as(u64, @intCast(value.len));
     try encode(writer, h, v);
@@ -27,29 +27,29 @@ pub fn writeTextString(writer: anytype, value: []const u8) !void {
 /// Serialize a tag.
 ///
 /// You MUST serialize another data item right after calling this function.
-pub fn writeTag(writer: anytype, tag: u64) !void {
+pub fn writeTag(writer: *std.Io.Writer, tag: u64) !void {
     const h: u8 = 0xc0;
     const v: u64 = tag;
     try encode(writer, h, v);
 }
 
 /// Serialize a simple value.
-pub fn writeSimple(writer: anytype, simple: u8) !void {
+pub fn writeSimple(writer: *std.Io.Writer, simple: u8) !void {
     if (24 <= simple and simple <= 31) return error.ReservedValue;
     const h: u8 = 0xe0;
     const v: u64 = @as(u64, @intCast(simple));
     try encode(writer, h, v);
 }
 
-pub fn writeTrue(writer: anytype) !void {
+pub fn writeTrue(writer: *std.Io.Writer) !void {
     try writeSimple(writer, 21);
 }
 
-pub fn writeFalse(writer: anytype) !void {
+pub fn writeFalse(writer: *std.Io.Writer) !void {
     try writeSimple(writer, 20);
 }
 
-pub fn writeFloat(writer: anytype, f: anytype) !void {
+pub fn writeFloat(writer: *std.Io.Writer, f: anytype) !void {
     const T = @TypeOf(f);
     const TInf = @typeInfo(T);
 
@@ -69,14 +69,14 @@ pub fn writeFloat(writer: anytype, f: anytype) !void {
 /// Write the header of an array to `writer`.
 ///
 /// You must write exactly `len` data items to `writer` afterwards.
-pub inline fn writeArray(writer: anytype, len: u64) !void {
+pub inline fn writeArray(writer: *std.Io.Writer, len: u64) !void {
     try encode(writer, 0x80, len);
 }
 
 /// Write the header of a map to `writer`.
 ///
 /// You must write exactly `len` key-value pairs (data items) to `writer` afterwards.
-pub inline fn writeMap(writer: anytype, len: u64) !void {
+pub inline fn writeMap(writer: *std.Io.Writer, len: u64) !void {
     try encode(writer, 0xa0, len);
 }
 
@@ -90,20 +90,20 @@ pub const ContainerType = enum {
 const Entry = struct {
     t: ContainerType = .Root,
     cnt: u64 = 0,
-    raw: std.array_list.Managed(u8),
+    raw: std.Io.Writer.Allocating,
 
     pub fn new(allocator: std.mem.Allocator, t: ContainerType) @This() {
         return .{
             .t = t,
             .cnt = 0,
-            .raw = std.array_list.Managed(u8).init(allocator),
+            .raw = .init(allocator),
         };
     }
 };
 
 /// A Builder lets you dynamically generate CBOR data.
 pub const Builder = struct {
-    stack: std.array_list.Managed(Entry),
+    stack: std.ArrayListUnmanaged(Entry),
     allocator: std.mem.Allocator,
 
     /// Create a new builder.
@@ -118,12 +118,12 @@ pub const Builder = struct {
     /// On error all allocated memory is freed.
     pub fn withType(allocator: std.mem.Allocator, t: ContainerType) !@This() {
         var b = @This(){
-            .stack = std.array_list.Managed(Entry).init(allocator),
+            .stack = .{},
             .allocator = allocator,
         };
 
         // The stack has at least one element on it: the Root
-        b.stack.append(Entry.new(allocator, .Root)) catch |e| {
+        b.stack.append(b.allocator, Entry.new(allocator, .Root)) catch |e| {
             b.unwind();
             return e;
         };
@@ -131,7 +131,7 @@ pub const Builder = struct {
         // entry onto the stack. The container will later be
         // merged into the root
         if (t != .Root) {
-            b.stack.append(Entry.new(allocator, t)) catch |e| {
+            b.stack.append(b.allocator, Entry.new(allocator, t)) catch |e| {
                 b.unwind();
                 return e;
             };
@@ -144,7 +144,7 @@ pub const Builder = struct {
     /// On error all allocated memory is freed. After this
     /// point one MUST NOT access the builder!
     pub fn pushInt(self: *@This(), value: i65) !void {
-        writeInt(self.top().raw.writer(), value) catch |e| {
+        writeInt(&self.top().raw.writer, value) catch |e| {
             self.unwind();
             return e;
         };
@@ -156,7 +156,7 @@ pub const Builder = struct {
     /// On error all allocated memory is freed. After this
     /// point one MUST NOT access the builder!
     pub fn pushByteString(self: *@This(), value: []const u8) !void {
-        writeByteString(self.top().raw.writer(), value) catch |e| {
+        writeByteString(&self.top().raw.writer, value) catch |e| {
             self.unwind();
             return e;
         };
@@ -168,7 +168,7 @@ pub const Builder = struct {
     /// On error all allocated memory is freed. After this
     /// point one MUST NOT access the builder!
     pub fn pushTextString(self: *@This(), value: []const u8) !void {
-        writeTextString(self.top().raw.writer(), value) catch |e| {
+        writeTextString(&self.top().raw.writer, value) catch |e| {
             self.unwind();
             return e;
         };
@@ -182,7 +182,7 @@ pub const Builder = struct {
     /// On error all allocated memory is freed. After this
     /// point one MUST NOT access the builder!
     pub fn pushTag(self: *@This(), tag: u64) !void {
-        writeTag(self.top().raw.writer(), tag) catch |e| {
+        writeTag(&self.top().raw.writer, tag) catch |e| {
             self.unwind();
             return e;
         };
@@ -193,7 +193,7 @@ pub const Builder = struct {
     /// On error (except for ReservedValue) all allocated memory is freed.
     /// After this point one MUST NOT access the builder!
     pub fn pushSimple(self: *@This(), simple: u8) !void {
-        writeSimple(self.top().raw.writer(), simple) catch |e| {
+        writeSimple(&self.top().raw.writer, simple) catch |e| {
             self.unwind();
             return e;
         };
@@ -211,7 +211,7 @@ pub const Builder = struct {
         if (!cbor.validate(input, &i, true)) return error.MalformedCbor;
 
         // Append the cbor data
-        self.top().raw.appendSlice(input) catch |e| {
+        self.top().raw.writer.writeAll(input) catch |e| {
             self.unwind();
             return e;
         };
@@ -225,7 +225,7 @@ pub const Builder = struct {
     pub fn enter(self: *@This(), t: ContainerType) !void {
         if (t == .Root) return error.InvalidContainerType;
 
-        self.stack.append(Entry.new(self.allocator, t)) catch |e| {
+        self.stack.append(self.allocator, Entry.new(self.allocator, t)) catch |e| {
             self.unwind();
             return e;
         };
@@ -259,26 +259,26 @@ pub const Builder = struct {
         }
 
         const s = self.stack.items[0].raw.toOwnedSlice();
-        self.stack.deinit();
+        self.stack.deinit(self.allocator);
         return s;
     }
 
     fn moveUp(self: *@This()) !void {
-        const e = self.stack.pop().?;
+        var e = self.stack.pop().?;
         defer e.raw.deinit();
 
         switch (e.t) {
-            .Array => writeArray(self.top().raw.writer(), e.cnt) catch |err| {
+            .Array => writeArray(&self.top().raw.writer, e.cnt) catch |err| {
                 self.unwind();
                 return err;
             },
-            .Map => writeMap(self.top().raw.writer(), e.cnt / 2) catch |err| {
+            .Map => writeMap(&self.top().raw.writer, e.cnt / 2) catch |err| {
                 self.unwind();
                 return err;
             },
             .Root => unreachable,
         }
-        self.top().raw.appendSlice(e.raw.items) catch |err| {
+        self.top().raw.writer.writeAll(e.raw.written()) catch |err| {
             self.unwind();
             return err;
         };
@@ -294,14 +294,14 @@ pub const Builder = struct {
     /// to prevent memory leaks if the builder throws an error.
     fn unwind(self: *@This()) void {
         while (self.stack.items.len > 0) {
-            const e = self.stack.pop().?;
+            var e = self.stack.pop().?;
             e.raw.deinit();
         }
-        self.stack.deinit();
+        self.stack.deinit(self.allocator);
     }
 };
 
-fn encode(out: anytype, head: u8, v: u64) !void {
+fn encode(out: *std.Io.Writer, head: u8, v: u64) !void {
     switch (v) {
         0x00...0x17 => {
             try out.writeByte(head | @as(u8, @intCast(v)));
@@ -459,52 +459,52 @@ test "stringify simple using builder 1" {
 test "write true false" {
     const allocator = std.testing.allocator;
 
-    var arr = std.array_list.Managed(u8).init(allocator);
+    var arr = std.Io.Writer.Allocating.init(allocator);
     defer arr.deinit();
 
-    try writeTrue(arr.writer());
-    try writeFalse(arr.writer());
+    try writeTrue(&arr.writer);
+    try writeFalse(&arr.writer);
 
-    try std.testing.expectEqual(@as(u8, 0xf5), arr.items[0]);
-    try std.testing.expectEqual(@as(u8, 0xf4), arr.items[1]);
+    try std.testing.expectEqual(@as(u8, 0xf5), arr.written()[0]);
+    try std.testing.expectEqual(@as(u8, 0xf4), arr.written()[1]);
 }
 
 test "write float #1" {
     const allocator = std.testing.allocator;
-    var arr = std.array_list.Managed(u8).init(allocator);
+    var arr = std.Io.Writer.Allocating.init(allocator);
     defer arr.deinit();
 
-    try writeFloat(arr.writer(), @as(f16, @floatCast(0.0)));
+    try writeFloat(&arr.writer, @as(f16, @floatCast(0.0)));
 
-    try std.testing.expectEqualSlices(u8, "\xf9\x00\x00", arr.items);
+    try std.testing.expectEqualSlices(u8, "\xf9\x00\x00", arr.written());
 }
 
 test "write float #2" {
     const allocator = std.testing.allocator;
-    var arr = std.array_list.Managed(u8).init(allocator);
+    var arr = std.Io.Writer.Allocating.init(allocator);
     defer arr.deinit();
 
-    try writeFloat(arr.writer(), @as(f16, @floatCast(-0.0)));
+    try writeFloat(&arr.writer, @as(f16, @floatCast(-0.0)));
 
-    try std.testing.expectEqualSlices(u8, "\xf9\x80\x00", arr.items);
+    try std.testing.expectEqualSlices(u8, "\xf9\x80\x00", arr.written());
 }
 
 test "write float #3" {
     const allocator = std.testing.allocator;
-    var arr = std.array_list.Managed(u8).init(allocator);
+    var arr = std.Io.Writer.Allocating.init(allocator);
     defer arr.deinit();
 
-    try writeFloat(arr.writer(), @as(f32, @floatCast(3.4028234663852886e+38)));
+    try writeFloat(&arr.writer, @as(f32, @floatCast(3.4028234663852886e+38)));
 
-    try std.testing.expectEqualSlices(u8, "\xfa\x7f\x7f\xff\xff", arr.items);
+    try std.testing.expectEqualSlices(u8, "\xfa\x7f\x7f\xff\xff", arr.written());
 }
 
 test "write float #4" {
     const allocator = std.testing.allocator;
-    var arr = std.array_list.Managed(u8).init(allocator);
+    var arr = std.Io.Writer.Allocating.init(allocator);
     defer arr.deinit();
 
-    try writeFloat(arr.writer(), @as(f64, @floatCast(-4.1)));
+    try writeFloat(&arr.writer, @as(f64, @floatCast(-4.1)));
 
-    try std.testing.expectEqualSlices(u8, "\xfb\xc0\x10\x66\x66\x66\x66\x66\x66", arr.items);
+    try std.testing.expectEqualSlices(u8, "\xfb\xc0\x10\x66\x66\x66\x66\x66\x66", arr.written());
 }

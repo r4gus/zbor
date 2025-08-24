@@ -91,7 +91,7 @@ pub fn ArrayBackedSlice(
             self.len = v.len;
         }
 
-        pub fn cborStringify(self: *const @This(), options: Options, out: anytype) !void {
+        pub fn cborStringify(self: *const @This(), options: Options, out: *std.Io.Writer) !void {
             switch (t) {
                 .Byte => try builder.writeByteString(out, self.get()),
                 .Text => try builder.writeTextString(out, self.get()),
@@ -160,6 +160,8 @@ pub const ParseError = error{
 pub const StringifyError = error{
     UnsupportedItem,
     InvalidPairCount,
+    WriteFailed,
+    OutOfMemory,
 };
 
 /// Deserialize a CBOR data item into a Zig data structure
@@ -420,49 +422,49 @@ pub fn parse(
                         },
                         .Array => {
                             var v = if (item.array()) |x| x else return ParseError.Malformed;
-                            var arraylist = std.array_list.Managed(ptrInfo.child).init(allocator);
+                            var arraylist: std.ArrayListUnmanaged(ptrInfo.child) = .{};
                             errdefer {
                                 // TODO: take care of children
-                                arraylist.deinit();
+                                arraylist.deinit(allocator);
                             }
 
                             while (v.next()) |elem| {
-                                try arraylist.ensureUnusedCapacity(1);
+                                try arraylist.ensureUnusedCapacity(allocator, 1);
                                 const x = try parse(ptrInfo.child, elem, options);
                                 arraylist.appendAssumeCapacity(x);
                             }
 
                             if (ptrInfo.sentinel_ptr) |some| {
                                 const sentinel_value = @as(*align(1) const ptrInfo.child, @ptrCast(some)).*;
-                                try arraylist.append(sentinel_value);
-                                const output = try arraylist.toOwnedSlice();
+                                try arraylist.append(allocator, sentinel_value);
+                                const output = try arraylist.toOwnedSlice(allocator);
                                 return output[0 .. output.len - 1 :sentinel_value];
                             }
 
-                            return arraylist.toOwnedSlice();
+                            return arraylist.toOwnedSlice(allocator);
                         },
                         .ArrayIndef => {
                             var array = if (item.arrayIndef()) |x| x else return ParseError.Malformed;
-                            var arraylist = std.array_list.Managed(ptrInfo.child).init(allocator);
+                            var arraylist: std.ArrayListUnmanaged(ptrInfo.child) = .{};
                             errdefer {
                                 // TODO: take care of children
-                                arraylist.deinit();
+                                arraylist.deinit(allocator);
                             }
 
                             while (array.next()) |v| {
-                                try arraylist.ensureUnusedCapacity(1);
+                                try arraylist.ensureUnusedCapacity(allocator, 1);
                                 const x = try parse(ptrInfo.child, v, options);
                                 arraylist.appendAssumeCapacity(x);
                             }
 
                             if (ptrInfo.sentinel_ptr) |some| {
                                 const sentinel_value = @as(*align(1) const ptrInfo.child, @ptrCast(some)).*;
-                                try arraylist.append(sentinel_value);
-                                const output = try arraylist.toOwnedSlice();
+                                try arraylist.append(allocator, sentinel_value);
+                                const output = try arraylist.toOwnedSlice(allocator);
                                 return output[0 .. output.len - 1 :sentinel_value];
                             }
 
-                            return arraylist.toOwnedSlice();
+                            return arraylist.toOwnedSlice(allocator);
                         },
                         else => return ParseError.UnexpectedItem,
                     }
@@ -588,8 +590,8 @@ pub fn stringify(
     /// Options to influence the functions behaviour
     options: Options,
     /// A writer
-    out: anytype,
-) (StringifyError || @TypeOf(out).Error)!void {
+    out: *std.Io.Writer,
+) StringifyError!void {
     const T = @TypeOf(value);
     const TInf = @typeInfo(T);
     var head: u8 = 0;
@@ -910,7 +912,7 @@ fn cmp(l: []const u8, r: []const u8) bool {
     return true;
 }
 
-fn encode(out: anytype, head: u8, v: u64) !void {
+fn encode(out: *std.Io.Writer, head: u8, v: u64) !void {
     switch (v) {
         0x00...0x17 => {
             try out.writeByte(head | @as(u8, @intCast(v)));
@@ -927,11 +929,11 @@ fn encode(out: anytype, head: u8, v: u64) !void {
 
 fn testStringify(e: []const u8, v: anytype, o: Options) !void {
     const allocator = std.testing.allocator;
-    var str = std.array_list.Managed(u8).init(allocator);
+    var str = std.Io.Writer.Allocating.init(allocator);
     defer str.deinit();
 
-    try stringify(v, o, str.writer());
-    try std.testing.expectEqualSlices(u8, e, str.items);
+    try stringify(v, o, &str.writer);
+    try std.testing.expectEqualSlices(u8, e, str.written());
 }
 
 test "parse boolean" {
@@ -1175,28 +1177,27 @@ test "parse slice: indefinite, unknown length" {
     const allocator = std.testing.allocator;
     var random = std.Random.DefaultPrng.init(std.testing.random_seed);
     // Generate a random indefinite length array
-    var bytes = std.array_list.Managed(u8).init(allocator);
+    var bytes = std.Io.Writer.Allocating.init(allocator);
     defer bytes.deinit();
-    try bytes.appendSlice("\x9f");
+    try bytes.writer.writeAll("\x9f");
     while (random.random().int(u8) % 200 != 0) {
         const byte = random.random().int(u8) % 10;
-        try bytes.append(byte);
+        try bytes.writer.writeByte(byte);
     }
-    try bytes.appendSlice("\xff");
-    const di1 = try DataItem.new(bytes.items);
+    try bytes.writer.writeAll("\xff");
+    const di1 = try DataItem.new(bytes.written());
     const c1 = try parse([]const u8, di1, .{ .allocator = allocator });
     defer allocator.free(c1);
     // No assert, we just want to make sure it doesn't crash
 }
 
-test "stringify to fixed buffer stream" {
+test "stringify to fixed writer" {
     var array: [3]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&array);
-    const writer = fbs.writer();
+    var writer = std.Io.Writer.fixed(&array);
     const value: i16 = -32700;
     const expected: []const u8 = &.{ 0x39, 0x7f, 0xbb };
-    try stringify(value, .{}, writer);
-    try std.testing.expectEqualSlices(u8, expected, fbs.getWritten());
+    try stringify(value, .{}, &writer);
+    try std.testing.expectEqualSlices(u8, expected, writer.buffered());
 }
 
 test "stringify simple value" {
@@ -1391,10 +1392,6 @@ test "stringify enum: 1" {
         low = 11,
     };
 
-    const allocator = std.testing.allocator;
-    var str = std.array_list.Managed(u8).init(allocator);
-    defer str.deinit();
-
     const high = Level.high;
     const low = Level.low;
 
@@ -1407,10 +1404,6 @@ test "stringify enum: 2" {
         high = 7,
         low = 11,
     };
-
-    const allocator = std.testing.allocator;
-    var str = std.array_list.Managed(u8).init(allocator);
-    defer str.deinit();
 
     try testStringify("\x64\x68\x69\x67\x68", Level.high, .{});
     try testStringify("\x63\x6C\x6F\x77", Level.low, .{});
@@ -1520,7 +1513,7 @@ test "serialize EcdsaP256Key" {
     const k = EcdsaP256Key.new(try EcdsaP256.PublicKey.fromSec1("\x04\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52"));
 
     const allocator = std.testing.allocator;
-    var str = std.array_list.Managed(u8).init(allocator);
+    var str = std.Io.Writer.Allocating.init(allocator);
     defer str.deinit();
 
     try stringify(k, .{
@@ -1531,9 +1524,9 @@ test "serialize EcdsaP256Key" {
             .{ .name = "-2", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
             .{ .name = "-3", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
         },
-    }, str.writer());
+    }, &str.writer);
 
-    try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.items);
+    try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.written());
 }
 
 test "serialize EcdsP256Key using alias" {
@@ -1563,7 +1556,7 @@ test "serialize EcdsP256Key using alias" {
     const k = EcdsaP256Key.new(try EcdsaP256.PublicKey.fromSec1("\x04\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52"));
 
     const allocator = std.testing.allocator;
-    var str = std.array_list.Managed(u8).init(allocator);
+    var str = std.Io.Writer.Allocating.init(allocator);
     defer str.deinit();
 
     try stringify(k, .{ .field_settings = &.{
@@ -1572,9 +1565,9 @@ test "serialize EcdsP256Key using alias" {
         .{ .name = "crv", .field_options = .{ .alias = "-1", .serialization_type = .Integer } },
         .{ .name = "x", .field_options = .{ .alias = "-2", .serialization_type = .Integer } },
         .{ .name = "y", .field_options = .{ .alias = "-3", .serialization_type = .Integer } },
-    } }, str.writer());
+    } }, &str.writer);
 
-    try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.items);
+    try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.written());
 }
 
 test "deserialize EcdsP256Key using alias" {
@@ -1666,25 +1659,25 @@ test "overload struct 1" {
             b: u64 = 0x1122334455667788,
         },
 
-        pub fn cborStringify(self: *const @This(), options: Options, out: anytype) !void {
+        pub fn cborStringify(self: *const @This(), options: Options, out: *std.Io.Writer) !void {
             // We could also pass the given options to stringify if we expect
             // specific settings.
             _ = options;
 
             // First stringify the 'y' struct
             const allocator = std.testing.allocator;
-            var o = std.array_list.Managed(u8).init(allocator);
+            var o = std.Io.Writer.Allocating.init(allocator);
             defer o.deinit();
             try stringify(self.y, .{ .field_settings = &.{
                 .{ .name = "a", .value_options = .{ .slice_serialization_type = .TextString } },
-            } }, o.writer());
+            } }, &o.writer);
 
             // Then use the Builder to alter the CBOR output
             var b = try builder.Builder.withType(allocator, .Map);
             try b.pushTextString("x");
             try b.pushInt(self.x);
             try b.pushTextString("y");
-            try b.pushByteString(o.items);
+            try b.pushByteString(o.written());
             const x = try b.finish();
             defer allocator.free(x);
 
@@ -1773,15 +1766,15 @@ test "skip serializing field #1" {
         .c = "abcde".*,
     };
 
-    var str = std.array_list.Managed(u8).init(allocator);
+    var str = std.Io.Writer.Allocating.init(allocator);
     defer str.deinit();
 
     try stringify(s, .{ .field_settings = &.{
         .{ .name = "b", .field_options = .{ .skip = .Skip } },
         .{ .name = "c", .value_options = .{ .slice_serialization_type = .TextString } },
-    } }, str.writer());
+    } }, &str.writer);
 
-    try std.testing.expectEqualSlices(u8, "\xa2\x61\x61\x18\x20\x61\x63\x65\x61\x62\x63\x64\x65", str.items);
+    try std.testing.expectEqualSlices(u8, "\xa2\x61\x61\x18\x20\x61\x63\x65\x61\x62\x63\x64\x65", str.written());
 }
 
 test "skip serializing field #2" {
@@ -1799,15 +1792,15 @@ test "skip serializing field #2" {
     @memcpy(s.a, "abcde");
     defer allocator.free(s.a);
 
-    var str = std.array_list.Managed(u8).init(allocator);
+    var str = std.Io.Writer.Allocating.init(allocator);
     defer str.deinit();
 
     try stringify(s, .{ .field_settings = &.{
         .{ .name = "a", .value_options = .{ .slice_serialization_type = .TextString } },
         .{ .name = "b", .field_options = .{ .skip = .Skip } },
-    } }, str.writer());
+    } }, &str.writer);
 
-    try std.testing.expectEqualSlices(u8, "\xa1\x61\x61\x65\x61\x62\x63\x64\x65", str.items);
+    try std.testing.expectEqualSlices(u8, "\xa1\x61\x61\x65\x61\x62\x63\x64\x65", str.written());
 }
 
 test "assign allocator to allocator fields #1" {
@@ -1832,13 +1825,13 @@ test "ArrayBackedSlice test #1" {
     var x = S64B{};
     try x.set("\x01\x02\x03\x04");
 
-    var str = std.array_list.Managed(u8).init(allocator);
+    var str = std.Io.Writer.Allocating.init(allocator);
     defer str.deinit();
 
-    try stringify(x, .{}, str.writer());
-    try std.testing.expectEqualSlices(u8, "\x44\x01\x02\x03\x04", str.items);
+    try stringify(x, .{}, &str.writer);
+    try std.testing.expectEqualSlices(u8, "\x44\x01\x02\x03\x04", str.written());
 
-    const di = try DataItem.new(str.items);
+    const di = try DataItem.new(str.written());
     const y = try parse(S64B, di, .{});
 
     try std.testing.expectEqualSlices(u8, "\x01\x02\x03\x04", y.get());
@@ -1886,7 +1879,7 @@ test "serialize indefinite-length map {_ 'a': 1, 'b': [_ 2, 3]}" {
         .b = &.{ 2, 3 },
     };
 
-    var arr = std.array_list.Managed(u8).init(allocator);
+    var arr = std.Io.Writer.Allocating.init(allocator);
     defer arr.deinit();
 
     try stringify(
@@ -1896,10 +1889,10 @@ test "serialize indefinite-length map {_ 'a': 1, 'b': [_ 2, 3]}" {
             .map_serialization_type = .MapIndefinite,
             .array_serialization_type = .ArrayIndefinite,
         },
-        arr.writer(),
+        &arr.writer,
     );
 
-    try std.testing.expectEqualSlices(u8, "\xbf\x61\x61\x01\x61\x62\x9f\x02\x03\xff\xff", arr.items);
+    try std.testing.expectEqualSlices(u8, "\xbf\x61\x61\x01\x61\x62\x9f\x02\x03\xff\xff", arr.written());
 }
 
 test "serialize indefinite-length map {_ 'Fun': true, 'Amt': -2}" {
@@ -1915,7 +1908,7 @@ test "serialize indefinite-length map {_ 'Fun': true, 'Amt': -2}" {
         .Amt = -2,
     };
 
-    var arr = std.array_list.Managed(u8).init(allocator);
+    var arr = std.Io.Writer.Allocating.init(allocator);
     defer arr.deinit();
 
     try stringify(
@@ -1924,8 +1917,8 @@ test "serialize indefinite-length map {_ 'Fun': true, 'Amt': -2}" {
             .allocator = allocator,
             .map_serialization_type = .MapIndefinite,
         },
-        arr.writer(),
+        &arr.writer,
     );
 
-    try std.testing.expectEqualSlices(u8, "\xbf\x63\x46\x75\x6e\xf5\x63\x41\x6d\x74\x21\xff", arr.items);
+    try std.testing.expectEqualSlices(u8, "\xbf\x63\x46\x75\x6e\xf5\x63\x41\x6d\x74\x21\xff", arr.written());
 }
