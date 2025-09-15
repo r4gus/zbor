@@ -162,6 +162,7 @@ pub const StringifyError = error{
     InvalidPairCount,
     WriteFailed,
     OutOfMemory,
+    BufferTooSmall,
 };
 
 /// Deserialize a CBOR data item into a Zig data structure
