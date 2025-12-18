@@ -1,8 +1,6 @@
 # zbor - Zig CBOR
 
-![GitHub](https://img.shields.io/github/license/r4gus/zbor?style=flat-square)
-![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/r4gus/zbor/main.yml?style=flat-square)
-![GitHub all releases](https://img.shields.io/github/downloads/r4gus/zbor/total?style=flat-square)
+<a href="https://liberapay.com/r4gus/donate"><img alt="Donate using Liberapay" src="https://liberapay.com/assets/widgets/donate.svg"></a>
 
 The Concise Binary Object Representation (CBOR) is a data format whose design 
 goals include the possibility of extremely small code size, fairly small 
@@ -29,7 +27,8 @@ First add this library as a dependency to your `build.zig.zon` file:
 
 ```bash
 # Replace <VERSION TAG> with the version you want to use
-zig fetch --save https://github.com/r4gus/zbor/archive/refs/tags/<VERSION TAG>.tar.gz
+zig fetch --save https://codeberg.org/r4gus/zbor/archive/<VERSION TAG>.tar.gz
+# e.g. zig fetch --save https://codeberg.org/r4gus/zbor/archive/0.20.1.tar.gz
 ```
 
 then within you `build.zig` add the following code:
