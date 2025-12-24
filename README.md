@@ -1,9 +1,9 @@
 # zbor - Zig CBOR
 
-![GitHub](https://img.shields.io/github/license/r4gus/zbor?style=flat-square)
-![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/r4gus/zbor/main.yml?style=flat-square)
-![GitHub all releases](https://img.shields.io/github/downloads/r4gus/zbor/total?style=flat-square)
-<noscript><a href="https://liberapay.com/r4gus/donate"><img alt="Donate using Liberapay" src="https://liberapay.com/assets/widgets/donate.svg"></a></noscript>
+Work is continued on codeberg: https://codeberg.org/r4gus/zbor. To migrate to `0.20.1` on codberg run:
+```bash
+zig fetch --save https://codeberg.org/r4gus/zbor/archive/0.20.1.tar.gz
+```
 
 The Concise Binary Object Representation (CBOR) is a data format whose design 
 goals include the possibility of extremely small code size, fairly small 
