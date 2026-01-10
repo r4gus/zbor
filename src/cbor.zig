@@ -385,7 +385,7 @@ pub const IndefArrayIterator = struct {
 };
 
 /// Move the index `i` to the beginning of the next data item.
-fn burn(data: []const u8, i: *usize) ?void {
+pub fn burn(data: []const u8, i: *usize) ?void {
     if (i.* >= data.len) return null;
     var offset: usize = 0;
     const len = if (additionalInfo(data[i.*..], &offset)) |v| @as(usize, @intCast(v)) else return null;

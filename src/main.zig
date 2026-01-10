@@ -6,6 +6,7 @@ const cbor = @import("cbor.zig");
 const parser = @import("parse.zig");
 pub const cose = @import("cose.zig");
 pub const builder = @import("builder.zig");
+pub const advance = cbor.burn;
 
 pub const Type = cbor.Type;
 pub const DataItem = cbor.DataItem;
