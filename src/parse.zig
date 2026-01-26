@@ -150,6 +150,7 @@ pub const ParseError = error{
     DuplicateCborField,
     UnknownField,
     MissingField,
+    Enum,
     AllocatorRequired,
     Overflow,
     OutOfMemory,
@@ -210,7 +211,7 @@ pub fn parse(
             switch (item.getType()) {
                 .Int => {
                     const v = if (item.int()) |x| x else return ParseError.Malformed;
-                    return try std.meta.intToEnum(T, v);
+                    return std.enums.fromInt(T, v) orelse error.Enum;
                 },
                 .TextString => {
                     const v = if (item.string()) |x| x else return ParseError.Malformed;
