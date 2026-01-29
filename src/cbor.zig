@@ -73,6 +73,115 @@ pub const DataItem = struct {
         return .{ .data = data };
     }
 
+    /// Read a CBOR data item from a `std.Io.Reader`.
+    pub fn readAlloc(data: *std.Io.Reader, allocator: std.mem.Allocator) !@This() {
+        var i: usize = 0;
+        var data_item = std.Io.Writer.Allocating.init(allocator);
+        errdefer data_item.deinit();
+
+        try read_(data, &data_item, &data_item.writer, &i);
+
+        return .{ .data = try data_item.toOwnedSlice() };
+    }
+
+    /// Free raw data item data.
+    ///
+    /// This must only be called if the underlying data is owned by the caller.
+    /// This is usually the case if the data item was created using `DataItem.readAlloc`.
+    pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
+        allocator.free(self.data);
+    }
+
+    fn read_(
+        data: *std.Io.Reader,
+        di: *std.Io.Writer.Allocating,
+        writer: *std.Io.Writer,
+        i: *usize,
+    ) !void {
+        const ib = try data.takeByte();
+        try writer.writeByte(ib);
+        i.* += 1;
+
+        const mt = ib >> 5;
+        const ai = ib & 0x1f;
+        var val: usize = @as(usize, @intCast(ai));
+
+        switch (ai) {
+            24, 25, 26, 27 => {
+                const bytes = @as(usize, @intCast(1)) << @intCast(ai - 24);
+                try data.streamExact(writer, bytes);
+
+                val = 0;
+                for (di.written()[i.*..]) |byte| {
+                    val <<= 8;
+                    val += byte;
+                }
+                i.* += bytes;
+            },
+            28, 29, 30 => return error.Malformed,
+            31 => {
+                // Check if CBOR data, which we expect to be an indefinite length array,
+                // is valid. An indefinite array is a sequence of data items that are not
+                // tagged with a length and instead are terminated by a break marker (0xff).
+                // The data items in the indefinite array can be of any type, including
+                // other indefinite arrays.
+                switch (mt) {
+                    2, 3 => return error.IndefiniteLengthStringsNotSupported, // We don't support indefinite length *strings*.
+                    4 => {
+                        while (true) {
+                            if (Type.fromByte(try data.peekByte()) == .Break) {
+                                try writer.writeByte(try data.takeByte());
+                                i.* += 1;
+                                break;
+                            }
+                            try read_(data, di, writer, i);
+                        }
+                    },
+                    5 => {
+                        while (true) {
+                            if (Type.fromByte(try data.peekByte()) == .Break) {
+                                try writer.writeByte(try data.takeByte());
+                                i.* += 1;
+                                break;
+                            }
+                            try read_(data, di, writer, i);
+                            try read_(data, di, writer, i);
+                        }
+                    },
+                    7 => return error.StandAloneBreakCode, // we encountered a "stand alone" break-code
+                    else => return error.MalformedIndefiniteLengthDataItem,
+                }
+                return;
+            },
+            else => {},
+        }
+
+        switch (mt) {
+            2, 3 => {
+                try data.streamExact(writer, val);
+                i.* += val;
+            },
+            4 => {
+                var j: usize = 0;
+                while (j < val) : (j += 1) {
+                    try read_(data, di, writer, i);
+                }
+            },
+            5 => {
+                var j: usize = 0;
+                while (j < val) : (j += 1) {
+                    try read_(data, di, writer, i);
+                    try read_(data, di, writer, i);
+                }
+            },
+            6 => {
+                try read_(data, di, writer, i);
+            },
+            7 => if (ai == 24 and val < 32) return error.Malformed,
+            else => {},
+        }
+    }
+
     /// Get the Type of the given DataItem
     pub fn getType(self: @This()) Type {
         return Type.fromByte(self.data[0]);
@@ -929,4 +1038,39 @@ test "malformed" {
     try validateTest("\x9f\xbf\x61\x61\x61\x63\xbf\x61\x62\x61\x64\xff\xff", false);
     try validateTest("\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64\xff", false);
     try validateTest("\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64", false);
+}
+
+fn readTest(data: []const u8, expected: []const []const u8) !void {
+    var reader = std.Io.Reader.fixed(data);
+
+    for (expected) |e| {
+        const di = try DataItem.readAlloc(&reader, std.testing.allocator);
+        defer di.deinit(std.testing.allocator);
+        try std.testing.expectEqualSlices(u8, e, di.data);
+    }
+}
+
+test "read well formed" {
+    try readTest("\x00", &.{"\x00"});
+    try readTest("\x01", &.{"\x01"});
+    try readTest("\x0a", &.{"\x0a"});
+    try readTest("\x17", &.{"\x17"});
+    try readTest("\x18\x18", &.{"\x18\x18"});
+    try readTest("\x18\x19", &.{"\x18\x19"});
+    try readTest("\x18\x64", &.{"\x18\x64"});
+    try readTest("\x19\x03\xe8", &.{"\x19\x03\xe8"});
+
+    // Indefinite length arrays
+    try readTest("\x9f\x01\xff", &.{"\x9f\x01\xff"});
+    try readTest("\x9f\x01\x9f\x02\x9f\x9f\xff\xff\xff\xff", &.{"\x9f\x01\x9f\x02\x9f\x9f\xff\xff\xff\xff"});
+    try readTest("\x9f\x82\x02\x03\x9f\x04\x05\xff\xff", &.{"\x9f\x82\x02\x03\x9f\x04\x05\xff\xff"});
+    try readTest("\x9f\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19\xff", &.{"\x9f\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19\xff"});
+
+    // Indefinite length maps
+    try readTest("\xbf\x63\x46\x75\x6e\x01\x63\x41\x6d\x74\x21\xff", &.{"\xbf\x63\x46\x75\x6e\x01\x63\x41\x6d\x74\x21\xff"});
+    try readTest("\xbf\x61\x61\x9f\x03\x04\xff\x61\x62\x9f\x02\x03\xff\xff", &.{"\xbf\x61\x61\x9f\x03\x04\xff\x61\x62\x9f\x02\x03\xff\xff"});
+    try readTest("\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64\xff\xff", &.{"\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64\xff\xff"});
+
+    // Chaining data items is also possible
+    try readTest("\x9f\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19\xff\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64\xff\xff\x9f\x01\x9f\x02\x9f\x9f\xff\xff\xff\xff", &.{ "\x9f\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19\xff", "\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64\xff\xff", "\x9f\x01\x9f\x02\x9f\x9f\xff\xff\xff\xff" });
 }
