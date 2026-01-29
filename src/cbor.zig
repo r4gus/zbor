@@ -458,17 +458,17 @@ fn additionalInfo(data: []const u8, l: ?*usize) ?u64 {
         0x19 => {
             if (data.len < 3) return null;
             if (l != null) l.?.* = 3;
-            return @as(u64, @intCast(unsigned_16(data[1..3])));
+            return @as(u64, std.mem.readInt(u16, data[1..3], .big));
         },
         0x1a => {
             if (data.len < 5) return null;
             if (l != null) l.?.* = 5;
-            return @as(u64, @intCast(unsigned_32(data[1..5])));
+            return @as(u64, std.mem.readInt(u32, data[1..5], .big));
         },
         0x1b => {
             if (data.len < 9) return null;
             if (l != null) l.?.* = 9;
-            return @as(u64, @intCast(unsigned_64(data[1..9])));
+            return std.mem.readInt(u64, data[1..9], .big);
         },
         0x1f => {
             if (data.len < 1) return null;
@@ -557,42 +557,19 @@ pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
     return true;
 }
 
-pub inline fn unsigned_16(data: []const u8) u16 {
-    return @as(u16, @intCast(data[0])) << 8 | @as(u16, @intCast(data[1]));
-}
-
-pub inline fn unsigned_32(data: []const u8) u32 {
-    return @as(u32, @intCast(data[0])) << 24 | @as(u32, @intCast(data[1])) << 16 | @as(u32, @intCast(data[2])) << 8 | @as(u32, @intCast(data[3]));
-}
-
-pub inline fn unsigned_64(data: []const u8) u64 {
-    return @as(u64, @intCast(data[0])) << 56 | @as(u64, @intCast(data[1])) << 48 | @as(u64, @intCast(data[2])) << 40 | @as(u64, @intCast(data[3])) << 32 | @as(u64, @intCast(data[4])) << 24 | @as(u64, @intCast(data[5])) << 16 | @as(u64, @intCast(data[6])) << 8 | @as(u64, @intCast(data[7]));
-}
-
 pub inline fn encode_2(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(head | 25);
-    try cbor.writeByte(@as(u8, @intCast((v >> 8) & 0xff)));
-    try cbor.writeByte(@as(u8, @intCast(v & 0xff)));
+    try cbor.writeInt(u16, @as(u16, @intCast(v)), .big);
 }
 
 pub inline fn encode_4(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(head | 26);
-    try cbor.writeByte(@as(u8, @intCast((v >> 24) & 0xff)));
-    try cbor.writeByte(@as(u8, @intCast((v >> 16) & 0xff)));
-    try cbor.writeByte(@as(u8, @intCast((v >> 8) & 0xff)));
-    try cbor.writeByte(@as(u8, @intCast(v & 0xff)));
+    try cbor.writeInt(u32, @as(u32, @intCast(v)), .big);
 }
 
 pub inline fn encode_8(cbor: anytype, head: u8, v: u64) !void {
     try cbor.writeByte(head | 27);
-    try cbor.writeByte(@as(u8, @intCast((v >> 56) & 0xff)));
-    try cbor.writeByte(@as(u8, @intCast((v >> 48) & 0xff)));
-    try cbor.writeByte(@as(u8, @intCast((v >> 40) & 0xff)));
-    try cbor.writeByte(@as(u8, @intCast((v >> 32) & 0xff)));
-    try cbor.writeByte(@as(u8, @intCast((v >> 24) & 0xff)));
-    try cbor.writeByte(@as(u8, @intCast((v >> 16) & 0xff)));
-    try cbor.writeByte(@as(u8, @intCast((v >> 8) & 0xff)));
-    try cbor.writeByte(@as(u8, @intCast(v & 0xff)));
+    try cbor.writeInt(u64, v, .big);
 }
 
 test "deserialize unsigned" {
