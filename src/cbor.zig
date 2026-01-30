@@ -404,7 +404,7 @@ pub fn burn(data: []const u8, i: *usize) ?void {
                 }
             }
         },
-        0x9f => {
+        0x9f, 0xbf => {
             i.* += offset;
             while (data[i.*] != 0xff) {
                 if (burn(data, i) == null) {

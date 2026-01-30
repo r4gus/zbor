@@ -1923,3 +1923,31 @@ test "serialize indefinite-length map {_ 'Fun': true, 'Amt': -2}" {
 
     try std.testing.expectEqualSlices(u8, "\xbf\x63\x46\x75\x6e\xf5\x63\x41\x6d\x74\x21\xff", arr.written());
 }
+
+test "parse indefinite-length map {_ 'a': 1, 'b': {_ 'c': 2, 'd': 3}, 'e': 'hello'}" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        a: u8,
+        b: struct {
+            c: u8,
+            d: u8,
+        },
+        e: []const u8,
+    };
+
+    const raw = "\xbf\x61\x61\x01\x61\x62\xbf\x61\x63\x02\x61\x64\x03\xff\x61\x65\x65\x68\x65\x6c\x6c\x6f\xff";
+    const di = try DataItem.new(raw);
+
+    const s = try parse(
+        S,
+        di,
+        .{ .allocator = allocator },
+    );
+    defer allocator.free(s.e);
+
+    try std.testing.expectEqual(@as(u8, 1), s.a);
+    try std.testing.expectEqual(@as(u8, 2), s.b.c);
+    try std.testing.expectEqual(@as(u8, 3), s.b.d);
+    try std.testing.expectEqualSlices(u8, "hello", s.e);
+}
