@@ -118,7 +118,7 @@ pub const Builder = struct {
     /// On error all allocated memory is freed.
     pub fn withType(allocator: std.mem.Allocator, t: ContainerType) !@This() {
         var b = @This(){
-            .stack = .{},
+            .stack = .empty,
             .allocator = allocator,
         };
 
