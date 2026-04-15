@@ -2,7 +2,7 @@ const std = @import("std");
 const cbor = @import("zbor");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     const allocator = gpa.allocator();
 
     var original_msg = Message.new("stack_id", "hello", "there");

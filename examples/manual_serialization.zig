@@ -7,14 +7,13 @@ const User = struct {
     displayName: []const u8,
 };
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var gpa = std.heap.DebugAllocator(.{}){};
 const allocator = gpa.allocator();
 
-var stdout_buffer: [1024]u8 = undefined;
-var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-const stdout = &stdout_writer.interface;
-
 pub fn main() !void {
+    var io_impl = std.Io.Threaded.init_single_threaded;
+    const io = io_impl.io();
+
     const user = User{
         .id = "\x01\x23\x45\x67",
         .name = "bob@example.com",
@@ -34,6 +33,10 @@ pub fn main() !void {
     try zbor.builder.writeTextString(writer, user.name);
     try zbor.builder.writeTextString(writer, "displayName");
     try zbor.builder.writeTextString(writer, user.displayName);
+
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
+    const stdout = &stdout_writer.interface;
 
     try stdout.print("expected: {x}\ngot: {x}\nmatches: {any}\n", .{
         expected,

@@ -42,8 +42,6 @@ fn buildZborModule(
         .optimize = optimize,
     });
 
-    try b.modules.put(b.dupe("zbor"), zbor_module);
-
     // Creates a step for unit testing.
     const mod_tests = b.addTest(.{
         .root_module = zbor_module,

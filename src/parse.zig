@@ -210,7 +210,7 @@ pub fn parse(
             switch (item.getType()) {
                 .Int => {
                     const v = if (item.int()) |x| x else return ParseError.Malformed;
-                    return try std.meta.intToEnum(T, v);
+                    return std.enums.fromInt(T, v) orelse error.InvalidEnumTag;
                 },
                 .TextString => {
                     const v = if (item.string()) |x| x else return ParseError.Malformed;
@@ -423,7 +423,7 @@ pub fn parse(
                         },
                         .Array => {
                             var v = if (item.array()) |x| x else return ParseError.Malformed;
-                            var arraylist: std.ArrayListUnmanaged(ptrInfo.child) = .{};
+                            var arraylist: std.ArrayListUnmanaged(ptrInfo.child) = .empty;
                             errdefer {
                                 // TODO: take care of children
                                 arraylist.deinit(allocator);
@@ -446,7 +446,7 @@ pub fn parse(
                         },
                         .ArrayIndef => {
                             var array = if (item.arrayIndef()) |x| x else return ParseError.Malformed;
-                            var arraylist: std.ArrayListUnmanaged(ptrInfo.child) = .{};
+                            var arraylist: std.ArrayListUnmanaged(ptrInfo.child) = .empty;
                             errdefer {
                                 // TODO: take care of children
                                 arraylist.deinit(allocator);
@@ -1210,8 +1210,8 @@ test "stringify simple value" {
 test "stringify pointer" {
     const x1: u32 = 1234;
     const x1p: *const u32 = &x1;
-    const x2 = -18446744073709551616;
-    const x2p = &x2;
+    const x2: i65 = -18446744073709551616; // this is -2^64
+    const x2p: *const i65 = &x2;
 
     try testStringify("\x19\x04\xd2", x1p, .{});
     try testStringify("\x3b\xff\xff\xff\xff\xff\xff\xff\xff", x2p, .{});
