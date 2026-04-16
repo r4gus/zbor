@@ -72,6 +72,8 @@ const di = DataItem.new("\x1b\xff\xff\xff\xff\xff\xff\xff\xff") catch {
 
 `DataItem.new()` will check if the given data is well-formed before returning a `DataItem`. The data is well formed if it's syntactically correct. 
 
+You can also read from a `std.Io.Reader` using the `DataItem.readAlloc` function. The function will read a CBOR data item from a `Reader` and output a `DataItem` object. If you use the `readAlloc` method, don't forget to free the allocated memory using the `deinit()´ method!
+
 To check the type of the given `DataItem` use the `getType()` function.
 
 ```zig
