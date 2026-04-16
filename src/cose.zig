@@ -241,18 +241,14 @@ pub const Key = union(KeyTag) {
     ///
     /// ```zig
     /// const cbor = @import("zbor");
-    /// const keyPair = try cbor.cose.Key.es256(null);
+    /// var io_impl = std.Io.Threaded.init_single_threaded;
+    /// const io = io_impl.io();
+    /// const keyPair = try cbor.cose.Key.es256(io);
     ///
     /// // Use the key pair...
     /// ```
-    // TODO: this should use an IO parameter? perhas a union of std.Io, seed?
-    pub fn es256(seed: ?[32]u8) !@This() {
-        const kp = if (seed) |seed_|
-            try EcdsaP256Sha256.KeyPair.generateDeterministic(seed_)
-        else blk: {
-            var io_impl = std.Io.Threaded.init_single_threaded;
-            break :blk EcdsaP256Sha256.KeyPair.generate(io_impl.io());
-        };
+    pub fn es256(io: std.Io) !@This() {
+        const kp = EcdsaP256Sha256.KeyPair.generate(io);
         const sec1 = kp.public_key.toUncompressedSec1();
         const pk = kp.secret_key.toBytes();
         return .{ .P256 = .{
@@ -521,7 +517,7 @@ test "es256 sign verify 1" {
     try std.testing.expectEqual(true, try cosep256.verify(sig_der_1, &.{msg}));
 
     // Create another key-pair
-    var kp2 = try Key.es256(null);
+    var kp2 = try Key.es256(std.testing.io);
 
     // Trying to verfiy the first signature using the new key-pair should fail
     try std.testing.expectEqual(false, try kp2.verify(sig_der_1, &.{msg}));
