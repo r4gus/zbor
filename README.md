@@ -22,6 +22,7 @@ Versions
 | 0.13.0      | 0.15 |
 | 0.14.x      | 0.16.x, 0.17.x, 0.18.x |
 | 0.15.x      | 0.19.0, 0.20.0 |
+| 0.16.x      | 0.21.x |
 
 First add this library as a dependency to your `build.zig.zon` file:
 
