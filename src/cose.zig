@@ -232,7 +232,7 @@ pub const Key = union(KeyTag) {
 
     /// Creates a new ECDSA P-256 (secp256r1) key pair for the ES256 algorithm.
     ///
-    /// - `seed`: Optional seed to derive the key pair from. If `null`, a random seed will be used.
+    /// - `io`: `std.Io` interface
     ///
     /// Returns the newly created key pair as a structure containing the algorithm identifier,
     /// public key coordinates, and the secret key.
@@ -243,11 +243,11 @@ pub const Key = union(KeyTag) {
     /// const cbor = @import("zbor");
     /// var io_impl = std.Io.Threaded.init_single_threaded;
     /// const io = io_impl.io();
-    /// const keyPair = try cbor.cose.Key.es256(io);
+    /// const keyPair = cbor.cose.Key.es256(io);
     ///
     /// // Use the key pair...
     /// ```
-    pub fn es256(io: std.Io) !@This() {
+    pub fn es256(io: std.Io) @This() {
         const kp = EcdsaP256Sha256.KeyPair.generate(io);
         const sec1 = kp.public_key.toUncompressedSec1();
         const pk = kp.secret_key.toBytes();
