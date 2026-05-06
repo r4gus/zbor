@@ -517,7 +517,7 @@ test "es256 sign verify 1" {
     try std.testing.expectEqual(true, try cosep256.verify(sig_der_1, &.{msg}));
 
     // Create another key-pair
-    var kp2 = try Key.es256(std.testing.io);
+    var kp2 = Key.es256(std.testing.io);
 
     // Trying to verfiy the first signature using the new key-pair should fail
     try std.testing.expectEqual(false, try kp2.verify(sig_der_1, &.{msg}));
