@@ -233,7 +233,7 @@ pub fn parse(
             switch (item.getType()) {
                 .Map, .MapIndef => {
                     var r: T = undefined;
-                    var fields_seen = [_]bool{false} ** structInfo.fields.len;
+                    var fields_seen: [structInfo.fields.len]bool = @splat(false);
 
                     var v = if (item.map()) |x|
                         x
