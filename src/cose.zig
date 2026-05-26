@@ -376,6 +376,21 @@ pub const Key = struct {
                 @memcpy(mem, der);
                 return mem;
             },
+            .@"ML-DSA-87" => {
+                const e = std.crypto.sign.mldsa.MLDSA87;
+
+                if (self.priv == null) return error.MissingPrivateKey;
+
+                var kp = try e.KeyPair.generateDeterministic(self.priv.?[0..32].*);
+                var signer = try kp.signer(null);
+
+                for (data_seq) |data| {
+                    signer.update(data);
+                }
+
+                const sig = signer.finalize();
+                return try allocator.dupe(u8, &sig.toBytes());
+            },
             else => return error.UnsupportedAlgorithm,
         }
     }
@@ -424,11 +439,30 @@ pub const Key = struct {
                     // Verification failed
                     return false;
                 };
+            },
+            .@"ML-DSA-87" => {
+                const e = std.crypto.sign.mldsa.MLDSA87;
 
-                return true;
+                if (self.@"pub" == null) return error.MissingPub;
+                if (signature.len != e.Signature.encoded_length) return error.WrongSignatureLength;
+
+                const k = try e.PublicKey.fromBytes(self.@"pub".?[0..e.PublicKey.encoded_length].*);
+
+                const sig = try e.Signature.fromBytes(signature[0..e.Signature.encoded_length].*);
+
+                var verifier = try sig.verifier(k);
+                for (data_seq) |data| {
+                    verifier.update(data);
+                }
+
+                verifier.verify() catch {
+                    return false;
+                };
             },
             else => return error.UnsupportedAlgorithm,
         }
+
+        return true;
     }
 
     pub fn cborStringify(self: *const @This(), options: Options, out: anytype) !void {
@@ -632,4 +666,10 @@ test "copy secure #1" {
 test "ML-DSA-87 #1" {
     const kp = try Key.mlDsa87(std.testing.allocator, std.testing.io);
     defer kp.deinit(std.testing.allocator);
+
+    const sig = try kp.sign(&.{"zig is awesome!"}, std.testing.allocator);
+    defer std.testing.allocator.free(sig);
+
+    try std.testing.expectEqual(true, try kp.verify(sig, &.{"zig is awesome!"}));
+    try std.testing.expectEqual(false, try kp.verify(sig, &.{"zig is awesom!"}));
 }
