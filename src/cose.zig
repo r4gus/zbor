@@ -26,6 +26,18 @@ pub const Algorithm = enum(i32) {
     Rs384 = -258,
     /// RSASSA-PKCS1-v1_5 using SHA-256
     Rs256 = -257,
+    /// EdDSA using the Ed448 parameter set in Section 5.2 of [RFC8032]
+    Ed448 = -53,
+    /// ECDSA using P-521 curve and SHA-512
+    ESP512 = -52,
+    /// ECDSA using P-384 curve and SHA-384
+    ESP384 = -51,
+    /// ML-DSA-87 (RFC9964)
+    @"ML-DSA-87" = -50,
+    /// ML-DSA-65 (RFC9964)
+    @"ML-DSA-65" = -49,
+    /// ML-DSA-44 (RFC9964)
+    @"ML-DSA-44" = -48,
     /// ECDSA using secp256k1 curve and SHA-256
     ES256K = -47,
     /// HSS/LMS hash-based digital signature
@@ -133,6 +145,8 @@ pub const KeyType = enum(u8) {
     HssLms = 5,
     /// WalnutDSA public key
     WalnutDsa = 6,
+    /// COSE Key Type for Algorithm Key Pairs
+    AKP = 7,
 };
 
 /// COSE elliptic curves
@@ -163,71 +177,102 @@ pub const Curve = enum(i16) {
     }
 };
 
-pub const KeyTag = enum { P256 };
+pub const Key = struct {
+    kid: ?[]u8 = null,
+    /// kty: Identification of the key type
+    kty: KeyType,
+    /// alg: Key usage restriction to this algorithm
+    alg: Algorithm,
+    /// crv: EC identifier -- Taken from the "COSE Elliptic Curves" registry
+    crv: ?Curve = null,
+    /// x: x-coordinate
+    x: ?[]u8 = null,
+    /// y: y-coordinate
+    y: ?[]u8 = null,
+    /// Private key
+    d: ?[]u8 = null,
+    /// The public key
+    @"pub": ?[]u8 = null,
+    /// The seed for expanding the private key
+    priv: ?[]u8 = null,
 
-pub const Key = union(KeyTag) {
-    P256: struct {
-        /// kty: Identification of the key type
-        kty: KeyType = .Ec2,
-        /// alg: Key usage restriction to this algorithm
-        alg: Algorithm,
-        /// crv: EC identifier -- Taken from the "COSE Elliptic Curves" registry
-        crv: Curve = .P256,
-        /// x: x-coordinate
-        x: [32]u8,
-        /// y: y-coordinate
-        y: [32]u8,
-        /// Private key
-        d: ?[32]u8 = null,
-    },
+    pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
+        if (self.kid) |v| allocator.free(v);
+        if (self.x) |v| allocator.free(v);
+        if (self.y) |v| allocator.free(v);
+        if (self.d) |v| allocator.free(v);
+        if (self.@"pub") |v| allocator.free(v);
+        if (self.priv) |v| allocator.free(v);
+    }
 
     pub fn getAlg(self: *const @This()) Algorithm {
-        switch (self.*) {
-            .P256 => |k| return k.alg,
-        }
+        return self.alg;
     }
 
-    pub fn getPrivKey(self: *const @This()) []const u8 {
-        switch (self.*) {
-            .P256 => |k| {
-                return if (k.d) |d| d[0..] else null;
-            },
-        }
+    pub fn getPrivKey(self: *const @This()) ?[]const u8 {
+        return switch (self.kty) {
+            .Ec2 => self.d,
+            .AKP => self.priv,
+            else => null, // TODO
+        };
     }
 
-    pub fn copySecure(self: *const @This()) @This() {
-        switch (self.*) {
-            .P256 => |k| {
-                return .{ .P256 = .{
-                    .kty = k.kty,
-                    .alg = k.alg,
-                    .crv = k.crv,
-                    .x = k.x,
-                    .y = k.y,
+    pub fn copySecure(
+        self: *const @This(),
+        allocator: std.mem.Allocator,
+    ) !@This() {
+        switch (self.kty) {
+            .Ec2 => {
+                return .{
+                    .kid = if (self.kid) |kid| try allocator.dupe(u8, kid) else null,
+                    .kty = self.kty,
+                    .alg = self.alg,
+                    .crv = self.crv,
+                    .x = if (self.x) |v| try allocator.dupe(u8, v) else null,
+                    .y = if (self.y) |v| try allocator.dupe(u8, v) else null,
                     .d = null,
-                } };
+                };
             },
+            .AKP => {
+                return .{
+                    .kid = if (self.kid) |kid| try allocator.dupe(u8, kid) else null,
+                    .kty = self.kty,
+                    .alg = self.alg,
+                    .@"pub" = if (self.@"pub") |v| try allocator.dupe(u8, v) else null,
+                    .priv = null,
+                };
+            },
+            else => return error.UnsupportedKeyType, // TODO
         }
     }
 
-    pub fn fromP256Pub(alg: Algorithm, pk: anytype) @This() {
+    pub fn fromP256Pub(alg: Algorithm, pk: anytype, allocator: std.mem.Allocator) !@This() {
         const sec1 = pk.toUncompressedSec1();
-        return .{ .P256 = .{
+        return .{
+            .kty = .Ec2,
             .alg = alg,
-            .x = sec1[1..33].*,
-            .y = sec1[33..65].*,
-        } };
+            .crv = .P256,
+            .x = try allocator.dupe(u8, sec1[1..33]),
+            .y = try allocator.dupe(u8, sec1[33..65]),
+        };
     }
 
-    pub fn fromP256PrivPub(alg: Algorithm, privk: anytype, pubk: anytype) @This() {
+    pub fn fromP256PrivPub(
+        alg: Algorithm,
+        privk: anytype,
+        pubk: anytype,
+        allocator: std.mem.Allocator,
+    ) !@This() {
         const sec1 = pubk.toUncompressedSec1();
         const pk = privk.toBytes();
-        return .{ .P256 = .{
+        return .{
+            .kty = .Ec2,
             .alg = alg,
-            .x = sec1[1..33].*,
-            .y = sec1[33..65].*,
-            .d = pk,
-        } };
+            .crv = .P256,
+            .x = try allocator.dupe(u8, sec1[1..33]),
+            .y = try allocator.dupe(u8, sec1[33..65]),
+            .d = try allocator.dupe(u8, &pk),
+        };
     }
 
     /// Creates a new ECDSA P-256 (secp256r1) key pair for the ES256 algorithm.
@@ -247,16 +292,40 @@ pub const Key = union(KeyTag) {
     ///
     /// // Use the key pair...
     /// ```
-    pub fn es256(io: std.Io) @This() {
+    pub fn es256(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+    ) !@This() {
         const kp = EcdsaP256Sha256.KeyPair.generate(io);
         const sec1 = kp.public_key.toUncompressedSec1();
         const pk = kp.secret_key.toBytes();
-        return .{ .P256 = .{
+        return .{
+            .kty = .Ec2,
             .alg = .Es256,
-            .x = sec1[1..33].*,
-            .y = sec1[33..65].*,
-            .d = pk,
-        } };
+            .x = try allocator.dupe(u8, sec1[1..33]),
+            .y = try allocator.dupe(u8, sec1[33..65]),
+            .d = try allocator.dupe(u8, &pk),
+        };
+    }
+
+    pub fn mlDsa87(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+    ) !@This() {
+        const e = std.crypto.sign.mldsa.MLDSA87;
+
+        var seed: [e.seed_length]u8 = undefined;
+        io.random(&seed);
+        // The generate() function in std calls it the same, i.e.
+        // unreachable is fine.
+        const kp = e.KeyPair.generateDeterministic(seed) catch unreachable;
+
+        return .{
+            .kty = .AKP,
+            .alg = .@"ML-DSA-87",
+            .@"pub" = try allocator.dupe(u8, &kp.public_key.toBytes()),
+            .priv = try allocator.dupe(u8, &seed),
+        };
     }
 
     /// Signs the provided data using the specified algorithm and key.
@@ -285,33 +354,29 @@ pub const Key = union(KeyTag) {
         data_seq: []const []const u8,
         allocator: std.mem.Allocator,
     ) ![]const u8 {
-        switch (self.*) {
-            .P256 => |k| {
-                if (k.d == null) return error.MissingPrivateKey;
+        switch (self.alg) {
+            .Es256 => {
+                if (self.d == null) return error.MissingPrivateKey;
 
-                switch (k.alg) {
-                    .Es256 => {
-                        var kp = try EcdsaP256Sha256.KeyPair.fromSecretKey(
-                            try EcdsaP256Sha256.SecretKey.fromBytes(k.d.?),
-                        );
-                        var signer = try kp.signer(null);
+                var kp = try EcdsaP256Sha256.KeyPair.fromSecretKey(
+                    try EcdsaP256Sha256.SecretKey.fromBytes(self.d.?[0..EcdsaP256Sha256.SecretKey.encoded_length].*),
+                );
+                var signer = try kp.signer(null);
 
-                        // Append data that should be signed together
-                        for (data_seq) |data| {
-                            signer.update(data);
-                        }
-
-                        // Sign the data
-                        const sig = try signer.finalize();
-                        var buffer: [EcdsaP256Sha256.Signature.der_encoded_length_max]u8 = undefined;
-                        const der = sig.toDer(&buffer);
-                        const mem = try allocator.alloc(u8, der.len);
-                        @memcpy(mem, der);
-                        return mem;
-                    },
-                    else => return error.UnsupportedAlgorithm,
+                // Append data that should be signed together
+                for (data_seq) |data| {
+                    signer.update(data);
                 }
+
+                // Sign the data
+                const sig = try signer.finalize();
+                var buffer: [EcdsaP256Sha256.Signature.der_encoded_length_max]u8 = undefined;
+                const der = sig.toDer(&buffer);
+                const mem = try allocator.alloc(u8, der.len);
+                @memcpy(mem, der);
+                return mem;
             },
+            else => return error.UnsupportedAlgorithm,
         }
     }
 
@@ -337,33 +402,32 @@ pub const Key = union(KeyTag) {
         signature: []const u8,
         data_seq: []const []const u8,
     ) !bool {
-        switch (self.*) {
-            .P256 => |k| {
-                switch (k.alg) {
-                    .Es256 => {
-                        // Get public key struct
-                        var usec1: [65]u8 = undefined;
-                        usec1[0] = 4;
-                        @memcpy(usec1[1..33], &k.x);
-                        @memcpy(usec1[33..65], &k.y);
-                        const pk = try EcdsaP256Sha256.PublicKey.fromSec1(&usec1);
-                        // Get signature struct
-                        const sig = try EcdsaP256Sha256.Signature.fromDer(signature);
-                        // Get verifier
-                        var verifier = try sig.verifier(pk);
-                        for (data_seq) |data| {
-                            verifier.update(data);
-                        }
-                        verifier.verify() catch {
-                            // Verification failed
-                            return false;
-                        };
+        switch (self.alg) {
+            .Es256 => {
+                if (self.x == null) return error.MissingX;
+                if (self.y == null) return error.MissingY;
 
-                        return true;
-                    },
-                    else => return error.UnsupportedAlgorithm,
+                // Get public key struct
+                var usec1: [65]u8 = undefined;
+                usec1[0] = 4;
+                @memcpy(usec1[1..33], self.x.?[0..32]);
+                @memcpy(usec1[33..65], self.y.?[0..32]);
+                const pk = try EcdsaP256Sha256.PublicKey.fromSec1(&usec1);
+                // Get signature struct
+                const sig = try EcdsaP256Sha256.Signature.fromDer(signature);
+                // Get verifier
+                var verifier = try sig.verifier(pk);
+                for (data_seq) |data| {
+                    verifier.update(data);
                 }
+                verifier.verify() catch {
+                    // Verification failed
+                    return false;
+                };
+
+                return true;
             },
+            else => return error.UnsupportedAlgorithm,
         }
     }
 
@@ -380,6 +444,10 @@ pub const Key = union(KeyTag) {
                     },
                     .value_options = .{ .enum_serialization_type = .Integer },
                 },
+                .{ .name = "kid", .field_options = .{
+                    .alias = "2",
+                    .serialization_type = .Integer,
+                } },
                 .{
                     .name = "alg",
                     .field_options = .{
@@ -406,6 +474,14 @@ pub const Key = union(KeyTag) {
                 } },
                 .{ .name = "d", .field_options = .{
                     .alias = "-4",
+                    .serialization_type = .Integer,
+                } },
+                .{ .name = "pub", .field_options = .{
+                    .alias = "-1",
+                    .serialization_type = .Integer,
+                } },
+                .{ .name = "priv", .field_options = .{
+                    .alias = "-2",
                     .serialization_type = .Integer,
                 } },
             },
@@ -423,13 +499,19 @@ pub const Key = union(KeyTag) {
                         .alias = "1",
                         .serialization_type = .Integer,
                     },
+                    .value_options = .{ .enum_serialization_type = .Integer },
                 },
+                .{ .name = "kid", .field_options = .{
+                    .alias = "2",
+                    .serialization_type = .Integer,
+                } },
                 .{
                     .name = "alg",
                     .field_options = .{
                         .alias = "3",
                         .serialization_type = .Integer,
                     },
+                    .value_options = .{ .enum_serialization_type = .Integer },
                 },
                 .{
                     .name = "crv",
@@ -437,6 +519,7 @@ pub const Key = union(KeyTag) {
                         .alias = "-1",
                         .serialization_type = .Integer,
                     },
+                    .value_options = .{ .enum_serialization_type = .Integer },
                 },
                 .{ .name = "x", .field_options = .{
                     .alias = "-2",
@@ -450,6 +533,14 @@ pub const Key = union(KeyTag) {
                     .alias = "-4",
                     .serialization_type = .Integer,
                 } },
+                .{ .name = "pub", .field_options = .{
+                    .alias = "-1",
+                    .serialization_type = .Integer,
+                } },
+                .{ .name = "priv", .field_options = .{
+                    .alias = "-2",
+                    .serialization_type = .Integer,
+                } },
             },
         });
     }
@@ -458,7 +549,8 @@ pub const Key = union(KeyTag) {
 test "cose Key p256 stringify #1" {
     const x = try EcdsaP256Sha256.PublicKey.fromSec1("\x04\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52");
 
-    const k = Key.fromP256Pub(.Es256, x);
+    const k = try Key.fromP256Pub(.Es256, x, std.testing.allocator);
+    defer k.deinit(std.testing.allocator);
 
     const allocator = std.testing.allocator;
     var str = std.Io.Writer.Allocating.init(allocator);
@@ -474,13 +566,16 @@ test "cose Key p256 parse #1" {
 
     const di = try DataItem.new(payload);
 
-    const key = try parse(Key, di, .{});
+    const key = try parse(Key, di, .{
+        .allocator = std.testing.allocator,
+    });
+    defer key.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(Algorithm.Es256, key.P256.alg);
-    try std.testing.expectEqual(KeyType.Ec2, key.P256.kty);
-    try std.testing.expectEqual(Curve.P256, key.P256.crv);
-    try std.testing.expectEqualSlices(u8, "\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e", &key.P256.x);
-    try std.testing.expectEqualSlices(u8, "\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", &key.P256.y);
+    try std.testing.expectEqual(Algorithm.Es256, key.alg);
+    try std.testing.expectEqual(KeyType.Ec2, key.kty);
+    try std.testing.expectEqual(Curve.P256, key.crv);
+    try std.testing.expectEqualSlices(u8, "\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e", key.x.?);
+    try std.testing.expectEqualSlices(u8, "\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", key.y.?);
 }
 
 test "alg to raw" {
@@ -503,7 +598,8 @@ test "es256 sign verify 1" {
     const kp1 = EcdsaP256Sha256.KeyPair.generate(std.testing.io);
 
     // Create a signature via cose key struct
-    var cosep256 = Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key);
+    var cosep256 = try Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key, std.testing.allocator);
+    defer cosep256.deinit(std.testing.allocator);
     const sig_der_1 = try cosep256.sign(&.{msg}, allocator);
     defer allocator.free(sig_der_1);
 
@@ -517,7 +613,8 @@ test "es256 sign verify 1" {
     try std.testing.expectEqual(true, try cosep256.verify(sig_der_1, &.{msg}));
 
     // Create another key-pair
-    var kp2 = Key.es256(std.testing.io);
+    var kp2 = try Key.es256(std.testing.allocator, std.testing.io);
+    defer kp2.deinit(std.testing.allocator);
 
     // Trying to verfiy the first signature using the new key-pair should fail
     try std.testing.expectEqual(false, try kp2.verify(sig_der_1, &.{msg}));
@@ -525,7 +622,14 @@ test "es256 sign verify 1" {
 
 test "copy secure #1" {
     const kp1 = EcdsaP256Sha256.KeyPair.generate(std.testing.io);
-    var cosep256 = Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key);
-    const cpy = cosep256.copySecure();
-    try std.testing.expectEqual(cpy.P256.d, null);
+    var cosep256 = try Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key, std.testing.allocator);
+    defer cosep256.deinit(std.testing.allocator);
+    const cpy = try cosep256.copySecure(std.testing.allocator);
+    defer cpy.deinit(std.testing.allocator);
+    try std.testing.expectEqual(cpy.d, null);
+}
+
+test "ML-DSA-87 #1" {
+    const kp = try Key.mlDsa87(std.testing.allocator, std.testing.io);
+    defer kp.deinit(std.testing.allocator);
 }
