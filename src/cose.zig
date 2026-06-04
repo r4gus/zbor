@@ -515,7 +515,17 @@ pub const Key = struct {
 
     /// TDOO: this is experimental!
     /// use it with extreme care!!!
-    fn is_valid_key(ctx: *const anyopaque, key: []const u8) bool {
+    fn is_valid_key(
+        ctx: *const anyopaque,
+        key: []const u8,
+        fields: []const bool,
+        seen: *const fn ([]const u8, []const bool) bool,
+    ) bool {
+        // TODO: what is a sane default here?
+        // Returning true at this point is probably the only
+        // sane solution we have...
+        if (!seen("kty", fields)) return true;
+
         const self: *const @This() = @ptrCast(@alignCast(ctx));
 
         if (std.mem.eql(u8, key, "crv") or std.mem.eql(u8, key, "x") or std.mem.eql(u8, key, "y") or std.mem.eql(u8, key, "d")) {
