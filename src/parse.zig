@@ -152,6 +152,9 @@ pub const ParseError = error{
     OutOfMemory,
     Malformed,
     NoUnionMemberMatched,
+    FieldParsingDependencyNotSeenYet,
+    NotYetImplemented,
+    InvalidCharacter,
 };
 
 pub const StringifyError = error{
@@ -255,11 +258,13 @@ pub fn parse(
                             if (field.type == std.mem.Allocator) continue;
 
                             // Is there an alias specified?
-                            for (options.field_settings) |fs| {
+                            for (options.field_settings) |*fs| {
                                 if (std.mem.eql(u8, field.name, fs.name)) {
                                     if (fs.field_options.alias) |alias| {
                                         name = alias;
                                     }
+
+                                    break;
                                 }
                             }
 
@@ -275,6 +280,15 @@ pub fn parse(
                             }
 
                             if (match) {
+                                // The is_valid_key callback allows checking, based on
+                                // the state of the given struct, if the current field
+                                // should be considered.
+                                if (options.is_valid_key) |ivk| {
+                                    match = ivk(@ptrCast(&r), field.name);
+                                }
+                            }
+
+                            if (match) {
                                 if (fields_seen[i]) {
                                     switch (options.duplicate_field_behavior) {
                                         .UseFirst => {
@@ -287,11 +301,13 @@ pub fn parse(
 
                                 var child_options = options;
                                 child_options.ignore_override = false;
+
                                 @field(r, field.name) = try parse(
                                     field.type,
                                     kv.value,
                                     child_options,
                                 );
+
                                 errdefer {
                                     // TODO: add error defer to free memory
                                     const I = @typeInfo(@TypeOf(@field(r, field.name)));
@@ -534,6 +550,7 @@ pub const Options = struct {
     } = .Error,
     /// Ignore CBOR map keys that were not expected
     ignore_unknown_fields: bool = true,
+    is_valid_key: ?*const fn (ctx: *const anyopaque, key: []const u8) bool = null,
 };
 
 pub const SerializationType = enum {
