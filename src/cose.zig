@@ -231,6 +231,7 @@ pub const Key = struct {
                 break :blk .{
                     .kty = .Ec2,
                     .alg = .Es256,
+                    .crv = .P256,
                     .x = try allocator.dupe(u8, sec1[1..33]),
                     .y = try allocator.dupe(u8, sec1[33..65]),
                     .d = try allocator.dupe(u8, &pk),
