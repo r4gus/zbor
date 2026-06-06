@@ -186,15 +186,15 @@ pub const Key = struct {
     /// crv: EC identifier -- Taken from the "COSE Elliptic Curves" registry
     crv: ?Curve = null,
     /// x: x-coordinate
-    x: ?[]u8 = null,
+    x: ?[]const u8 = null,
     /// y: y-coordinate
-    y: ?[]u8 = null,
+    y: ?[]const u8 = null,
     /// Private key
-    d: ?[]u8 = null,
+    d: ?[]const u8 = null,
     /// The public key
-    @"pub": ?[]u8 = null,
+    @"pub": ?[]const u8 = null,
     /// The seed for expanding the private key
-    priv: ?[]u8 = null,
+    priv: ?[]const u8 = null,
 
     pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
         if (self.kid) |v| allocator.free(v);
@@ -214,6 +214,111 @@ pub const Key = struct {
             .Ec2 => self.d,
             .AKP => self.priv,
             else => null, // TODO
+        };
+    }
+
+    pub fn generateDeterministic(
+        alg: Algorithm,
+        seed: []const u8,
+        allocator: std.mem.Allocator,
+    ) !@This() {
+        return switch (alg) {
+            .Es256 => blk: {
+                if (seed.len != EcdsaP256Sha256.KeyPair.seed_length) return error.InvalidSeedLength;
+                const kp = try EcdsaP256Sha256.KeyPair.generateDeterministic(seed[0..EcdsaP256Sha256.KeyPair.seed_length].*);
+                const sec1 = kp.public_key.toUncompressedSec1();
+                const pk = kp.secret_key.toBytes();
+                break :blk .{
+                    .kty = .Ec2,
+                    .alg = .Es256,
+                    .x = try allocator.dupe(u8, sec1[1..33]),
+                    .y = try allocator.dupe(u8, sec1[33..65]),
+                    .d = try allocator.dupe(u8, &pk),
+                };
+            },
+            .@"ML-DSA-87" => blk: {
+                const e = std.crypto.sign.mldsa.MLDSA87;
+
+                if (seed.len != e.KeyPair.seed_length) return error.InvalidSeedLength;
+
+                // The generate() function in std calls it the same, i.e.
+                // unreachable is fine.
+                const kp = e.KeyPair.generateDeterministic(seed[0..e.KeyPair.seed_length].*) catch unreachable;
+                break :blk .{
+                    .kty = .AKP,
+                    .alg = alg,
+                    .@"pub" = try allocator.dupe(u8, &kp.public_key.toBytes()),
+                    .priv = try allocator.dupe(u8, seed),
+                };
+            },
+            .@"ML-DSA-65" => blk: {
+                const e = std.crypto.sign.mldsa.MLDSA65;
+
+                if (seed.len != e.KeyPair.seed_length) return error.InvalidSeedLength;
+
+                // The generate() function in std calls it the same, i.e.
+                // unreachable is fine.
+                const kp = e.KeyPair.generateDeterministic(seed[0..e.KeyPair.seed_length].*) catch unreachable;
+
+                break :blk .{
+                    .kty = .AKP,
+                    .alg = alg,
+                    .@"pub" = try allocator.dupe(u8, &kp.public_key.toBytes()),
+                    .priv = try allocator.dupe(u8, seed),
+                };
+            },
+            .@"ML-DSA-44" => blk: {
+                const e = std.crypto.sign.mldsa.MLDSA44;
+
+                if (seed.len != e.KeyPair.seed_length) return error.InvalidSeedLength;
+
+                // The generate() function in std calls it the same, i.e.
+                // unreachable is fine.
+                const kp = e.KeyPair.generateDeterministic(seed[0..e.KeyPair.seed_length].*) catch unreachable;
+
+                break :blk .{
+                    .kty = .AKP,
+                    .alg = alg,
+                    .@"pub" = try allocator.dupe(u8, &kp.public_key.toBytes()),
+                    .priv = try allocator.dupe(u8, seed),
+                };
+            },
+            else => error.UnsupportedAlgorithm,
+        };
+    }
+
+    pub fn generate(
+        alg: Algorithm,
+        allocator: std.mem.Allocator,
+        io: std.Io,
+    ) !@This() {
+        return switch (alg) {
+            .Es256 => blk: {
+                var random_seed: [EcdsaP256Sha256.KeyPair.seed_length]u8 = undefined;
+                while (true) {
+                    io.random(&random_seed);
+                    break :blk generateDeterministic(
+                        alg,
+                        &random_seed,
+                        allocator,
+                    ) catch |e| {
+                        if (e == error.IdentityElement) {
+                            @branchHint(.unlikely);
+                            continue;
+                        } else return e;
+                    };
+                }
+            },
+            .@"ML-DSA-87", .@"ML-DSA-65", .@"ML-DSA-44" => blk: {
+                var seed: [32]u8 = undefined;
+                io.random(&seed);
+                break :blk try generateDeterministic(
+                    alg,
+                    &seed,
+                    allocator,
+                );
+            },
+            else => error.UnsupportedAlgorithm,
         };
     }
 
@@ -273,55 +378,6 @@ pub const Key = struct {
             .y = try allocator.dupe(u8, sec1[33..65]),
             .d = try allocator.dupe(u8, &pk),
         };
-    }
-
-    /// Creates a new ECDSA P-256 (secp256r1) key pair for the ES256 algorithm.
-    ///
-    /// - `io`: `std.Io` interface
-    ///
-    /// Returns the newly created key pair as a structure containing the algorithm identifier,
-    /// public key coordinates, and the secret key.
-    ///
-    /// # Examples
-    ///
-    /// ```zig
-    /// const cbor = @import("zbor");
-    /// var io_impl = std.Io.Threaded.init_single_threaded;
-    /// const io = io_impl.io();
-    /// const keyPair = cbor.cose.Key.es256(io);
-    ///
-    /// // Use the key pair...
-    /// ```
-    pub fn es256(
-        allocator: std.mem.Allocator,
-        io: std.Io,
-    ) !@This() {
-        const kp = EcdsaP256Sha256.KeyPair.generate(io);
-        const sec1 = kp.public_key.toUncompressedSec1();
-        const pk = kp.secret_key.toBytes();
-        return .{
-            .kty = .Ec2,
-            .alg = .Es256,
-            .x = try allocator.dupe(u8, sec1[1..33]),
-            .y = try allocator.dupe(u8, sec1[33..65]),
-            .d = try allocator.dupe(u8, &pk),
-        };
-    }
-
-    /// Create a key for one of the ML-DSA signature algorithms.
-    ///
-    /// alg: must be one of the following:
-    /// - `.@"ML-DSA-87"`
-    /// - `.@"ML-DSA-65"`
-    /// - `.@"ML-DSA-44"`
-    pub fn mlDsa(
-        alg: Algorithm,
-        allocator: std.mem.Allocator,
-        io: std.Io,
-    ) !@This() {
-        var seed: [32]u8 = undefined;
-        io.random(&seed);
-        return mlDsaDeterministic(alg, allocator, seed);
     }
 
     /// Create a key for one of the ML-DSA signature algorithms.
@@ -720,7 +776,7 @@ test "es256 sign verify 1" {
     try std.testing.expectEqual(true, try cosep256.verify(sig_der_1, &.{msg}));
 
     // Create another key-pair
-    var kp2 = try Key.es256(std.testing.allocator, std.testing.io);
+    var kp2 = try Key.generate(.Es256, std.testing.allocator, std.testing.io);
     defer kp2.deinit(std.testing.allocator);
 
     // Trying to verfiy the first signature using the new key-pair should fail
@@ -737,7 +793,7 @@ test "copy secure #1" {
 }
 
 test "ML-DSA-87 #1" {
-    const kp = try Key.mlDsa(
+    const kp = try Key.generate(
         .@"ML-DSA-87",
         std.testing.allocator,
         std.testing.io,
@@ -758,10 +814,10 @@ test "ML-DSA-87 #2" {
     const priv = "\xf4\xb4\x75\xb7\x9e\xba\xb8\x88\xa3\x55\x6e\x6f\xcd\x43\x69\x9f\x0e\xe9\xd1\xb5\x88\xc7\x48\x0a\x76\xb9\xca\x92\xa3\xd6\x21\xa3";
 
     // Create a key pair and sign a message with it
-    const kp = try Key.mlDsaDeterministic(
+    const kp = try Key.generateDeterministic(
         .@"ML-DSA-87",
+        priv,
         allocator,
-        priv[0..32].*,
     );
     defer kp.deinit(allocator);
 
