@@ -186,23 +186,41 @@ pub const Key = struct {
     /// crv: EC identifier -- Taken from the "COSE Elliptic Curves" registry
     crv: ?Curve = null,
     /// x: x-coordinate
-    x: ?[]const u8 = null,
+    x: ?[]u8 = null,
     /// y: y-coordinate
-    y: ?[]const u8 = null,
+    y: ?[]u8 = null,
     /// Private key
-    d: ?[]const u8 = null,
+    d: ?[]u8 = null,
     /// The public key
-    @"pub": ?[]const u8 = null,
+    @"pub": ?[]u8 = null,
     /// The seed for expanding the private key
-    priv: ?[]const u8 = null,
+    priv: ?[]u8 = null,
 
     pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
-        if (self.kid) |v| allocator.free(v);
-        if (self.x) |v| allocator.free(v);
-        if (self.y) |v| allocator.free(v);
-        if (self.d) |v| allocator.free(v);
-        if (self.@"pub") |v| allocator.free(v);
-        if (self.priv) |v| allocator.free(v);
+        if (self.kid) |v| {
+            std.crypto.secureZero(u8, v);
+            allocator.free(v);
+        }
+        if (self.x) |v| {
+            std.crypto.secureZero(u8, v);
+            allocator.free(v);
+        }
+        if (self.y) |v| {
+            std.crypto.secureZero(u8, v);
+            allocator.free(v);
+        }
+        if (self.d) |v| {
+            std.crypto.secureZero(u8, v);
+            allocator.free(v);
+        }
+        if (self.@"pub") |v| {
+            std.crypto.secureZero(u8, v);
+            allocator.free(v);
+        }
+        if (self.priv) |v| {
+            std.crypto.secureZero(u8, v);
+            allocator.free(v);
+        }
     }
 
     pub fn getAlg(self: *const @This()) Algorithm {
@@ -320,6 +338,23 @@ pub const Key = struct {
                 );
             },
             else => error.UnsupportedAlgorithm,
+        };
+    }
+
+    pub fn copy(
+        self: *const @This(),
+        allocator: std.mem.Allocator,
+    ) !@This() {
+        return .{
+            .kid = if (self.kid) |kid| try allocator.dupe(u8, kid) else null,
+            .kty = self.kty,
+            .alg = self.alg,
+            .crv = self.crv,
+            .x = if (self.x) |v| try allocator.dupe(u8, v) else null,
+            .y = if (self.y) |v| try allocator.dupe(u8, v) else null,
+            .d = if (self.d) |v| try allocator.dupe(u8, v) else null,
+            .@"pub" = if (self.@"pub") |v| try allocator.dupe(u8, v) else null,
+            .priv = if (self.priv) |v| try allocator.dupe(u8, v) else null,
         };
     }
 
