@@ -416,58 +416,6 @@ pub const Key = struct {
         };
     }
 
-    /// Create a key for one of the ML-DSA signature algorithms.
-    ///
-    /// alg: must be one of the following:
-    /// - `.@"ML-DSA-87"`
-    /// - `.@"ML-DSA-65"`
-    /// - `.@"ML-DSA-44"`
-    pub fn mlDsaDeterministic(
-        alg: Algorithm,
-        allocator: std.mem.Allocator,
-        seed: [32]u8,
-    ) !@This() {
-        return switch (alg) {
-            .@"ML-DSA-87" => try mlDsa_(
-                std.crypto.sign.mldsa.MLDSA87,
-                alg,
-                allocator,
-                seed,
-            ),
-            .@"ML-DSA-65" => try mlDsa_(
-                std.crypto.sign.mldsa.MLDSA65,
-                alg,
-                allocator,
-                seed,
-            ),
-            .@"ML-DSA-44" => try mlDsa_(
-                std.crypto.sign.mldsa.MLDSA44,
-                alg,
-                allocator,
-                seed,
-            ),
-            else => error.InvalidAlgorithm,
-        };
-    }
-
-    fn mlDsa_(
-        e: anytype,
-        alg: Algorithm,
-        allocator: std.mem.Allocator,
-        seed: [32]u8,
-    ) !@This() {
-        // The generate() function in std calls it the same, i.e.
-        // unreachable is fine.
-        const kp = e.KeyPair.generateDeterministic(seed) catch unreachable;
-
-        return .{
-            .kty = .AKP,
-            .alg = alg,
-            .@"pub" = try allocator.dupe(u8, &kp.public_key.toBytes()),
-            .priv = try allocator.dupe(u8, &seed),
-        };
-    }
-
     /// Signs the provided data using the specified algorithm and key.
     ///
     /// - `data_seq`: A sequence of data slices to be signed together.
