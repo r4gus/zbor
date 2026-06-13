@@ -14,6 +14,9 @@ const Options = parse_.Options;
 
 const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
 
+pub const Headers = @import("cose/Headers.zig");
+pub const Sign1 = @import("cose/Sign1.zig");
+
 /// COSE algorithm identifiers
 pub const Algorithm = enum(i32) {
     /// RSASSA-PKCS1-v1_5 using SHA-1
@@ -341,6 +344,31 @@ pub const Key = struct {
         };
     }
 
+    pub fn generatePublic(self: *@This(), allocator: std.mem.Allocator) !void {
+        switch (self.alg) {
+            .Es256 => {
+                if (self.d == null or self.d.?.len != EcdsaP256Sha256.SecretKey.encoded_length) return error.MissingD;
+
+                const sec = try EcdsaP256Sha256.SecretKey.fromBytes(self.d.?[0..EcdsaP256Sha256.SecretKey.encoded_length].*);
+                const kp = try EcdsaP256Sha256.KeyPair.fromSecretKey(sec);
+                const sec1 = kp.public_key.toUncompressedSec1();
+                const x = try allocator.dupe(u8, sec1[1..33]);
+                errdefer {
+                    std.crypto.secureZero(u8, x);
+                    allocator.free(x);
+                }
+                const y = try allocator.dupe(u8, sec1[33..65]);
+
+                if (self.x) |x_| allocator.free(x_);
+                if (self.y) |y_| allocator.free(y_);
+
+                self.x = x;
+                self.y = y;
+            },
+            else => return error.UnsupportedAlgorithm,
+        }
+    }
+
     pub fn copy(
         self: *const @This(),
         allocator: std.mem.Allocator,
@@ -416,6 +444,15 @@ pub const Key = struct {
         };
     }
 
+    pub const SignOptions = struct {
+        pub const SigFormat = enum {
+            default,
+            der,
+        };
+
+        sig_format: SigFormat = .default,
+    };
+
     /// Signs the provided data using the specified algorithm and key.
     ///
     /// - `data_seq`: A sequence of data slices to be signed together.
@@ -441,10 +478,11 @@ pub const Key = struct {
         self: *const @This(),
         data_seq: []const []const u8,
         allocator: std.mem.Allocator,
-    ) ![]const u8 {
+        options: SignOptions,
+    ) ![]u8 {
         switch (self.alg) {
             .Es256 => {
-                if (self.d == null) return error.MissingPrivateKey;
+                if (self.d == null or self.d.?.len != EcdsaP256Sha256.SecretKey.encoded_length) return error.MissingPrivateKey;
 
                 var kp = try EcdsaP256Sha256.KeyPair.fromSecretKey(
                     try EcdsaP256Sha256.SecretKey.fromBytes(self.d.?[0..EcdsaP256Sha256.SecretKey.encoded_length].*),
@@ -458,11 +496,16 @@ pub const Key = struct {
 
                 // Sign the data
                 const sig = try signer.finalize();
-                var buffer: [EcdsaP256Sha256.Signature.der_encoded_length_max]u8 = undefined;
-                const der = sig.toDer(&buffer);
-                const mem = try allocator.alloc(u8, der.len);
-                @memcpy(mem, der);
-                return mem;
+
+                switch (options.sig_format) {
+                    .der => {
+                        var buffer: [EcdsaP256Sha256.Signature.der_encoded_length_max]u8 = undefined;
+                        return try allocator.dupe(u8, sig.toDer(&buffer));
+                    },
+                    else => {
+                        return try allocator.dupe(u8, &sig.toBytes());
+                    },
+                }
             },
             .@"ML-DSA-87" => {
                 const e = std.crypto.sign.mldsa.MLDSA87;
@@ -747,7 +790,7 @@ test "es256 sign verify 1" {
     // Create a signature via cose key struct
     var cosep256 = try Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key, std.testing.allocator);
     defer cosep256.deinit(std.testing.allocator);
-    const sig_der_1 = try cosep256.sign(&.{msg}, allocator);
+    const sig_der_1 = try cosep256.sign(&.{msg}, allocator, .{ .sig_format = .der });
     defer allocator.free(sig_der_1);
 
     // Verify the created signature
@@ -784,7 +827,7 @@ test "ML-DSA-87 #1" {
     );
     defer kp.deinit(std.testing.allocator);
 
-    const sig = try kp.sign(&.{"zig is awesome!"}, std.testing.allocator);
+    const sig = try kp.sign(&.{"zig is awesome!"}, std.testing.allocator, .{});
     defer std.testing.allocator.free(sig);
 
     try std.testing.expectEqual(true, try kp.verify(sig, &.{"zig is awesome!"}));
@@ -805,7 +848,7 @@ test "ML-DSA-87 #2" {
     );
     defer kp.deinit(allocator);
 
-    const sig = try kp.sign(&.{"zig is awesome!"}, allocator);
+    const sig = try kp.sign(&.{"zig is awesome!"}, allocator, .{});
     defer allocator.free(sig);
 
     // Now serialize the data
@@ -825,4 +868,30 @@ test "ML-DSA-87 #2" {
     defer key.deinit(allocator);
 
     try std.testing.expectEqual(true, try key.verify(sig, &.{"zig is awesome!"}));
+}
+
+test "generate public key from private key #1" {
+    const allocator = std.testing.allocator;
+
+    var key = Key{
+        .alg = .Es256,
+        .crv = .P256,
+        .kty = .Ec2,
+        .kid = try allocator.dupe(u8, "11"),
+        .d = try allocator.dupe(u8, "\x57\xc9\x20\x77\x66\x41\x46\xe8\x76\x76\x0c\x95\x20\xd0\x54\xaa\x93\xc3\xaf\xb0\x4e\x30\x67\x05\xdb\x60\x90\x30\x85\x07\xb4\xd3"),
+    };
+    defer key.deinit(allocator);
+
+    try key.generatePublic(allocator);
+
+    try std.testing.expect(key.x != null);
+    try std.testing.expectEqualSlices(u8, "\xba\xc5\xb1\x1c\xad\x8f\x99\xf9\xc7\x2b\x05\xcf\x4b\x9e\x26\xd2\x44\xdc\x18\x9f\x74\x52\x28\x25\x5a\x21\x9a\x86\xd6\xa0\x9e\xff", key.x.?);
+
+    try std.testing.expect(key.y != null);
+    try std.testing.expectEqualSlices(u8, "\x20\x13\x8b\xf8\x2d\xc1\xb6\xd5\x62\xbe\x0f\xa5\x4a\xb7\x80\x4a\x3a\x64\xb6\xd7\x2c\xcf\xed\x6b\x6f\xb6\xed\x28\xbb\xfc\x11\x7e", key.y.?);
+}
+
+test {
+    _ = Headers;
+    _ = Sign1;
 }
