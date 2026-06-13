@@ -447,7 +447,10 @@ pub const Key = struct {
     pub const SignOptions = struct {
         pub const SigFormat = enum {
             default,
+            /// DER encoding
             der,
+            /// encoding expected by FIDO2
+            fido,
         };
 
         sig_format: SigFormat = .default,
@@ -498,7 +501,7 @@ pub const Key = struct {
                 const sig = try signer.finalize();
 
                 switch (options.sig_format) {
-                    .der => {
+                    .der, .fido => {
                         var buffer: [EcdsaP256Sha256.Signature.der_encoded_length_max]u8 = undefined;
                         return try allocator.dupe(u8, sig.toDer(&buffer));
                     },
@@ -509,6 +512,36 @@ pub const Key = struct {
             },
             .@"ML-DSA-87" => {
                 const e = std.crypto.sign.mldsa.MLDSA87;
+
+                if (self.priv == null) return error.MissingPrivateKey;
+
+                var kp = try e.KeyPair.generateDeterministic(self.priv.?[0..32].*);
+                var signer = try kp.signer(null);
+
+                for (data_seq) |data| {
+                    signer.update(data);
+                }
+
+                const sig = signer.finalize();
+                return try allocator.dupe(u8, &sig.toBytes());
+            },
+            .@"ML-DSA-65" => {
+                const e = std.crypto.sign.mldsa.MLDSA65;
+
+                if (self.priv == null) return error.MissingPrivateKey;
+
+                var kp = try e.KeyPair.generateDeterministic(self.priv.?[0..32].*);
+                var signer = try kp.signer(null);
+
+                for (data_seq) |data| {
+                    signer.update(data);
+                }
+
+                const sig = signer.finalize();
+                return try allocator.dupe(u8, &sig.toBytes());
+            },
+            .@"ML-DSA-44" => {
+                const e = std.crypto.sign.mldsa.MLDSA44;
 
                 if (self.priv == null) return error.MissingPrivateKey;
 
@@ -573,6 +606,44 @@ pub const Key = struct {
             },
             .@"ML-DSA-87" => {
                 const e = std.crypto.sign.mldsa.MLDSA87;
+
+                if (self.@"pub" == null) return error.MissingPub;
+                if (signature.len != e.Signature.encoded_length) return error.WrongSignatureLength;
+
+                const k = try e.PublicKey.fromBytes(self.@"pub".?[0..e.PublicKey.encoded_length].*);
+
+                const sig = try e.Signature.fromBytes(signature[0..e.Signature.encoded_length].*);
+
+                var verifier = try sig.verifier(k);
+                for (data_seq) |data| {
+                    verifier.update(data);
+                }
+
+                verifier.verify() catch {
+                    return false;
+                };
+            },
+            .@"ML-DSA-65" => {
+                const e = std.crypto.sign.mldsa.MLDSA65;
+
+                if (self.@"pub" == null) return error.MissingPub;
+                if (signature.len != e.Signature.encoded_length) return error.WrongSignatureLength;
+
+                const k = try e.PublicKey.fromBytes(self.@"pub".?[0..e.PublicKey.encoded_length].*);
+
+                const sig = try e.Signature.fromBytes(signature[0..e.Signature.encoded_length].*);
+
+                var verifier = try sig.verifier(k);
+                for (data_seq) |data| {
+                    verifier.update(data);
+                }
+
+                verifier.verify() catch {
+                    return false;
+                };
+            },
+            .@"ML-DSA-44" => {
+                const e = std.crypto.sign.mldsa.MLDSA44;
 
                 if (self.@"pub" == null) return error.MissingPub;
                 if (signature.len != e.Signature.encoded_length) return error.WrongSignatureLength;
@@ -889,6 +960,36 @@ test "generate public key from private key #1" {
 
     try std.testing.expect(key.y != null);
     try std.testing.expectEqualSlices(u8, "\x20\x13\x8b\xf8\x2d\xc1\xb6\xd5\x62\xbe\x0f\xa5\x4a\xb7\x80\x4a\x3a\x64\xb6\xd7\x2c\xcf\xed\x6b\x6f\xb6\xed\x28\xbb\xfc\x11\x7e", key.y.?);
+}
+
+test "ML-DSA-65 #1" {
+    const kp = try Key.generate(
+        .@"ML-DSA-65",
+        std.testing.allocator,
+        std.testing.io,
+    );
+    defer kp.deinit(std.testing.allocator);
+
+    const sig = try kp.sign(&.{"zig is awesome!"}, std.testing.allocator, .{});
+    defer std.testing.allocator.free(sig);
+
+    try std.testing.expectEqual(true, try kp.verify(sig, &.{"zig is awesome!"}));
+    try std.testing.expectEqual(false, try kp.verify(sig, &.{"zig is awesom!"}));
+}
+
+test "ML-DSA-44 #1" {
+    const kp = try Key.generate(
+        .@"ML-DSA-44",
+        std.testing.allocator,
+        std.testing.io,
+    );
+    defer kp.deinit(std.testing.allocator);
+
+    const sig = try kp.sign(&.{"zig is awesome!"}, std.testing.allocator, .{});
+    defer std.testing.allocator.free(sig);
+
+    try std.testing.expectEqual(true, try kp.verify(sig, &.{"zig is awesome!"}));
+    try std.testing.expectEqual(false, try kp.verify(sig, &.{"zig is awesom!"}));
 }
 
 test {
