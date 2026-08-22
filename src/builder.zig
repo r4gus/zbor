@@ -197,6 +197,7 @@ pub const Builder = struct {
             self.unwind();
             return e;
         };
+        self.top().cnt += 1;
     }
 
     /// Add a chunk of CBOR.
@@ -454,6 +455,17 @@ test "stringify simple using builder 1" {
     defer allocator.free(x);
 
     try std.testing.expectEqualSlices(u8, "\xf8\xff", x);
+}
+
+test "map with text as key and false (simple 20) as value" {
+    const allocator = std.testing.allocator;
+    var b = try Builder.withType(allocator, .Map);
+    try b.pushTextString("hi");
+    try b.pushSimple(20);
+    const string = try b.finish();
+    defer allocator.free(string);
+
+    try std.testing.expectEqualSlices(u8, "\xa1\x62\x68\x69\xf4", string);
 }
 
 test "write true false" {
