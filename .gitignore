@@ -2,3 +2,4 @@ zig-cache
 .zig-cache
 zig-out
 gyro.lock
+*.swp

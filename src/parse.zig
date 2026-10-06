@@ -211,9 +211,9 @@ pub fn parse(
                 },
                 .TextString => {
                     const v = if (item.string()) |x| x else return ParseError.Malformed;
-                    inline for (enumInfo.fields) |field| {
-                        if (cmp(field.name, v)) {
-                            return @field(T, field.name);
+                    inline for (enumInfo.field_names) |field_name| {
+                        if (cmp(field_name, v)) {
+                            return @field(T, field_name);
                         }
                     }
                     return ParseError.InvalidEnumTag;
@@ -233,7 +233,7 @@ pub fn parse(
             switch (item.getType()) {
                 .Map, .MapIndef => {
                     var r: T = undefined;
-                    var fields_seen: [structInfo.fields.len]bool = @splat(false);
+                    var fields_seen: [structInfo.field_names.len]bool = @splat(false);
 
                     var v = if (item.map()) |x|
                         x
@@ -246,17 +246,17 @@ pub fn parse(
 
                         if (kv.key.getType() != .TextString and kv.key.getType() != .Int) continue;
 
-                        inline for (structInfo.fields, 0..) |field, i| {
+                        inline for (0..structInfo.field_names.len) |i| {
                             var match: bool = false;
-                            var name: []const u8 = field.name;
+                            var name: []const u8 = structInfo.field_names[i];
 
                             // std.mem.Allocator contains anyopaque which isn't
                             // possible to parse.
-                            if (field.type == std.mem.Allocator) continue;
+                            if (structInfo.field_types[i] == std.mem.Allocator) continue;
 
                             // Is there an alias specified?
                             for (options.field_settings) |fs| {
-                                if (std.mem.eql(u8, field.name, fs.name)) {
+                                if (std.mem.eql(u8, name, fs.name)) {
                                     if (fs.field_options.alias) |alias| {
                                         name = alias;
                                     }
@@ -287,14 +287,14 @@ pub fn parse(
 
                                 var child_options = options;
                                 child_options.ignore_override = false;
-                                @field(r, field.name) = try parse(
-                                    field.type,
+                                @field(r, structInfo.field_names[i]) = try parse(
+                                    structInfo.field_types[i],
                                     kv.value,
                                     child_options,
                                 );
                                 errdefer {
                                     // TODO: add error defer to free memory
-                                    const I = @typeInfo(@TypeOf(@field(r, field.name)));
+                                    const I = @typeInfo(@TypeOf(@field(r, structInfo.field_names[i])));
 
                                     switch (I) {
                                         .pointer => |ptrInfo| {
@@ -315,18 +315,22 @@ pub fn parse(
                         }
                     }
 
-                    inline for (structInfo.fields, 0..) |field, i| {
+                    inline for (0..structInfo.field_names.len) |i| {
+                        const field_type = structInfo.field_types[i];
+                        const field_name = structInfo.field_names[i];
+                        const field_attr = structInfo.field_attrs[i];
+
                         if (!fields_seen[i]) {
-                            switch (@typeInfo(field.type)) {
-                                .optional => @field(r, field.name) = null,
+                            switch (@typeInfo(field_type)) {
+                                .optional => @field(r, field_name) = null,
                                 else => {
-                                    if (field.type == std.mem.Allocator and options.allocator != null) {
+                                    if (field_type == std.mem.Allocator and options.allocator != null) {
                                         // Assign the allocator that was provided by the caller
-                                        @field(r, field.name) = options.allocator.?;
-                                    } else if (field.default_value_ptr) |default_ptr| {
-                                        if (!field.is_comptime) {
-                                            const default = @as(*align(1) const field.type, @ptrCast(default_ptr)).*;
-                                            @field(r, field.name) = default;
+                                        @field(r, field_name) = options.allocator.?;
+                                    } else if (field_attr.default_value_ptr) |default_ptr| {
+                                        if (!field_attr.@"comptime") {
+                                            const default = @as(*align(1) const field_type, @ptrCast(default_ptr)).*;
+                                            @field(r, field_name) = default;
                                         }
                                     } else {
                                         return ParseError.MissingField;
@@ -481,9 +485,12 @@ pub fn parse(
 
             if (unionInfo.tag_type) |_| {
                 // try each union field until we find one that matches
-                inline for (unionInfo.fields) |u_field| {
-                    if (parse(u_field.type, item, options)) |value| {
-                        return @unionInit(T, u_field.name, value);
+                inline for (0..unionInfo.field_names.len) |i| {
+                    const field_name = unionInfo.field_names[i];
+                    const field_type = unionInfo.field_types[i];
+
+                    if (parse(field_type, item, options)) |value| {
+                        return @unionInit(T, field_name, value);
                     } else |err| {
                         // Bubble up error.OutOfMemory
                         // Parsing some types won't have OutOfMemory in their
@@ -694,15 +701,18 @@ pub fn stringify(
             }
 
             // Count the number of fields that should be serialized
-            inline for (S.fields) |Field| {
+            inline for (0..S.field_names.len) |i| {
+                const field_name = S.field_names[i];
+                const field_type = S.field_types[i];
+
                 // don't include void fields
-                if (Field.type == void) continue;
+                if (field_type == void) continue;
 
                 var emit_field = true;
 
                 var field_setting: ?FieldSettings = null;
                 for (options.field_settings) |fs| {
-                    if (std.mem.eql(u8, Field.name, fs.name)) {
+                    if (std.mem.eql(u8, field_name, fs.name)) {
                         field_setting = fs;
                     }
                 }
@@ -712,8 +722,8 @@ pub fn stringify(
                 }
 
                 // dont't include (optional) null fields
-                if (emit_field and @typeInfo(Field.type) == .optional) {
-                    if (((field_setting != null and field_setting.?.field_options.skip == .SkipIfNull) or field_setting == null) and @field(value, Field.name) == null) {
+                if (emit_field and @typeInfo(field_type) == .optional) {
+                    if (((field_setting != null and field_setting.?.field_options.skip == .SkipIfNull) or field_setting == null) and @field(value, field_name) == null) {
                         emit_field = false;
                     }
                 }
@@ -730,18 +740,21 @@ pub fn stringify(
             }
 
             // Now serialize the actual fields
-            inline for (S.fields) |Field| {
+            inline for (0..S.field_names.len) |i| {
+                const field_name = S.field_names[i];
+                const field_type = S.field_types[i];
+
                 // don't include void fields
-                if (Field.type == void) continue;
+                if (field_type == void) continue;
 
                 var emit_field = true;
                 var child_options = options;
-                var name: []const u8 = Field.name[0..];
+                var name: []const u8 = field_name[0..];
                 var name_st: SerializationType = .TextString;
 
                 var field_setting: ?FieldSettings = null;
                 for (options.field_settings) |fs| {
-                    if (std.mem.eql(u8, Field.name, fs.name)) {
+                    if (std.mem.eql(u8, field_name, fs.name)) {
                         field_setting = fs;
                         break;
                     }
@@ -752,8 +765,8 @@ pub fn stringify(
                 }
 
                 // dont't include (optional) null fields
-                if (emit_field and @typeInfo(Field.type) == .optional) {
-                    if (((field_setting != null and field_setting.?.field_options.skip == .SkipIfNull) or field_setting == null) and @field(value, Field.name) == null) {
+                if (emit_field and @typeInfo(field_type) == .optional) {
+                    if (((field_setting != null and field_setting.?.field_options.skip == .SkipIfNull) or field_setting == null) and @field(value, field_name) == null) {
                         emit_field = false;
                     }
                 }
@@ -780,7 +793,7 @@ pub fn stringify(
                         }, out); // key
                     }
 
-                    try stringify(@field(value, Field.name), child_options, out); // value
+                    try stringify(@field(value, field_name), child_options, out); // value
                 }
             }
             if (options.map_serialization_type == .MapIndefinite) try out.writeByte(0xff);
@@ -842,11 +855,11 @@ pub fn stringify(
         .@"enum" => |enumInfo| {
             if (options.enum_serialization_type == .TextString) {
                 const tmp = @intFromEnum(value);
-                inline for (enumInfo.fields) |field| {
-                    if (field.value == tmp) {
-                        v = @as(u64, @intCast(field.name.len));
+                inline for (enumInfo.field_names, enumInfo.field_values) |field_name, field_value| {
+                    if (field_value == tmp) {
+                        v = @as(u64, @intCast(field_name.len));
                         try encode(out, 0x60, v);
-                        try out.writeAll(field.name);
+                        try out.writeAll(field_name);
                         return;
                     }
                 }
@@ -868,9 +881,11 @@ pub fn stringify(
 
             const info = @typeInfo(T).@"union";
             if (info.tag_type) |UnionTagType| {
-                inline for (info.fields) |u_field| {
-                    if (value == @field(UnionTagType, u_field.name)) {
-                        try stringify(@field(value, u_field.name), options, out);
+                inline for (0..info.field_names.len) |i| {
+                    const field_name = info.field_names[i];
+
+                    if (value == @field(UnionTagType, field_name)) {
+                        try stringify(@field(value, field_name), options, out);
                         break;
                     }
                 }
