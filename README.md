@@ -23,13 +23,14 @@ Versions
 | 0.14.x      | 0.16.x, 0.17.x, 0.18.x | |
 | 0.15.x      | 0.19.0, 0.20.0 | |
 | 0.16.x      | 0.21.x | `zig fetch --save https://codeberg.org/r4gus/zbor/archive/0.21.0.tar.gz` |
+| 0.17.0      | 0.22.0 | `zig fetch --save https://codeberg.org/r4gus/zbor/archive/0.22.0.tar.gz` |
 
 First add this library as a dependency to your `build.zig.zon` file:
 
 ```bash
 # Replace <VERSION TAG> with the version you want to use
 zig fetch --save https://codeberg.org/r4gus/zbor/archive/<VERSION TAG>.tar.gz
-# e.g. zig fetch --save https://codeberg.org/r4gus/zbor/archive/0.20.1.tar.gz
+# e.g. zig fetch --save https://codeberg.org/r4gus/zbor/archive/0.22.0.tar.gz
 ```
 
 then within you `build.zig` add the following code:
