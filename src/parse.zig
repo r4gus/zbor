@@ -152,6 +152,9 @@ pub const ParseError = error{
     OutOfMemory,
     Malformed,
     NoUnionMemberMatched,
+    FieldParsingDependencyNotSeenYet,
+    NotYetImplemented,
+    InvalidCharacter,
 };
 
 pub const StringifyError = error{
@@ -235,6 +238,25 @@ pub fn parse(
                     var r: T = undefined;
                     var fields_seen: [structInfo.field_names.len]bool = @splat(false);
 
+                    const S = struct {
+                        // This function is used to determine if a field has
+                        // already been marked as seen or not. This is required
+                        // by the `is_valid_key` callback to ensure that only
+                        // initialized fileds are checked.
+                        pub fn seen(key: []const u8, fields: []const bool) bool {
+                            inline for (0..structInfo.field_names.len) |i| {
+                                if (std.mem.eql(
+                                    u8,
+                                    structInfo.field_names[i],
+                                    key,
+                                )) {
+                                    return fields[i];
+                                }
+                            }
+                            return false;
+                        }
+                    };
+
                     var v = if (item.map()) |x|
                         x
                     else if (item.mapIndef()) |x|
@@ -260,6 +282,8 @@ pub fn parse(
                                     if (fs.field_options.alias) |alias| {
                                         name = alias;
                                     }
+
+                                    break;
                                 }
                             }
 
@@ -272,6 +296,20 @@ pub fn parse(
                                 else => {
                                     match = std.mem.eql(u8, name, if (kv.key.string()) |x| x else return ParseError.Malformed);
                                 },
+                            }
+
+                            if (match) {
+                                // The is_valid_key callback allows checking, based on
+                                // the state of the given struct, if the current field
+                                // should be considered.
+                                if (options.is_valid_key) |ivk| {
+                                    match = ivk(
+                                        @ptrCast(&r),
+                                        structInfo.field_names[i],
+                                        &fields_seen,
+                                        &S.seen,
+                                    );
+                                }
                             }
 
                             if (match) {
@@ -292,6 +330,7 @@ pub fn parse(
                                     kv.value,
                                     child_options,
                                 );
+
                                 errdefer {
                                     // TODO: add error defer to free memory
                                     const I = @typeInfo(@TypeOf(@field(r, structInfo.field_names[i])));
@@ -541,6 +580,12 @@ pub const Options = struct {
     } = .Error,
     /// Ignore CBOR map keys that were not expected
     ignore_unknown_fields: bool = true,
+    is_valid_key: ?*const fn (
+        ctx: *const anyopaque,
+        key: []const u8,
+        fields: []const bool,
+        seen: *const fn ([]const u8, []const bool) bool,
+    ) bool = null,
 };
 
 pub const SerializationType = enum {
