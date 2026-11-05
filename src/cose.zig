@@ -584,7 +584,7 @@ pub const Key = struct {
         switch (self.alg) {
             .Es256 => {
                 if (self.x == null or self.x.?.len != 32) return error.MissingX;
-                if (self.y == null or self.x.?.len != 32) return error.MissingY;
+                if (self.y == null or self.y.?.len != 32) return error.MissingY;
 
                 // Get public key struct
                 var usec1: [65]u8 = undefined;

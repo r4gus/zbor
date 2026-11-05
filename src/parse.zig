@@ -471,7 +471,7 @@ pub fn parse(
                             var arraylist: std.ArrayListUnmanaged(ptrInfo.child) = .empty;
                             try arraylist.ensureTotalCapacity(
                                 allocator,
-                                @min(v.len, v.data.len) + @intFromBool(ptrInfo.sentinel_ptr == null), // never trust the declared len `v.len` more then the actual len
+                                @min(v.len, v.data.len) + @intFromBool(ptrInfo.sentinel_ptr != null), // never trust the declared len `v.len` more then the actual len
                             );
                             errdefer {
                                 // TODO: take care of children
