@@ -28,6 +28,10 @@ pub fn build(b: *std.Build) !void {
         optimize,
         zbor_module,
     );
+
+    // Benchmarks
+    // ---------------------------------------------------
+    buildBenchmark(b, target);
 }
 
 /// Build the main module implementing the CBOR de-/serializer.
@@ -83,4 +87,37 @@ fn buildExamples(
         example.root_module.addImport("zbor", zbor_module);
         b.installArtifact(example);
     }
+}
+
+/// Build the benchmark application found in `./bench/`.
+///
+/// Benchmarks are always compiled with ReleaseFast, independent of `-Doptimize`,
+/// so that `zig build bench` reports meaningful numbers by default.
+fn buildBenchmark(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+) void {
+    const bench_zbor = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+
+    const bench_mod = b.createModule(.{
+        .root_source_file = b.path("bench/main.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    bench_mod.addImport("zbor", bench_zbor);
+
+    const bench_exe = b.addExecutable(.{
+        .name = "bench",
+        .root_module = bench_mod,
+    });
+
+    const run_bench = b.addRunArtifact(bench_exe);
+    run_bench.addPassthruArgs();
+
+    const bench_step = b.step("bench", "Run the benchmarks; pass filters after --");
+    bench_step.dependOn(&run_bench.step);
 }
