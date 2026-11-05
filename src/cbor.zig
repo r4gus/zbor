@@ -1,5 +1,13 @@
 const std = @import("std");
 
+/// Maximum nesting depth of data items accepted when decoding CBOR.
+///
+/// The top-level data item has depth 0 and every array, map or tag adds one
+/// level for the data items it contains. Inputs nested deeper than this are
+/// rejected by `validate`, `burn` and `DataItem.readAlloc`, which bounds their
+/// recursion and keeps untrusted input from exhausting the stack.
+pub const max_nesting_depth: usize = 128;
+
 /// CBOR type (see RFC 8949)
 pub const Type = enum {
     /// Integer in the range -2^64..2^64 - 1 (MT 0/1)
@@ -79,7 +87,7 @@ pub const DataItem = struct {
         var data_item = std.Io.Writer.Allocating.init(allocator);
         errdefer data_item.deinit();
 
-        try read_(data, &data_item, &data_item.writer, &i);
+        try read_(data, &data_item, &data_item.writer, &i, 0);
 
         return .{ .data = try data_item.toOwnedSlice() };
     }
@@ -97,7 +105,10 @@ pub const DataItem = struct {
         di: *std.Io.Writer.Allocating,
         writer: *std.Io.Writer,
         i: *usize,
+        depth: usize,
     ) !void {
+        if (depth > max_nesting_depth) return error.RecursionLimitExceeded;
+
         const ib = try data.takeByte();
         try writer.writeByte(ib);
         i.* += 1;
@@ -134,7 +145,7 @@ pub const DataItem = struct {
                                 i.* += 1;
                                 break;
                             }
-                            try read_(data, di, writer, i);
+                            try read_(data, di, writer, i, depth + 1);
                         }
                     },
                     5 => {
@@ -144,8 +155,8 @@ pub const DataItem = struct {
                                 i.* += 1;
                                 break;
                             }
-                            try read_(data, di, writer, i);
-                            try read_(data, di, writer, i);
+                            try read_(data, di, writer, i, depth + 1);
+                            try read_(data, di, writer, i, depth + 1);
                         }
                     },
                     7 => return error.StandAloneBreakCode, // we encountered a "stand alone" break-code
@@ -164,18 +175,18 @@ pub const DataItem = struct {
             4 => {
                 var j: usize = 0;
                 while (j < val) : (j += 1) {
-                    try read_(data, di, writer, i);
+                    try read_(data, di, writer, i, depth + 1);
                 }
             },
             5 => {
                 var j: usize = 0;
                 while (j < val) : (j += 1) {
-                    try read_(data, di, writer, i);
-                    try read_(data, di, writer, i);
+                    try read_(data, di, writer, i, depth + 1);
+                    try read_(data, di, writer, i, depth + 1);
                 }
             },
             6 => {
-                try read_(data, di, writer, i);
+                try read_(data, di, writer, i, depth + 1);
             },
             7 => if (ai == 24 and val < 32) return error.Malformed,
             else => {},
@@ -484,8 +495,18 @@ pub const IndefArrayIterator = struct {
     }
 };
 
-/// Move the index `i` to the beginning of the next data item.
 pub fn burn(data: []const u8, i: *usize) ?void {
+    return burn_(data, i, 0);
+}
+
+/// Move the index `i` to the beginning of the next data item.
+pub fn burn_(
+    data: []const u8,
+    i: *usize,
+    depth: usize,
+) ?void {
+    if (depth > max_nesting_depth) return null;
+
     if (i.* >= data.len) return null;
     var offset: usize = 0;
     const len = if (additionalInfo(data[i.*..], &offset)) |v| v else return null;
@@ -505,7 +526,7 @@ pub fn burn(data: []const u8, i: *usize) ?void {
             i.* += offset;
             var x: usize = 0;
             while (x < len) : (x += 1) {
-                if (burn(data, i) == null) {
+                if (burn_(data, i, depth + 1) == null) {
                     return null;
                 }
             }
@@ -513,7 +534,7 @@ pub fn burn(data: []const u8, i: *usize) ?void {
         0x9f, 0xbf => {
             i.* += offset;
             while (i.* < data.len and data[i.*] != 0xff) {
-                if (burn(data, i) == null) {
+                if (burn_(data, i, depth + 1) == null) {
                     return null;
                 }
             }
@@ -525,14 +546,14 @@ pub fn burn(data: []const u8, i: *usize) ?void {
             var x: usize = 0;
             while (x < len) : (x += 1) {
                 // this is NOT redundant!!!
-                if (burn(data, i) == null or burn(data, i) == null) {
+                if (burn_(data, i, depth + 1) == null or burn_(data, i, depth + 1) == null) {
                     return null;
                 }
             }
         },
         0xc0...0xdb => {
             i.* += offset;
-            if (burn(data, i) == null) return null;
+            if (burn_(data, i, depth + 1) == null) return null;
         },
         0xe0...0xfb => i.* += offset,
         else => return null,
@@ -594,6 +615,22 @@ fn additionalInfo(data: []const u8, l: ?*usize) ?u64 {
 ///
 /// Returns true if the given data is well formed, false otherwise.
 pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
+    return validate_(data, i, check_len, 0);
+}
+
+pub fn validate_(
+    data: []const u8,
+    i: *usize,
+    check_len: bool,
+    depth: usize,
+) bool {
+    if (depth > max_nesting_depth) {
+        // move the cursor to the end so that every enclosing data item
+        // including indefinite-length ones fails as well...
+        i.* = data.len;
+        return false;
+    }
+
     if (i.* >= data.len) return false;
     const ib: u8 = data[i.*];
     i.* += 1;
@@ -623,15 +660,15 @@ pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
                 2, 3 => return false, // We don't support indefinite length *strings*.
                 4 => {
                     while (i.* < data.len and Type.fromByte(data[i.*]) != .Break) {
-                        if (!validate(data, i, false)) return false;
+                        if (!validate_(data, i, false, depth + 1)) return false;
                     }
                     if (i.* >= data.len or Type.fromByte(data[i.*]) != .Break) return false;
                     i.* += 1; // we move the cursor over the Break-code
                 },
                 5 => {
                     while (i.* < data.len and Type.fromByte(data[i.*]) != .Break) {
-                        if (!validate(data, i, false)) return false;
-                        if (!validate(data, i, false)) return false;
+                        if (!validate_(data, i, false, depth + 1)) return false;
+                        if (!validate_(data, i, false, depth + 1)) return false;
                     }
                     if (i.* >= data.len or Type.fromByte(data[i.*]) != .Break) return false;
                     i.* += 1; // we move the cursor over the Break-code
@@ -657,17 +694,17 @@ pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
         4 => {
             var j: usize = 0;
             while (j < val) : (j += 1) {
-                if (!validate(data, i, false)) return false;
+                if (!validate_(data, i, false, depth + 1)) return false;
             }
         },
         5 => {
             var j: usize = 0;
             while (j < val) : (j += 1) {
-                if (!validate(data, i, false)) return false;
-                if (!validate(data, i, false)) return false;
+                if (!validate_(data, i, false, depth + 1)) return false;
+                if (!validate_(data, i, false, depth + 1)) return false;
             }
         },
-        6 => if (!validate(data, i, false)) return false,
+        6 => if (!validate_(data, i, false, depth + 1)) return false,
         7 => if (ai == 24 and val < 32) return false,
         else => {},
     }
@@ -1152,4 +1189,74 @@ test "burn malformed input" {
     try std.testing.expectEqual(@as(usize, 3), i);
     try std.testing.expect(burn("\x9f\x01\xff\x42\x01\x02", &i) != null);
     try std.testing.expectEqual(@as(usize, 6), i);
+}
+
+/// Build `levels` nested data items, each opened by `open`, around the single item `inner`.
+fn nestedTestData(allocator: std.mem.Allocator, open: u8, levels: usize, inner: u8) ![]u8 {
+    const buf = try allocator.alloc(u8, levels + 1);
+    @memset(buf[0..levels], open);
+    buf[levels] = inner;
+    return buf;
+}
+
+test "recursion depth" {
+    const allocator = std.testing.allocator;
+
+    // 0x81 = array of one item, 0xc0 = tag 0
+    for ([_]u8{ 0x81, 0xc0 }) |open| {
+        // Innermost item at exactly `max_nesting_depth` is accepted
+        {
+            const data = try nestedTestData(allocator, open, max_nesting_depth, 0x00);
+            defer allocator.free(data);
+
+            try validateTest(data, true);
+            _ = try DataItem.new(data);
+
+            var i: usize = 0;
+            try std.testing.expect(burn(data, &i) != null);
+            try std.testing.expectEqual(data.len, i);
+
+            var reader = std.Io.Reader.fixed(data);
+            const di = try DataItem.readAlloc(&reader, allocator);
+            defer di.deinit(allocator);
+            try std.testing.expectEqualSlices(u8, data, di.data);
+        }
+
+        // One level deeper, and far deeper, is rejected without exhausting the stack
+        for ([_]usize{ max_nesting_depth + 1, 100_000 }) |levels| {
+            const data = try nestedTestData(allocator, open, levels, 0x00);
+            defer allocator.free(data);
+
+            try validateTest(data, false);
+            try std.testing.expectError(error.Malformed, DataItem.new(data));
+
+            var i: usize = 0;
+            try std.testing.expect(burn(data, &i) == null);
+
+            var reader = std.Io.Reader.fixed(data);
+            try std.testing.expectError(error.RecursionLimitExceeded, DataItem.readAlloc(&reader, allocator));
+        }
+    }
+
+    // Exceeding the limit inside an indefinite-length array must not be mistaken
+    // for its break code.
+    {
+        const data = try allocator.alloc(u8, max_nesting_depth + 2);
+        defer allocator.free(data);
+        data[0] = 0x9f;
+        @memset(data[1 .. max_nesting_depth + 1], 0x81);
+        data[max_nesting_depth + 1] = 0xff;
+
+        try validateTest(data, false);
+    }
+
+    // Nested indefinite-length arrays
+    for ([_]usize{ max_nesting_depth + 1, max_nesting_depth + 2 }) |levels| {
+        const data = try allocator.alloc(u8, 2 * levels);
+        defer allocator.free(data);
+        @memset(data[0..levels], 0x9f);
+        @memset(data[levels..], 0xff);
+
+        try validateTest(data, levels <= max_nesting_depth + 1);
+    }
 }
