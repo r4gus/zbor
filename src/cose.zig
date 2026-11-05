@@ -125,12 +125,12 @@ pub const Algorithm = enum(i32) {
     A256Gcm = 3,
 
     pub fn to_raw(self: @This()) [4]u8 {
-        const i = @intFromEnum(self);
+        const i = @backingInt(self);
         return std.mem.asBytes(&i).*;
     }
 
     pub fn from_raw(raw: [4]u8) @This() {
-        return @as(@This(), @enumFromInt(std.mem.bytesToValue(i32, &raw)));
+        return @as(@This(), @fromBackingInt(@intCast(std.mem.bytesToValue(i32, &raw))));
     }
 };
 
@@ -513,7 +513,7 @@ pub const Key = struct {
             .@"ML-DSA-87" => {
                 const e = std.crypto.sign.mldsa.MLDSA87;
 
-                if (self.priv == null) return error.MissingPrivateKey;
+                if (self.priv == null or self.priv.?.len != e.KeyPair.seed_length) return error.MissingPrivateKey;
 
                 var kp = try e.KeyPair.generateDeterministic(self.priv.?[0..32].*);
                 var signer = try kp.signer(null);
@@ -528,7 +528,7 @@ pub const Key = struct {
             .@"ML-DSA-65" => {
                 const e = std.crypto.sign.mldsa.MLDSA65;
 
-                if (self.priv == null) return error.MissingPrivateKey;
+                if (self.priv == null or self.priv.?.len != e.KeyPair.seed_length) return error.MissingPrivateKey;
 
                 var kp = try e.KeyPair.generateDeterministic(self.priv.?[0..32].*);
                 var signer = try kp.signer(null);
@@ -543,7 +543,7 @@ pub const Key = struct {
             .@"ML-DSA-44" => {
                 const e = std.crypto.sign.mldsa.MLDSA44;
 
-                if (self.priv == null) return error.MissingPrivateKey;
+                if (self.priv == null or self.priv.?.len != e.KeyPair.seed_length) return error.MissingPrivateKey;
 
                 var kp = try e.KeyPair.generateDeterministic(self.priv.?[0..32].*);
                 var signer = try kp.signer(null);
@@ -583,8 +583,8 @@ pub const Key = struct {
     ) !bool {
         switch (self.alg) {
             .Es256 => {
-                if (self.x == null) return error.MissingX;
-                if (self.y == null) return error.MissingY;
+                if (self.x == null or self.x.?.len != 32) return error.MissingX;
+                if (self.y == null or self.x.?.len != 32) return error.MissingY;
 
                 // Get public key struct
                 var usec1: [65]u8 = undefined;
@@ -607,7 +607,7 @@ pub const Key = struct {
             .@"ML-DSA-87" => {
                 const e = std.crypto.sign.mldsa.MLDSA87;
 
-                if (self.@"pub" == null) return error.MissingPub;
+                if (self.@"pub" == null or self.@"pub".?.len != e.PublicKey.encoded_length) return error.MissingPub;
                 if (signature.len != e.Signature.encoded_length) return error.WrongSignatureLength;
 
                 const k = try e.PublicKey.fromBytes(self.@"pub".?[0..e.PublicKey.encoded_length].*);
@@ -626,7 +626,7 @@ pub const Key = struct {
             .@"ML-DSA-65" => {
                 const e = std.crypto.sign.mldsa.MLDSA65;
 
-                if (self.@"pub" == null) return error.MissingPub;
+                if (self.@"pub" == null or self.@"pub".?.len != e.PublicKey.encoded_length) return error.MissingPub;
                 if (signature.len != e.Signature.encoded_length) return error.WrongSignatureLength;
 
                 const k = try e.PublicKey.fromBytes(self.@"pub".?[0..e.PublicKey.encoded_length].*);
@@ -645,7 +645,7 @@ pub const Key = struct {
             .@"ML-DSA-44" => {
                 const e = std.crypto.sign.mldsa.MLDSA44;
 
-                if (self.@"pub" == null) return error.MissingPub;
+                if (self.@"pub" == null or self.@"pub".?.len != e.PublicKey.encoded_length) return error.MissingPub;
                 if (signature.len != e.Signature.encoded_length) return error.WrongSignatureLength;
 
                 const k = try e.PublicKey.fromBytes(self.@"pub".?[0..e.PublicKey.encoded_length].*);
@@ -990,6 +990,35 @@ test "ML-DSA-44 #1" {
 
     try std.testing.expectEqual(true, try kp.verify(sig, &.{"zig is awesome!"}));
     try std.testing.expectEqual(false, try kp.verify(sig, &.{"zig is awesom!"}));
+}
+
+test "parsed keys with wrongly sized key material are rejected" {
+    const allocator = std.testing.allocator;
+
+    // Es256: {1:2, 3:-7, -1:1, -2:h'00', -3:h'00'}
+    {
+        const key = try parse(Key, try DataItem.new("\xa5\x01\x02\x03\x26\x20\x01\x21\x41\x00\x22\x41\x00"), .{ .allocator = allocator });
+        defer key.deinit(allocator);
+        try std.testing.expectError(error.MissingX, key.verify("", &.{"zig is awesome!"}));
+    }
+    // Es256: {1:2, 3:-7, -1:1, -2:h'', -3:h''}
+    {
+        const key = try parse(Key, try DataItem.new("\xa5\x01\x02\x03\x26\x20\x01\x21\x40\x22\x40"), .{ .allocator = allocator });
+        defer key.deinit(allocator);
+        try std.testing.expectError(error.MissingX, key.verify("", &.{"zig is awesome!"}));
+    }
+    // ML-DSA-44/65/87: {1:7, 3:alg, -1:h'00'}
+    inline for (.{ "\x38\x2f", "\x38\x30", "\x38\x31" }) |alg| {
+        const key = try parse(Key, try DataItem.new("\xa3\x01\x07\x03" ++ alg ++ "\x20\x41\x00"), .{ .allocator = allocator });
+        defer key.deinit(allocator);
+        try std.testing.expectError(error.MissingPub, key.verify("", &.{"zig is awesome!"}));
+    }
+    // ML-DSA-44/65/87: {1:7, 3:alg, -2:h'00'}
+    inline for (.{ "\x38\x2f", "\x38\x30", "\x38\x31" }) |alg| {
+        const key = try parse(Key, try DataItem.new("\xa3\x01\x07\x03" ++ alg ++ "\x21\x41\x00"), .{ .allocator = allocator });
+        defer key.deinit(allocator);
+        try std.testing.expectError(error.MissingPrivateKey, key.sign(&.{"zig is awesome!"}, allocator, .{}));
+    }
 }
 
 test {
