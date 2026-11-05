@@ -498,13 +498,19 @@ pub const IndefArrayIterator = struct {
 pub fn burn(data: []const u8, i: *usize) ?void {
     if (i.* >= data.len) return null;
     var offset: usize = 0;
-    const len = if (additionalInfo(data[i.*..], &offset)) |v| @as(usize, @intCast(v)) else return null;
+    const len = if (additionalInfo(data[i.*..], &offset)) |v| v else return null;
 
     switch (data[i.*]) {
         0x00...0x1b => i.* += offset,
         0x20...0x3b => i.* += offset,
-        0x40...0x5b => i.* += offset + len,
-        0x60...0x7b => i.* += offset + len,
+        0x40...0x5b, 0x60...0x7b => {
+            i.* += offset;
+            if (len > data.len - i.*) {
+                i.* = data.len;
+                return null;
+            }
+            i.* += len;
+        },
         0x80...0x9b => {
             i.* += offset;
             var x: usize = 0;
@@ -516,11 +522,12 @@ pub fn burn(data: []const u8, i: *usize) ?void {
         },
         0x9f, 0xbf => {
             i.* += offset;
-            while (data[i.*] != 0xff) {
+            while (i.* < data.len and data[i.*] != 0xff) {
                 if (burn(data, i) == null) {
                     return null;
                 }
             }
+            if (i.* >= data.len) return null; // data ended before break code
             i.* += 1;
         },
         0xa0...0xbb => {
@@ -1105,4 +1112,27 @@ test "strings longer than the input are rejected" {
     try std.testing.expectEqual(@as(?[]const u8, null), di.string());
     const di2 = DataItem{ .data = "\x43\x01\x02" };
     try std.testing.expectEqual(@as(?[]const u8, null), di2.string());
+}
+
+test "burn malformed input" {
+    const cases = [_][]const u8{
+        "\x9f", // indefinite array without break code
+        "\xbf", // indefinite map without break code
+        "\x9f\x01\x02", // items run to the end of the data
+        "\x5b\xff\xff\xff\xff\xff\xff\xff\xff", // huge byte string length
+        "\x7b\xff\xff\xff\xff\xff\xff\xff\xf8", // huge text string length
+        "\x9f\x5b\xff\xff\xff\xff\xff\xff\xff\xff\xff",
+        "\x43\x01\x02", // truncated byte string
+    };
+    for (cases) |c| {
+        var i: usize = 0;
+        try std.testing.expect(burn(c, &i) == null);
+        try std.testing.expect(i <= c.len);
+    }
+
+    var i: usize = 0;
+    try std.testing.expect(burn("\x9f\x01\xff\x42\x01\x02", &i) != null);
+    try std.testing.expectEqual(@as(usize, 3), i);
+    try std.testing.expect(burn("\x9f\x01\xff\x42\x01\x02", &i) != null);
+    try std.testing.expectEqual(@as(usize, 6), i);
 }
