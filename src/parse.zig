@@ -408,6 +408,9 @@ pub fn parse(
                         r[i] = try parse(arrayInfo.child, v, options);
                     }
 
+                    // too few elements would leave the tail of `r` uninitialized
+                    if (i < arrayInfo.len) return ParseError.Malformed;
+
                     return r;
                 },
                 .ByteString, .TextString => {
@@ -417,6 +420,9 @@ pub fn parse(
                     var r: T = undefined;
 
                     if (v.len > r[0..].len) return ParseError.Overflow;
+                    // a shorter string would leave the tail of `r` uninitialized
+                    if (v.len < r[0..].len) return ParseError.Malformed;
+
                     std.mem.copyForwards(u8, r[0..v.len], v);
 
                     return r;
@@ -899,7 +905,7 @@ pub fn stringify(
         },
         .@"enum" => |enumInfo| {
             if (options.enum_serialization_type == .TextString) {
-                const tmp = @intFromEnum(value);
+                const tmp = @backingInt(value);
                 inline for (enumInfo.field_names, enumInfo.field_values) |field_name, field_value| {
                     if (field_value == tmp) {
                         v = @as(u64, @intCast(field_name.len));
@@ -909,7 +915,7 @@ pub fn stringify(
                     }
                 }
             } else {
-                const tmp = @intFromEnum(value);
+                const tmp = @backingInt(value);
                 head = if (tmp < 0) 0x20 else 0;
                 v = @as(u64, @intCast(if (tmp < 0) -(tmp + 1) else tmp));
                 try encode(out, head, v);
@@ -2007,4 +2013,21 @@ test "parse indefinite-length map {_ 'a': 1, 'b': {_ 'c': 2, 'd': 3}, 'e': 'hell
     try std.testing.expectEqual(@as(u8, 2), s.b.c);
     try std.testing.expectEqual(@as(u8, 3), s.b.d);
     try std.testing.expectEqualSlices(u8, "hello", s.e);
+}
+
+test "parse array indefinite: 3, we want more than is present" {
+    const di = try DataItem.new("\x9f\x01\x02\x03\xff");
+
+    // We expect five items, but the indefinite array contains three.
+    try std.testing.expectError(ParseError.Malformed, parse([5]u8, di, .{}));
+}
+
+test "parse array from string: length must match" {
+    try std.testing.expectEqualSlices(u8, "\x01\x02\x03", &(try parse([3]u8, try DataItem.new("\x43\x01\x02\x03"), .{})));
+    try std.testing.expectEqualSlices(u8, "abc", &(try parse([3]u8, try DataItem.new("\x63abc"), .{})));
+
+    try std.testing.expectError(ParseError.Overflow, parse([3]u8, try DataItem.new("\x44\x01\x02\x03\x04"), .{}));
+    try std.testing.expectError(ParseError.Malformed, parse([3]u8, try DataItem.new("\x42\x01\x02"), .{}));
+    try std.testing.expectError(ParseError.Malformed, parse([3]u8, try DataItem.new("\x40"), .{}));
+    try std.testing.expectError(ParseError.Malformed, parse([3]u8, try DataItem.new("\x62ab"), .{}));
 }
