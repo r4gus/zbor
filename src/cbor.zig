@@ -238,12 +238,8 @@ pub const DataItem = struct {
         var begin: usize = 0;
         const len = if (additionalInfo(self.data, &begin)) |v| @as(usize, @intCast(v)) else return null;
 
-        // Get to the end of the array
-        var end: usize = 0;
-        if (burn(self.data, &end) == null) return null;
-
         return ArrayIterator{
-            .data = self.data[begin..end],
+            .data = self.data[begin..],
             .len = len,
             .count = 0,
             .i = 0,
@@ -271,12 +267,8 @@ pub const DataItem = struct {
         var begin: usize = 0;
         const len = if (additionalInfo(self.data, &begin)) |v| @as(usize, @intCast(v)) else return null;
 
-        // Get to the end of the map
-        var end: usize = 0;
-        if (burn(self.data, &end) == null) return null;
-
         return MapIterator{
-            .data = self.data[begin..end],
+            .data = self.data[begin..],
             .len = len,
         };
     }
@@ -437,11 +429,11 @@ pub const MapIterator = struct {
 
         var new_i: usize = self.i;
         if (burn(self.data, &new_i) == null) return null;
-        const k = DataItem.new(self.data[self.i..new_i]) catch return null;
+        const k = DataItem{ .data = self.data[self.i..new_i] };
         self.i = new_i;
 
         if (burn(self.data, &new_i) == null) return null;
-        const v = DataItem.new(self.data[self.i..new_i]) catch return null;
+        const v = DataItem{ .data = self.data[self.i..new_i] };
         self.i = new_i;
 
         self.count += 1;
@@ -468,7 +460,7 @@ pub const ArrayIterator = struct {
         const tmp = self.data[self.i..new_i];
         self.i = new_i;
         self.count += 1;
-        return DataItem.new(tmp) catch return null;
+        return DataItem{ .data = tmp };
     }
 };
 
@@ -491,7 +483,7 @@ pub const IndefArrayIterator = struct {
         const tmp = self.data[self.i..new_i];
         self.i = new_i;
 
-        return DataItem.new(tmp) catch return null;
+        return DataItem{ .data = tmp };
     }
 };
 
@@ -555,7 +547,11 @@ pub fn burn_(
             i.* += offset;
             if (burn_(data, i, depth + 1) == null) return null;
         },
-        0xe0...0xfb => i.* += offset,
+        0xf8 => {
+            if (len < 32) return null;
+            i.* += offset;
+        },
+        0xe0...0xf7, 0xf9...0xfb => i.* += offset,
         else => return null,
     }
 

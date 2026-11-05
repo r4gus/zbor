@@ -268,6 +268,11 @@ pub fn parse(
 
                         if (kv.key.getType() != .TextString and kv.key.getType() != .Int) continue;
 
+                        const key: union(enum) { int: i65, str: []const u8 } = switch (kv.key.getType()) {
+                            .Int => .{ .int = kv.key.int() orelse return ParseError.Malformed },
+                            else => .{ .str = kv.key.string() orelse return ParseError.Malformed },
+                        };
+
                         inline for (0..structInfo.field_names.len) |i| {
                             var match: bool = false;
                             var name: []const u8 = structInfo.field_names[i];
@@ -287,15 +292,9 @@ pub fn parse(
                                 }
                             }
 
-                            switch (kv.key.getType()) {
-                                .Int => {
-                                    const x = if (kv.key.int()) |y| y else return ParseError.Malformed;
-                                    const y = s2n(name);
-                                    match = x == y;
-                                },
-                                else => {
-                                    match = std.mem.eql(u8, name, if (kv.key.string()) |x| x else return ParseError.Malformed);
-                                },
+                            switch (key) {
+                                .int => |x| match = x == s2n(name),
+                                .str => |x| match = std.mem.eql(u8, name, x),
                             }
 
                             if (match) {
@@ -470,6 +469,10 @@ pub fn parse(
                         .Array => {
                             var v = if (item.array()) |x| x else return ParseError.Malformed;
                             var arraylist: std.ArrayListUnmanaged(ptrInfo.child) = .empty;
+                            try arraylist.ensureTotalCapacity(
+                                allocator,
+                                @min(v.len, v.data.len) + @intFromBool(ptrInfo.sentinel_ptr == null), // never trust the declared len `v.len` more then the actual len
+                            );
                             errdefer {
                                 // TODO: take care of children
                                 arraylist.deinit(allocator);
