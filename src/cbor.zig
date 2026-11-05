@@ -383,9 +383,7 @@ pub const DataItem = struct {
 
         return Tag{
             .nr = nr,
-            .content = DataItem.new(self.data[begin..]) catch {
-                unreachable; // this can only be if DataItem hasn't been instantiated with new()
-            },
+            .content = DataItem.new(self.data[begin..]) catch return null,
         };
     }
 };
@@ -428,15 +426,11 @@ pub const MapIterator = struct {
 
         var new_i: usize = self.i;
         if (burn(self.data, &new_i) == null) return null;
-        const k = DataItem.new(self.data[self.i..new_i]) catch {
-            unreachable; // this can only be if DataItem hasn't been instantiated with new()
-        };
+        const k = DataItem.new(self.data[self.i..new_i]) catch return null;
         self.i = new_i;
 
         if (burn(self.data, &new_i) == null) return null;
-        const v = DataItem.new(self.data[self.i..new_i]) catch {
-            unreachable; // this can only be if DataItem hasn't been instantiated with new()
-        };
+        const v = DataItem.new(self.data[self.i..new_i]) catch return null;
         self.i = new_i;
 
         self.count += 1;
@@ -463,9 +457,7 @@ pub const ArrayIterator = struct {
         const tmp = self.data[self.i..new_i];
         self.i = new_i;
         self.count += 1;
-        return DataItem.new(tmp) catch {
-            unreachable;
-        };
+        return DataItem.new(tmp) catch return null;
     }
 };
 
@@ -488,9 +480,7 @@ pub const IndefArrayIterator = struct {
         const tmp = self.data[self.i..new_i];
         self.i = new_i;
 
-        return DataItem.new(tmp) catch {
-            unreachable;
-        };
+        return DataItem.new(tmp) catch return null;
     }
 };
 
@@ -632,12 +622,17 @@ pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
             switch (mt) {
                 2, 3 => return false, // We don't support indefinite length *strings*.
                 4 => {
-                    while (i.* < data.len and Type.fromByte(data[i.*]) != .Break and validate(data, i, false)) {}
+                    while (i.* < data.len and Type.fromByte(data[i.*]) != .Break) {
+                        if (!validate(data, i, false)) return false;
+                    }
                     if (i.* >= data.len or Type.fromByte(data[i.*]) != .Break) return false;
                     i.* += 1; // we move the cursor over the Break-code
                 },
                 5 => {
-                    while (i.* < data.len and Type.fromByte(data[i.*]) != .Break and validate(data, i, false) and validate(data, i, false)) {}
+                    while (i.* < data.len and Type.fromByte(data[i.*]) != .Break) {
+                        if (!validate(data, i, false)) return false;
+                        if (!validate(data, i, false)) return false;
+                    }
                     if (i.* >= data.len or Type.fromByte(data[i.*]) != .Break) return false;
                     i.* += 1; // we move the cursor over the Break-code
                 },
@@ -1054,6 +1049,28 @@ test "malformed" {
     try validateTest("\x9f\xbf\x61\x61\x61\x63\xbf\x61\x62\x61\x64\xff\xff", false);
     try validateTest("\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64\xff", false);
     try validateTest("\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64", false);
+
+    // Malformed data item inside an indefinite-length array or map
+    try validateTest("\x9f\xf8\x00\xff", false);
+    try validateTest("\xbf\xf8\x00\xff", false);
+    try validateTest("\xbf\x01\xf8\x00\xff", false);
+    try validateTest("\xbf\x01\xff\xff", false);
+    try validateTest("\x9f\x5f\xff", false);
+    try validateTest("\x81\x9f\xf8\x00\xff", false);
+    try validateTest("\xc0\x9f\xf8\x00\xff", false);
+    try std.testing.expectError(error.Malformed, DataItem.new("\x9f\xf8\x00\xff"));
+    try std.testing.expectError(error.Malformed, DataItem.new("\xbf\xf8\x00\xff"));
+}
+
+test "iterators return null on malformed items" {
+    // DataItems constructed without new() must not trigger illegal behavior
+    var ai = (DataItem{ .data = "\x9f\xf8\x00\xff" }).arrayIndef().?;
+    try std.testing.expectEqual(null, ai.next());
+    var mi = (DataItem{ .data = "\xbf\xf8\x00\xff" }).mapIndef().?;
+    try std.testing.expectEqual(null, mi.next());
+    var a = (DataItem{ .data = "\x81\xf8\x00" }).array().?;
+    try std.testing.expectEqual(null, a.next());
+    try std.testing.expectEqual(null, (DataItem{ .data = "\xc0\xf8\x00" }).tagged());
 }
 
 fn readTest(data: []const u8, expected: []const []const u8) !void {
