@@ -210,9 +210,10 @@ pub const DataItem = struct {
         if (T != Type.ByteString and T != Type.TextString) return null;
 
         var begin: usize = 0;
-        const len = if (additionalInfo(self.data, &begin)) |v| @as(usize, @intCast(v)) else return null;
+        const len = if (additionalInfo(self.data, &begin)) |v| v else return null;
+        if (len > self.data.len - begin) return null;
 
-        return self.data[begin .. begin + len];
+        return self.data[begin .. begin + @as(usize, @intCast(len))];
     }
 
     /// Decode the given DataItem into a array
@@ -642,7 +643,15 @@ pub fn validate(data: []const u8, i: *usize, check_len: bool) bool {
     }
 
     switch (mt) {
-        2, 3 => i.* += val,
+        2, 3 => {
+            if (val > data.len - i.*) {
+                // if we would exceed the length of the raw input string
+                // just set `i` to the end of the input and return `false`.
+                i.* = data.len;
+                return false;
+            }
+            i.* += val;
+        },
         4 => {
             var j: usize = 0;
             while (j < val) : (j += 1) {
@@ -1073,4 +1082,27 @@ test "read well formed" {
 
     // Chaining data items is also possible
     try readTest("\x9f\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19\xff\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64\xff\xff\x9f\x01\x9f\x02\x9f\x9f\xff\xff\xff\xff", &.{ "\x9f\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19\xff", "\x9f\xbf\x61\x61\x61\x63\xff\xbf\x61\x62\x61\x64\xff\xff", "\x9f\x01\x9f\x02\x9f\x9f\xff\xff\xff\xff" });
+}
+
+test "strings longer than the input are rejected" {
+    // Top-level, tagged and nested strings claiming more bytes than are present
+    try std.testing.expectError(error.Malformed, DataItem.new("\x5a\x00\x01\x00\x00"));
+    try std.testing.expectError(error.Malformed, DataItem.new("\x7a\x00\x01\x00\x00"));
+    try std.testing.expectError(error.Malformed, DataItem.new("\xc0\x5a\x00\x01\x00\x00"));
+    try std.testing.expectError(error.Malformed, DataItem.new("\x81\x58\x10"));
+    try std.testing.expectError(error.Malformed, DataItem.new("\x5b\xff\xff\xff\xff\xff\xff\xff\xff\x01\x02\x03"));
+
+    // A byte following an overlong string header must not be taken as the break code
+    try std.testing.expectError(error.Malformed, DataItem.new("\x9f\x58\x10\xff"));
+    try validateTest("\x9f\x58\x10\xff", false);
+    try validateTest("\xbf\x01\x58\x10\xff", false);
+    try validateTest("\x9f\x5a\x00\x01\x00\x00\xff", false);
+    try validateTest("\x9f\x82\x01\x58\x10\xff", false);
+    try validateTest("\x9f\xc0\x78\x40\xff", false);
+
+    // string() must not slice past the end of the data
+    const di = DataItem{ .data = "\x5a\x00\x01\x00\x00" };
+    try std.testing.expectEqual(@as(?[]const u8, null), di.string());
+    const di2 = DataItem{ .data = "\x43\x01\x02" };
+    try std.testing.expectEqual(@as(?[]const u8, null), di2.string());
 }

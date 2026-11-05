@@ -520,3 +520,27 @@ test "write float #4" {
 
     try std.testing.expectEqualSlices(u8, "\xfb\xc0\x10\x66\x66\x66\x66\x66\x66", arr.written());
 }
+
+test "pushCbor rejects strings longer than the input" {
+    const allocator = std.testing.allocator;
+    var b = try Builder.new(allocator);
+    try std.testing.expectError(error.MalformedCbor, b.pushCbor("\x9f\x58\x10\xff"));
+    try std.testing.expectError(error.MalformedCbor, b.pushCbor("\x58\x10"));
+    const x = try b.finish();
+    defer allocator.free(x);
+
+    try std.testing.expectEqualSlices(u8, "", x);
+}
+
+test "pushCbor rejects strings exceeding the remaining data" {
+    const allocator = std.testing.allocator;
+    var b = try Builder.new(allocator);
+    try std.testing.expectError(error.MalformedCbor, b.pushCbor("\x5b\xff\xff\xff\xff\xff\xff\xff\xff"));
+    try std.testing.expectError(error.MalformedCbor, b.pushCbor("\x9f\x42\xff"));
+    try std.testing.expectError(error.MalformedCbor, b.pushCbor("\xbf\x01\x42\xff"));
+    try std.testing.expectError(error.MalformedCbor, b.pushCbor("\x9f\x5b\xff\xff\xff\xff\xff\xff\xff\xff\xff"));
+    const x = try b.finish();
+    defer allocator.free(x);
+
+    try std.testing.expectEqualSlices(u8, "", x);
+}
