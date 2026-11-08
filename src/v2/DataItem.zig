@@ -94,9 +94,30 @@ fn next(self: @This()) !@This() {
     return try @This().new(self.reader);
 }
 
+pub fn toOwnedSlice(self: @This(), allocator: std.mem.Allocator) ![]u8 {
+    var w = std.Io.Writer.Allocating.init(allocator);
+    errdefer w.deinit();
+
+    try self.skip(&w.writer);
+
+    return try w.toOwnedSlice();
+}
+
 /// Get the major type of the data item
 pub fn getMajorType(self: @This()) MajorType {
     return @fromBackingInt(@as(u3, @intCast(self.head[0] >> 5)));
+}
+
+pub fn getHeaderLength(self: @This()) usize {
+    const ai: u5 = @intCast(self.head[0] & 0x1f);
+
+    return switch (ai) {
+        24 => 2,
+        25 => 3,
+        26 => 5,
+        27 => 9,
+        else => 1,
+    };
 }
 
 /// Get a more detailed type (compared to the major type)
@@ -482,43 +503,55 @@ pub fn decode(
         .@"struct" => try self.decodeStruct(T, options),
         .pointer => try self.decodePointer(T, options),
         .array => try self.decodeArray(T, options),
-        //.@"union" => try self.decodeUnion(T, options),
+        .@"union" => try self.decodeUnion(T, options),
         else => error.NotYetImplemented,
     };
 }
 
-//fn decodeUnion(
-//    self: @This(),
-//    /// The type to decode to
-//    comptime T: type,
-//    options: DecodeOptions,
-//) DecodeError!T {
-//    const union_info = @typeInfo(T).@"union";
-//
-//    if (union_info.tag_type) |_| {
-//
-//        // try each union field until we find one that matches
-//        inline for (0..union_info.field_names.len) |i| {
-//            const field_name = union_info.field_names[i];
-//            const field_type = union_info.field_types[i];
-//
-//            if (parse(field_type, item, options)) |value| {
-//                return @unionInit(T, field_name, value);
-//            } else |err| {
-//                // Bubble up error.OutOfMemory
-//                // Parsing some types won't have OutOfMemory in their
-//                // error-sets, for the condition to be valid, merge it in.
-//                if (@as(@TypeOf(err) || error{OutOfMemory}, err) == error.OutOfMemory) return err;
-//                // Bubble up AllocatorRequired, as it indicates missing option
-//                if (@as(@TypeOf(err) || error{AllocatorRequired}, err) == error.AllocatorRequired) return err;
-//                // otherwise continue through the `inline for`
-//            }
-//        }
-//        return ParseError.NoUnionMemberMatched;
-//    } else {
-//        @compileError("Unable to parse into untagged union '" ++ @typeName(T) ++ "'");
-//    }
-//}
+fn decodeUnion(
+    self: @This(),
+    /// The type to decode to
+    comptime T: type,
+    options: DecodeOptions,
+) DecodeError!T {
+    const union_info = @typeInfo(T).@"union";
+
+    if (union_info.tag_type) |_| {
+        // We need to try out different union fields. This means we have
+        // to store the data item somewhere for reuse.
+        const a = options.allocator orelse return error.AllocatorRequired;
+
+        var writer = std.Io.Writer.Allocating.init(a);
+        defer writer.deinit();
+
+        try self.skip(&writer.writer);
+
+        // try each union field until we find one that matches
+        inline for (0..union_info.field_names.len) |i| {
+            const field_name = union_info.field_names[i];
+            const field_type = union_info.field_types[i];
+
+            var reader = std.Io.Reader.fixed(writer.written());
+            var di = try @This().new(&reader);
+
+            if (di.decode(field_type, options)) |v| {
+                return @unionInit(T, field_name, v);
+            } else |err| {
+                // Bubble up error.OutOfMemory
+                // Parsing some types won't have OutOfMemory in their
+                // error-sets, for the condition to be valid, merge it in.
+                if (@as(@TypeOf(err) || error{OutOfMemory}, err) == error.OutOfMemory) return err;
+                // Bubble up AllocatorRequired, as it indicates missing option
+                if (@as(@TypeOf(err) || error{AllocatorRequired}, err) == error.AllocatorRequired) return err;
+                // otherwise continue through the `inline for`
+            }
+        }
+
+        return error.NoUnionMemberMatched;
+    } else {
+        @compileError("Unable to parse into untagged union '" ++ @typeName(T) ++ "'");
+    }
+}
 
 fn decodeArray(
     self: @This(),
@@ -805,6 +838,8 @@ fn s2n(s: []const u8) ?i65 {
 }
 
 fn skip(self: @This(), writer: ?*std.Io.Writer) !void {
+    if (writer) |w| try w.writeAll(self.head[0..self.getHeaderLength()]);
+
     switch (self.head[0]) {
         0x40...0x5b, 0x60...0x7b => { // string
             if (writer) |w| {
@@ -1589,4 +1624,76 @@ test "decode slice #3" {
     const c1 = try di.decode([]const u8, .{ .allocator = allocator });
     defer allocator.free(c1);
     // No assert, we just want to make sure it doesn't crash
+}
+
+test "skip with writer #1" {
+    const s = "\x9f\x01\x02\x03\x04\x05\xff\x45\x01\x02\x03\x04\x05\x85\x01\xF6\x03\xF6\x05\xA2\x61\x78\x64\x68\x69\x67\x68\x61\x79\x0B\xa4\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x04\xa4\x64\x70\x6c\x61\x74\xf5\x62\x72\x6b\xf5\x62\x75\x70\xf5\x62\x75\x76\xf4\xa2\x64\x76\x61\x6c\x73\xa1\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f";
+
+    const e1 = "\x9f\x01\x02\x03\x04\x05\xff";
+    const e2 = "\x45\x01\x02\x03\x04\x05";
+    const e3 = "\x85\x01\xF6\x03\xF6\x05";
+    const e4 = "\xA2\x61\x78\x64\x68\x69\x67\x68\x61\x79\x0B";
+    const e5 = "\xa4\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x04\xa4\x64\x70\x6c\x61\x74\xf5\x62\x72\x6b\xf5\x62\x75\x70\xf5\x62\x75\x76\xf4";
+    const e6 = "\xa2\x64\x76\x61\x6c\x73\xa1\x67\x74\x65\x73\x74\x69\x6e\x67\x01\x66\x75\x70\x74\x69\x6d\x65\x19\x27\x0f";
+
+    var reader = std.Io.Reader.fixed(s);
+
+    var di1 = try Self.new(&reader);
+    var w1 = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer w1.deinit();
+    try di1.skip(&w1.writer);
+    try std.testing.expectEqualSlices(u8, e1, w1.written());
+
+    var di2 = try di1.next();
+    var w2 = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer w2.deinit();
+    try di2.skip(&w2.writer);
+    try std.testing.expectEqualSlices(u8, e2, w2.written());
+
+    var di3 = try di2.next();
+    var w3 = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer w3.deinit();
+    try di3.skip(&w3.writer);
+    try std.testing.expectEqualSlices(u8, e3, w3.written());
+
+    var di4 = try di3.next();
+    var w4 = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer w4.deinit();
+    try di4.skip(&w4.writer);
+    try std.testing.expectEqualSlices(u8, e4, w4.written());
+
+    var di5 = try di4.next();
+    const v = try di5.toOwnedSlice(std.testing.allocator);
+    defer std.testing.allocator.free(v);
+    try std.testing.expectEqualSlices(u8, e5, v);
+
+    var di6 = try di5.next();
+    var w6 = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer w6.deinit();
+    try di6.skip(&w6.writer);
+    try std.testing.expectEqualSlices(u8, e6, w6.written());
+}
+
+test "decode union #1" {
+    const ResponseTag = enum { ok, err };
+
+    const Response = union(ResponseTag) {
+        /// Slice containing the response message
+        ok: []const u8,
+        /// A CTAP status code
+        err: u8,
+    };
+
+    const s1 = "\x65\x68\x65\x6C\x6C\x6F";
+    var r1 = std.Io.Reader.fixed(s1);
+    var di1 = try Self.new(&r1);
+    const v1 = try di1.decode(Response, .{ .allocator = std.testing.allocator });
+    defer std.testing.allocator.free(v1.ok);
+    try std.testing.expectEqualSlices(u8, "hello", v1.ok);
+
+    const s2 = "\x18\x40";
+    var r2 = std.Io.Reader.fixed(s2);
+    var di2 = try Self.new(&r2);
+    const v2 = try di2.decode(Response, .{ .allocator = std.testing.allocator });
+    try std.testing.expectEqual(@as(u8, 64), v2.err);
 }
