@@ -33,9 +33,13 @@ pub const ArrayBackedSliceType = parser.ArrayBackedSliceType;
 // TODO: can we somehow read this from build.zig.zon???
 pub const VERSION: []const u8 = "0.23.1";
 
+// new stuff
+pub const v2 = @import("v2.zig");
+
 test "main tests" {
     _ = cbor;
     _ = parser;
     _ = cose;
     _ = builder;
+    _ = v2;
 }
