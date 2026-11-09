@@ -1709,3 +1709,9 @@ test "decode union #1" {
     const v2 = try di2.decode(Response, .{ .allocator = std.testing.allocator });
     try std.testing.expectEqual(@as(u8, 64), v2.err);
 }
+
+const tests = @import("tests.zig");
+
+test {
+    _ = tests;
+}
