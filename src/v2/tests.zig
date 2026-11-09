@@ -90,3 +90,42 @@ test "key longer than a streaming reader's buffer does not assert" {
 //    var di = try DataItem.new(&reader);
 //    try expectAnyError(di.toOwnedSlice(std.testing.allocator));
 //}
+
+test "sentinel string claiming 2^64-1 bytes" {
+    const allocator = std.testing.allocator;
+
+    // bytes(2^64-1) -> alloc(u8, l + 1) overflows to 0 in ReleaseFast and
+    // `readSliceAll` then writes through a zero-length allocation.
+    var reader = std.Io.Reader.fixed("\x5b\xff\xff\xff\xff\xff\xff\xff\xff\x01\x02\x03");
+    var di = try DataItem.new(&reader);
+    try expectAnyError(di.decode([:0]const u8, .{ .allocator = allocator }));
+}
+
+test "sentinel string field claiming 2^64-1 bytes" {
+    const allocator = std.testing.allocator;
+    const S = struct { name: [:0]const u8 };
+
+    // {"name": bytes(2^64-1)}
+    var reader = std.Io.Reader.fixed("\xa1\x64name\x5b\xff\xff\xff\xff\xff\xff\xff\xff");
+    var di = try DataItem.new(&reader);
+    try expectAnyError(di.decode(S, .{ .allocator = allocator }));
+}
+
+test "sentinel strings and arrays still decode correctly" {
+    const allocator = std.testing.allocator;
+
+    var r1 = std.Io.Reader.fixed("\x65hello");
+    var di1 = try DataItem.new(&r1);
+    const s = try di1.decode([:0]const u8, .{ .allocator = allocator });
+    defer allocator.free(s);
+    const e: [:0]const u8 = "hello";
+    try std.testing.expectEqualStrings(e, s);
+
+    // [1, 2, 3] -> {1, 2, 3} with a terminating 0, not {1, 2, 3, 0}
+    var r2 = std.Io.Reader.fixed("\x83\x01\x02\x03");
+    var di2 = try DataItem.new(&r2);
+    const a = try di2.decode([:0]const u32, .{ .allocator = allocator });
+    defer allocator.free(a);
+    const e2: [:0]const u32 = &.{ 1, 2, 3, 0 };
+    try std.testing.expectEqualSlices(u32, e2, a);
+}

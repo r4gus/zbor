@@ -630,10 +630,11 @@ fn decodePointer(
 
                     const l = try self.getLength();
                     var s: usize = 0;
-                    if (ptr_info.sentinel_ptr != null)
+                    if (ptr_info.sentinel_ptr != null) {
                         s += 1;
+                    }
 
-                    var v = try allocator.alloc(u8, l + s);
+                    var v = try allocator.alloc(u8, try std.math.add(usize, l, s));
                     _ = try self.getStringSlice(v[0..l]);
                     errdefer allocator.free(v);
 
@@ -646,18 +647,23 @@ fn decodePointer(
                     break :blk v;
                 },
                 .Array, .ArrayIndef => {
-                    var l = if (self.isIndef()) null else try self.getLength();
-                    if (ptr_info.sentinel_ptr != null) l += 1;
+                    const l = if (self.isIndef()) null else try self.getLength();
 
                     var arr: std.ArrayListUnmanaged(ptr_info.child) = .empty;
-                    if (l) |l_| {
-                        try arr.ensureTotalCapacity(allocator, l_);
-                    }
                     errdefer {
                         // TODO deinit children if possible. the only viable
                         // approach would be to see if the following method
                         // exists `fn deinit(Allocator) void`.
                         arr.deinit(allocator);
+                    }
+                    if (l) |l_| {
+                        if (l_ <= 256) {
+                            // We want to prevent unnecessary re-allocations but
+                            // we also don't want untrusted data to force us to
+                            // allocate large amounts of memory and therefore exhaust
+                            // the available memory.
+                            try arr.ensureTotalCapacity(allocator, l_);
+                        }
                     }
 
                     var i: usize = 0;
