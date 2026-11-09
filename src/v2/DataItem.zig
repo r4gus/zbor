@@ -5,6 +5,9 @@ const Self = @This();
 reader: *std.Io.Reader,
 head: [9]u8,
 
+/// The maximum length for text keys and enums;
+pub const max_key_len = 1024;
+
 pub const MajorType = enum(u3) {
     UInt = 0,
     Int = 1,
@@ -258,31 +261,33 @@ pub fn getFloat(self: @This()) !f64 {
     };
 }
 
-/// Get a text or byte string from a data item.
+/// Get a text or byte string from a data item by writing it
+/// into a buffer.
 ///
 /// This requires a data item of major type 2 or 3.
 ///
-/// The returned data is only valid as long as no other method, except for
-/// `getMajorType()`, `getAdditionalInformation()`, `getInt()` or `getUInt()`,
-/// is called on a given instance as this might advance the reader and therefore
-/// invalidate the slice.
-///
-/// If you need to keep the data around, please copy it to a memory location
-/// you own or call `getStringAlloc()` directly.
-pub fn getString(self: @This()) ![]const u8 {
+/// Use `getLength()` to get the length of the data item.
+pub fn getStringSlice(self: @This(), buffer: []u8) ![]u8 {
     const mt = self.getMajorType();
     if (mt != .ByteString and mt != .TextString) return error.WrongMajorType;
 
-    const len = try self.getArgumentValue();
+    const len = try self.getLength();
+    if (buffer.len < len) return error.BufferTooSmall;
 
-    return try self.reader.take(@intCast(len));
+    try self.reader.readSliceAll(buffer[0..len]);
+    return buffer[0..len];
 }
 
-pub fn getStringSlice(self: @This(), buffer: []u8) !void {
+pub fn getStringSliceStrict(self: @This(), buffer: []u8) ![]u8 {
     const mt = self.getMajorType();
     if (mt != .ByteString and mt != .TextString) return error.WrongMajorType;
 
-    try self.reader.readSliceAll(buffer);
+    const len = try self.getLength();
+    if (buffer.len < len) return error.BufferTooSmall;
+    if (buffer.len > len) return error.EndOfStream;
+
+    try self.reader.readSliceAll(buffer[0..len]);
+    return buffer[0..len];
 }
 
 /// Get a text or byte string from a data item.
@@ -354,6 +359,7 @@ pub const DecodeError = error{
     EndOfStream,
     ReadFailed,
     WriteFailed,
+    BufferTooSmall,
 };
 
 /// Options to influence the behavior of the en-/decode method
@@ -488,7 +494,8 @@ pub fn decode(
                 .UInt => std.enums.fromInt(T, try self.getUInt()) orelse error.InvalidEnumTag,
                 .Int => std.enums.fromInt(T, try self.getInt()) orelse error.InvalidEnumTag,
                 .TextString => inner: {
-                    const v = try self.getString();
+                    var buffer: [max_key_len]u8 = @splat(0);
+                    const v = try self.getStringSlice(&buffer);
 
                     inline for (enumInfo.field_names) |field_name| {
                         if (std.mem.eql(u8, field_name, v)) {
@@ -589,7 +596,7 @@ fn decodeArray(
             const l = try self.getLength();
             if (l > r[0..].len) break :blk error.Overflow;
 
-            try self.getStringSlice(r[0..]);
+            _ = try self.getStringSliceStrict(r[0..]);
 
             break :blk r;
         },
@@ -627,7 +634,7 @@ fn decodePointer(
                         s += 1;
 
                     var v = try allocator.alloc(u8, l + s);
-                    try self.getStringSlice(v[0..l]);
+                    _ = try self.getStringSlice(v[0..l]);
                     errdefer allocator.free(v);
 
                     if (ptr_info.sentinel_ptr) |sentinel| {
@@ -711,9 +718,10 @@ fn decodeStruct(
                 const key_ = try self.next();
                 if (len == null and key_.getType() == .Break) break;
 
+                var buffer: [max_key_len]u8 = @splat(0);
                 const key: union(enum) { int: i65, str: []const u8 } = switch (key_.getType()) {
                     .Int => .{ .int = try key_.getInt() },
-                    .ByteString, .TextString => .{ .str = try key_.getString() },
+                    .ByteString, .TextString => .{ .str = try key_.getStringSlice(&buffer) },
                     else => return error.InvalidKeyType,
                 };
 
@@ -949,7 +957,11 @@ test "decode strings (major type 2 or 3)" {
         var di = try Self.new(&reader);
 
         try std.testing.expectEqual(v.@"2", di.getMajorType());
-        try std.testing.expectEqualSlices(u8, v.@"1", try di.getString());
+
+        var buffer: [1024]u8 = @splat(0);
+        const value = try di.getStringSlice(&buffer);
+
+        try std.testing.expectEqualSlices(u8, v.@"1", value);
     }
 }
 
