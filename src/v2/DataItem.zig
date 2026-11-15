@@ -360,6 +360,7 @@ pub const DecodeError = error{
     ReadFailed,
     WriteFailed,
     BufferTooSmall,
+    Recursion,
 };
 
 /// Options to influence the behavior of the en-/decode method
@@ -440,6 +441,7 @@ pub const FieldSettings = struct {
 
 pub const DecodeOptions = struct {
     allocator: ?std.mem.Allocator = null,
+    depth: usize = 128,
 };
 
 pub fn decode(
@@ -448,6 +450,10 @@ pub fn decode(
     comptime T: type,
     options: DecodeOptions,
 ) DecodeError!T {
+    var options_ = options;
+    if (options_.depth == 0) return error.Recursion;
+    options_.depth -= 1;
+
     return blk: switch (@typeInfo(T)) {
         .bool => {
             break :blk switch (self.getType()) {
@@ -486,7 +492,7 @@ pub fn decode(
         .optional => |optionalInfo| {
             break :blk switch (self.getType()) {
                 .Null, .Undefined => null,
-                else => try self.decode(optionalInfo.child, options),
+                else => try self.decode(optionalInfo.child, options_),
             };
         },
         .@"enum" => |enumInfo| {
@@ -507,10 +513,10 @@ pub fn decode(
                 else => error.UnexpectedItem,
             };
         },
-        .@"struct" => try self.decodeStruct(T, options),
-        .pointer => try self.decodePointer(T, options),
-        .array => try self.decodeArray(T, options),
-        .@"union" => try self.decodeUnion(T, options),
+        .@"struct" => try self.decodeStruct(T, options_),
+        .pointer => try self.decodePointer(T, options_),
+        .array => try self.decodeArray(T, options_),
+        .@"union" => try self.decodeUnion(T, options_),
         else => error.NotYetImplemented,
     };
 }
@@ -1715,6 +1721,8 @@ test "decode union #1" {
     const v2 = try di2.decode(Response, .{ .allocator = std.testing.allocator });
     try std.testing.expectEqual(@as(u8, 64), v2.err);
 }
+
+test "recursion #1" {}
 
 const tests = @import("tests.zig");
 
