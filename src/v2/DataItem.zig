@@ -74,9 +74,9 @@ pub fn new(reader: *std.Io.Reader) !@This() {
 
     switch (ai) {
         24 => head[1] = try reader.takeByte(),
-        25 => try reader.readSliceAll(head[1..3]),
-        26 => try reader.readSliceAll(head[1..5]),
-        27 => try reader.readSliceAll(head[1..9]),
+        25 => @memcpy(head[1..3], try reader.take(2)),
+        26 => @memcpy(head[1..5], try reader.take(4)),
+        27 => @memcpy(head[1..9], try reader.take(8)),
         28...30 => return error.Malformed,
         31 => {
             switch (mt) {
@@ -500,7 +500,7 @@ pub fn decode(
                 .UInt => std.enums.fromInt(T, try self.getUInt()) orelse error.InvalidEnumTag,
                 .Int => std.enums.fromInt(T, try self.getInt()) orelse error.InvalidEnumTag,
                 .TextString => inner: {
-                    var buffer: [max_key_len]u8 = @splat(0);
+                    var buffer: [max_key_len]u8 = undefined;
                     const v = try self.getStringSlice(&buffer);
 
                     inline for (enumInfo.field_names) |field_name| {
@@ -663,13 +663,12 @@ fn decodePointer(
                         arr.deinit(allocator);
                     }
                     if (l) |l_| {
-                        if (l_ <= 256) {
-                            // We want to prevent unnecessary re-allocations but
-                            // we also don't want untrusted data to force us to
-                            // allocate large amounts of memory and therefore exhaust
-                            // the available memory.
-                            try arr.ensureTotalCapacity(allocator, l_);
-                        }
+                        // We want to prevent unnecessary re-allocations but
+                        // we also don't want untrusted data to force us to
+                        // allocate large amounts of memory and therefore exhaust
+                        // the available memory.
+                        const bound = @max(256, self.reader.bufferedLen());
+                        try arr.ensureTotalCapacity(allocator, @min(l_, bound));
                     }
 
                     var i: usize = 0;
@@ -730,7 +729,7 @@ fn decodeStruct(
                 const key_ = try self.next();
                 if (len == null and key_.getType() == .Break) break;
 
-                var buffer: [max_key_len]u8 = @splat(0);
+                var buffer: [max_key_len]u8 = undefined;
                 const key: union(enum) { int: i65, str: []const u8 } = switch (key_.getType()) {
                     .Int => .{ .int = try key_.getInt() },
                     .ByteString, .TextString => .{ .str = try key_.getStringSlice(&buffer) },
@@ -904,6 +903,22 @@ fn skip(self: @This(), writer: ?*std.Io.Writer) !void {
         else => {},
     }
 }
+
+// ################################################################
+// ###########            Encoding                #################
+// ################################################################
+
+pub const EncodeOptions = struct {
+    allocator: ?std.mem.Allocator = null,
+};
+
+pub const EncodeError = error{
+    UnsupportedItem,
+    InvalidPairCount,
+    WriteFailed,
+    OutOfMemory,
+    BufferTooSmall,
+};
 
 // ################################################################
 // ###########            Tests                   #################
