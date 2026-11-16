@@ -529,6 +529,11 @@ fn decodeUnion(
 ) DecodeError!T {
     const union_info = @typeInfo(T).@"union";
 
+    const has_parse = comptime std.meta.hasFn(T, "cborDecode");
+    if (has_parse) {
+        return T.cborDecode(self);
+    }
+
     if (union_info.tag_type) |_| {
         // We need to try out different union fields. This means we have
         // to store the data item somewhere for reuse.
@@ -706,6 +711,12 @@ fn decodeStruct(
     options: DecodeOptions,
 ) DecodeError!T {
     const struct_info = @typeInfo(T).@"struct";
+
+    // Custom parse function overrides default behaviour
+    const has_parse = comptime std.meta.hasFn(T, "cborDecode");
+    if (has_parse) {
+        return T.cborDecode(self);
+    }
 
     // The field settings can influence how a map is translated into a struct, e.g.,
     // using alternative names for fields.
@@ -1735,6 +1746,44 @@ test "decode union #1" {
     var di2 = try Self.new(&r2);
     const v2 = try di2.decode(Response, .{ .allocator = std.testing.allocator });
     try std.testing.expectEqual(@as(u8, 64), v2.err);
+}
+
+test "deserialize EcdsP256Key using alias 2" {
+    const EcdsaP256Key = struct {
+        /// kty:
+        kty: u8 = 2,
+        /// alg:
+        alg: i8 = -7,
+        /// crv:
+        crv: u8 = 1,
+        /// x-coordinate
+        x: [32]u8,
+        /// y-coordinate
+        y: [32]u8,
+
+        pub fn cborSettings() Settings {
+            return .{
+                .field_settings = &.{
+                    .{ .name = "kty", .field_options = .{ .alias = "1", .serialization_type = .Integer } },
+                    .{ .name = "alg", .field_options = .{ .alias = "3", .serialization_type = .Integer } },
+                    .{ .name = "crv", .field_options = .{ .alias = "-1", .serialization_type = .Integer } },
+                    .{ .name = "x", .field_options = .{ .alias = "-2", .serialization_type = .Integer } },
+                    .{ .name = "y", .field_options = .{ .alias = "-3", .serialization_type = .Integer } },
+                },
+            };
+        }
+    };
+
+    var r = std.Io.Reader.fixed("\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52");
+    var di = try Self.new(&r);
+
+    const x = try di.decode(EcdsaP256Key, .{});
+
+    try std.testing.expectEqual(@as(u8, @intCast(2)), x.kty);
+    try std.testing.expectEqual(@as(i8, @intCast(-7)), x.alg);
+    try std.testing.expectEqual(@as(u8, @intCast(1)), x.crv);
+    try std.testing.expectEqualSlices(u8, "\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e", &x.x);
+    try std.testing.expectEqualSlices(u8, "\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", &x.y);
 }
 
 test "recursion #1" {}
