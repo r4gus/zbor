@@ -6,16 +6,14 @@ const User = struct {
     name: []const u8,
     displayName: []const u8,
 
-    pub fn cborStringify(self: *const @This(), options: zbor.Options, out: *std.Io.Writer) !void {
-        return zbor.stringify(self, .{
-            .allocator = options.allocator,
-            .ignore_override = true,
+    pub fn cborSettings() zbor.DataItem.Settings {
+        return .{
             .field_settings = &.{
                 .{ .name = "id", .value_options = .{ .slice_serialization_type = .ByteString } },
                 .{ .name = "name", .value_options = .{ .slice_serialization_type = .TextString } },
                 .{ .name = "displayName", .value_options = .{ .slice_serialization_type = .TextString } },
             },
-        }, out);
+        };
     }
 };
 
@@ -34,7 +32,7 @@ pub fn main(init: std.process.Init) !void {
     var di = std.Io.Writer.Allocating.init(allocator);
     defer di.deinit();
 
-    try zbor.stringify(user, .{}, &di.writer);
+    try zbor.DataItem.encode(&di.writer, user, .{});
 
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buffer);
