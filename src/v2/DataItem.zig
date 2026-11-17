@@ -365,16 +365,6 @@ pub const DecodeError = error{
 
 /// Options to influence the behavior of the en-/decode method
 pub const Settings = struct {
-    /// Whether an array should be serialized as definite or indefinite
-    /// In the case of indefinite arrays, a break marker will be added after the array to signal the end of the array.
-    array_serialization_type: ArraySerializationType = .ArrayDefinite,
-    /// Wheter a map/struct should be serialized as a definite or indefinite CBOR map.
-    /// In the case of a indefinite map, a break marker 0xff will be added after the
-    /// map to signal the end.
-    map_serialization_type: MapSerializationType = .MapDefinite,
-    /// Pass an optional allocator. This is required different things, including
-    /// parsing slices of unknown length.
-    allocator: ?std.mem.Allocator = null,
     /// Settings for specific fields that override the default options
     field_settings: []const FieldSettings = &.{},
     /// How to behave if a CBOR map has two or more keys with
@@ -436,6 +426,13 @@ pub const FieldSettings = struct {
         enum_serialization_type: SerializationType = .TextString,
         /// What a slice value should be serialized to
         slice_serialization_type: SerializationType = .ByteString,
+        /// Whether an array should be serialized as definite or indefinite
+        /// In the case of indefinite arrays, a break marker will be added after the array to signal the end of the array.
+        array_serialization_type: ArraySerializationType = .ArrayDefinite,
+        /// Wheter a map/struct should be serialized as a definite or indefinite CBOR map.
+        /// In the case of a indefinite map, a break marker 0xff will be added after the
+        /// map to signal the end.
+        map_serialization_type: MapSerializationType = .MapDefinite,
     } = .{},
 };
 
@@ -915,12 +912,53 @@ fn skip(self: @This(), writer: ?*std.Io.Writer) !void {
     }
 }
 
+fn encode_head(out: *std.Io.Writer, head: u8, v: u64) !void {
+    switch (v) {
+        0x00...0x17 => {
+            try out.writeByte(head | @as(u8, @intCast(v)));
+        },
+        0x18...0xff => {
+            try out.writeByte(head | 24);
+            try out.writeByte(@as(u8, @intCast(v)));
+        },
+        0x0100...0xffff => try encode_head_2(out, head, v),
+        0x00010000...0xffffffff => try encode_head_4(out, head, v),
+        0x0000000100000000...0xffffffffffffffff => try encode_head_8(out, head, v),
+    }
+}
+
+pub inline fn encode_head_2(cbor: anytype, head: u8, v: u64) !void {
+    try cbor.writeByte(head | 25);
+    try cbor.writeInt(u16, @as(u16, @intCast(v)), .big);
+}
+
+pub inline fn encode_head_4(cbor: anytype, head: u8, v: u64) !void {
+    try cbor.writeByte(head | 26);
+    try cbor.writeInt(u32, @as(u32, @intCast(v)), .big);
+}
+
+pub inline fn encode_head_8(cbor: anytype, head: u8, v: u64) !void {
+    try cbor.writeByte(head | 27);
+    try cbor.writeInt(u64, v, .big);
+}
+
 // ################################################################
 // ###########            Encoding                #################
 // ################################################################
 
 pub const EncodeOptions = struct {
     allocator: ?std.mem.Allocator = null,
+    /// What a enum value should be serialized to
+    enum_serialization_type: SerializationType = .TextString,
+    /// What a slice value should be serialized to
+    slice_serialization_type: SerializationType = .ByteString,
+    /// Whether an array should be serialized as definite or indefinite
+    /// In the case of indefinite arrays, a break marker will be added after the array to signal the end of the array.
+    array_serialization_type: ArraySerializationType = .ArrayDefinite,
+    /// Wheter a map/struct should be serialized as a definite or indefinite CBOR map.
+    /// In the case of a indefinite map, a break marker 0xff will be added after the
+    /// map to signal the end.
+    map_serialization_type: MapSerializationType = .MapDefinite,
 };
 
 pub const EncodeError = error{
@@ -931,8 +969,410 @@ pub const EncodeError = error{
     BufferTooSmall,
 };
 
+pub fn encode(
+    out: *std.Io.Writer,
+    value: anytype,
+    options: EncodeOptions,
+) EncodeError!void {
+    const T = @TypeOf(value);
+    const TInf = @typeInfo(T);
+    var head: u8 = 0;
+    var v: u64 = 0;
+
+    // I don't know if this is a good solution but it's
+    // the easiest way to work around all the anyopaque
+    // compiler errors. Makes no sense to serialize a
+    // allocator but this allows storing a allocator
+    // in a struct and then just skipping the field.
+    if (T == std.mem.Allocator) return;
+
+    const has_settings = comptime std.meta.hasFn(T, "cborSettings");
+    const settings: Settings = if (has_settings) T.cborSettings() else .{};
+
+    switch (TInf) {
+        .int, .comptime_int => {
+            head = if (value < 0) 0x20 else 0;
+            v = @as(u64, @intCast(if (value < 0) -(value + 1) else value));
+            try encode_head(out, head, v);
+            return;
+        },
+        .float, .comptime_float => {
+            head = 0xe0;
+            switch (TInf) {
+                .float => |float| {
+                    switch (float.bits) {
+                        16 => try encode_head_2(out, head, @as(u64, @intCast(@as(u16, @bitCast(value))))),
+                        32 => try encode_head_4(out, head, @as(u64, @intCast(@as(u32, @bitCast(value))))),
+                        64 => try encode_head_8(out, head, @as(u64, @intCast(@as(u64, @bitCast(value))))),
+                        else => @compileError("Float must be 16, 32 or 64 Bits wide"),
+                    }
+                    return;
+                },
+                .comptime_float => {
+                    // Comptime floats are always encoded as single precision floats
+                    try encode_head_4(out, head, @as(u64, @intCast(@as(u32, @bitCast(@as(f32, @floatCast(value)))))));
+                    return;
+                },
+                else => unreachable,
+            }
+        },
+        .bool, .null => {
+            head = 0xe0;
+            v = switch (TInf) {
+                .bool => if (value) 21 else 20,
+                .null => 22,
+                else => unreachable,
+            };
+            try encode_head(out, head, v);
+            return;
+        },
+        .array => |arrayInfo| {
+            if (arrayInfo.child == u8) {
+                head = switch (options.slice_serialization_type) {
+                    .TextString => blk: {
+                        break :blk if (std.unicode.utf8ValidateSlice(value[0..])) 0x60 else 0x40;
+                    },
+                    // Otherwise it can only be ByteString or Integer (and Integer doesn't make sense in this context).
+                    else => 0x40,
+                };
+            } else {
+                if (options.array_serialization_type == .ArrayDefinite) {
+                    head = 0x80;
+                } else {
+                    head = 0x9f;
+                }
+            }
+
+            if (options.array_serialization_type == .ArrayDefinite) {
+                // The length is only encoded for non indefinite length DIs.
+                v = @as(u64, @intCast(value.len));
+                try encode_head(out, head, v);
+            } else {
+                try out.writeByte(head);
+            }
+
+            if (arrayInfo.child == u8) {
+                try out.writeAll(value[0..]);
+            } else {
+                for (value) |x| {
+                    try encode(out, x, options);
+                }
+            }
+            if (head == 0x9f and options.array_serialization_type == .ArrayIndefinite) {
+                try out.writeByte(0xff);
+            }
+            return;
+        },
+        .@"struct" => |S| {
+            // Custom encode function overrides default behaviour
+            const has_encode = comptime std.meta.hasFn(T, "cborEncode");
+            if (has_encode) {
+                return value.cborEncode(out, options);
+            }
+
+            if (options.map_serialization_type == .MapDefinite) {
+                head = 0xa0; // Struct becomes a Map.
+            } else {
+                head = 0xbf; // Struct becomes a indefinite-length map
+            }
+
+            // Count the number of fields that should be serialized
+            inline for (0..S.field_names.len) |i| {
+                const field_name = S.field_names[i];
+                const field_type = S.field_types[i];
+
+                // don't include void fields
+                if (field_type == void) continue;
+
+                var emit_field = true;
+
+                var field_setting: ?FieldSettings = null;
+                for (settings.field_settings) |fs| {
+                    if (std.mem.eql(u8, field_name, fs.name)) {
+                        field_setting = fs;
+                    }
+                }
+
+                if (field_setting != null and field_setting.?.field_options.skip == .Skip) {
+                    emit_field = false;
+                }
+
+                // dont't include (optional) null fields
+                if (emit_field and @typeInfo(field_type) == .optional) {
+                    if (((field_setting != null and field_setting.?.field_options.skip == .SkipIfNull) or field_setting == null) and @field(value, field_name) == null) {
+                        emit_field = false;
+                    }
+                }
+
+                if (emit_field) {
+                    v += 1;
+                }
+            }
+
+            if (options.map_serialization_type == .MapDefinite) {
+                try encode_head(out, head, v);
+            } else {
+                try out.writeByte(head);
+            }
+
+            // Now serialize the actual fields
+            inline for (0..S.field_names.len) |i| {
+                const field_name = S.field_names[i];
+                const field_type = S.field_types[i];
+
+                // don't include void fields
+                if (field_type == void) continue;
+
+                var emit_field = true;
+                var child_options = options;
+                var name: []const u8 = field_name[0..];
+                var name_st: SerializationType = .TextString;
+
+                var field_setting: ?FieldSettings = null;
+                for (settings.field_settings) |fs| {
+                    if (std.mem.eql(u8, field_name, fs.name)) {
+                        field_setting = fs;
+                        break;
+                    }
+                }
+
+                if (field_setting != null and field_setting.?.field_options.skip == .Skip) {
+                    emit_field = false;
+                }
+
+                // dont't include (optional) null fields
+                if (emit_field and @typeInfo(field_type) == .optional) {
+                    if (((field_setting != null and field_setting.?.field_options.skip == .SkipIfNull) or field_setting == null) and @field(value, field_name) == null) {
+                        emit_field = false;
+                    }
+                }
+
+                if (field_setting != null) {
+                    child_options.enum_serialization_type = field_setting.?.value_options.enum_serialization_type;
+                    child_options.slice_serialization_type = field_setting.?.value_options.slice_serialization_type;
+                    child_options.array_serialization_type = field_setting.?.value_options.array_serialization_type;
+                    child_options.map_serialization_type = field_setting.?.value_options.map_serialization_type;
+
+                    if (field_setting.?.field_options.alias) |alias| {
+                        name = alias;
+                    }
+
+                    name_st = field_setting.?.field_options.serialization_type;
+                }
+
+                if (emit_field) {
+                    const nr = s2n(name);
+                    if (name_st == .Integer and nr != null) { // int key
+                        try encode(out, nr.?, .{}); // key
+                    } else { // str key
+                        try encode(out, name, .{
+                            .slice_serialization_type = name_st,
+                        }); // key
+                    }
+
+                    try encode(out, @field(value, field_name), child_options); // value
+                }
+            }
+            if (options.map_serialization_type == .MapIndefinite) try out.writeByte(0xff);
+            return;
+        },
+        .optional => {
+            if (value) |payload| {
+                try encode(out, payload, options);
+                return;
+            } else {
+                try encode(out, null, options);
+                return;
+            }
+        },
+        .pointer => |ptr_info| switch (ptr_info.size) {
+            .slice => {
+                if (ptr_info.child == u8) {
+                    head = switch (options.slice_serialization_type) {
+                        .TextString => blk: {
+                            break :blk if (std.unicode.utf8ValidateSlice(value[0..])) 0x60 else 0x40;
+                        },
+                        // Otherwise it can only be ByteString or Integer (and Integer doesn't make sense in this context).
+                        else => 0x40,
+                    };
+                } else {
+                    if (options.array_serialization_type == .ArrayDefinite) {
+                        head = 0x80;
+                    } else {
+                        head = 0x9f;
+                    }
+                }
+
+                if (options.array_serialization_type == .ArrayDefinite) {
+                    // The length is only encoded for non indefinite length DIs.
+                    v = @as(u64, @intCast(value.len));
+                    try encode_head(out, head, v);
+                } else {
+                    try out.writeByte(head);
+                }
+
+                if (ptr_info.child == u8) {
+                    try out.writeAll(value);
+                } else {
+                    for (value) |x| {
+                        try encode(out, x, options);
+                    }
+                }
+                if (head == 0x9f and options.array_serialization_type == .ArrayIndefinite) {
+                    try out.writeByte(0xff);
+                }
+                return;
+            },
+            .one => {
+                try encode(out, value.*, options);
+                return;
+            },
+            else => @compileError("Unable to encode type '" ++ @typeName(T) ++ "'"),
+        },
+        .@"enum" => |enumInfo| {
+            if (options.enum_serialization_type == .TextString) {
+                const tmp = @backingInt(value);
+                inline for (enumInfo.field_names, enumInfo.field_values) |field_name, field_value| {
+                    if (field_value == tmp) {
+                        v = @as(u64, @intCast(field_name.len));
+                        try encode_head(out, 0x60, v);
+                        try out.writeAll(field_name);
+                        return;
+                    }
+                }
+            } else {
+                const tmp = @backingInt(value);
+                head = if (tmp < 0) 0x20 else 0;
+                v = @as(u64, @intCast(if (tmp < 0) -(tmp + 1) else tmp));
+                try encode_head(out, head, v);
+                return;
+            }
+        },
+        .@"union" => {
+            // Custom encode function overrides default behaviour
+            const has_encode = comptime std.meta.hasFn(T, "cborEncode");
+            if (has_encode) {
+                return value.cborEncode(out, options);
+            }
+
+            const info = @typeInfo(T).@"union";
+            if (info.tag_type) |UnionTagType| {
+                inline for (0..info.field_names.len) |i| {
+                    const field_name = info.field_names[i];
+
+                    if (value == @field(UnionTagType, field_name)) {
+                        try encode(out, @field(value, field_name), options);
+                        break;
+                    }
+                }
+                return;
+            } else {
+                @compileError("Unable to encode untagged union '" ++ @typeName(T) ++ "'");
+            }
+        },
+        else => {
+            return .UnsupportedItem;
+        }, // TODO: add remaining options
+    }
+}
+
 // ################################################################
-// ###########            Tests                   #################
+// ###########         Encoding Primitives        #################
+// ################################################################
+
+/// Serialize an integer into a CBOR integer (major type 0 or 1).
+pub fn writeInt(writer: *std.Io.Writer, value: i65) !void {
+    const h: u8 = if (value < 0) 0x20 else 0;
+    const v: u64 = @as(u64, @intCast(if (value < 0) -(value + 1) else value));
+    try encode_head(writer, h, v);
+}
+
+/// Serialize a slice to a CBOR byte string (major type 2).
+pub fn writeByteString(writer: *std.Io.Writer, value: []const u8) !void {
+    const h: u8 = 0x40;
+    const v: u64 = @as(u64, @intCast(value.len));
+    try encode_head(writer, h, v);
+    try writer.writeAll(value);
+}
+
+/// Serialize a slice to a CBOR text string (major type 3).
+pub fn writeTextString(writer: *std.Io.Writer, value: []const u8) !void {
+    const h: u8 = 0x60;
+    const v: u64 = @as(u64, @intCast(value.len));
+    try encode_head(writer, h, v);
+    try writer.writeAll(value);
+}
+
+/// Serialize a tag.
+///
+/// You MUST serialize another data item right after calling this function.
+pub fn writeTag(writer: *std.Io.Writer, tag: u64) !void {
+    const h: u8 = 0xc0;
+    const v: u64 = tag;
+    try encode_head(writer, h, v);
+}
+
+/// Serialize a simple value.
+pub fn writeSimple(writer: *std.Io.Writer, simple: u8) !void {
+    if (24 <= simple and simple <= 31) return error.ReservedValue;
+    const h: u8 = 0xe0;
+    const v: u64 = @as(u64, @intCast(simple));
+    try encode_head(writer, h, v);
+}
+
+pub fn writeTrue(writer: *std.Io.Writer) !void {
+    try writeSimple(writer, 21);
+}
+
+pub fn writeFalse(writer: *std.Io.Writer) !void {
+    try writeSimple(writer, 20);
+}
+
+pub fn writeFloat(writer: *std.Io.Writer, f: anytype) !void {
+    const T = @TypeOf(f);
+    const TInf = @typeInfo(T);
+
+    switch (TInf) {
+        .float => |float| {
+            switch (float.bits) {
+                16 => try encode_head_2(writer, 0xe0, @as(u64, @intCast(@as(u16, @bitCast(f))))),
+                32 => try encode_head_4(writer, 0xe0, @as(u64, @intCast(@as(u32, @bitCast(f))))),
+                64 => try encode_head_8(writer, 0xe0, @as(u64, @intCast(@as(u64, @bitCast(f))))),
+                else => @compileError("Float must be 16, 32 or 64 Bits wide"),
+            }
+        },
+        else => return error.NotAFloat,
+    }
+}
+
+/// Write the header of an array to `writer`.
+///
+/// You must write exactly `len` data items to `writer` afterwards.
+pub inline fn writeArray(writer: *std.Io.Writer, len: u64) !void {
+    try encode_head(writer, 0x80, len);
+}
+
+pub inline fn writeArrayIndef(writer: *std.Io.Writer) !void {
+    try writer.writeByte(0x9f);
+}
+
+/// Write the header of a map to `writer`.
+///
+/// You must write exactly `len` key-value pairs (data items) to `writer` afterwards.
+pub inline fn writeMap(writer: *std.Io.Writer, len: u64) !void {
+    try encode_head(writer, 0xa0, len);
+}
+
+pub inline fn writeMapIndef(writer: *std.Io.Writer) !void {
+    try writer.writeByte(0xbf);
+}
+
+pub inline fn writeIndefBreak(writer: *std.Io.Writer) !void {
+    try writer.writeByte(0xff);
+}
+
+// ################################################################
+// ###########         Decoding Tests             #################
 // ################################################################
 
 test "decode unsigned (major type 0)" {
@@ -1786,7 +2226,695 @@ test "deserialize EcdsP256Key using alias 2" {
     try std.testing.expectEqualSlices(u8, "\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", &x.y);
 }
 
+test "parse get assertion request 1" {
+    const GetAssertionParam = struct {
+        rpId: [:0]const u8,
+        clientDataHash: []const u8,
+        allowList: ?[]const struct {
+            id: []const u8,
+            type: [:0]const u8,
+            transports: ?[]const [:0]const u8 = null,
+        } = null,
+        options: ?struct {
+            up: bool = true,
+            rk: bool = true,
+            uv: bool = false,
+        } = null,
+        pinUvAuthParam: ?[32]u8 = null,
+        pinUvAuthProtocol: ?u8 = null,
+
+        pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
+            allocator.free(self.rpId);
+            allocator.free(self.clientDataHash);
+            if (self.allowList) |pkcds| {
+                for (pkcds) |pkcd| {
+                    allocator.free(pkcd.id);
+                    allocator.free(pkcd.type);
+                    if (pkcd.transports) |trans| {
+                        for (trans) |t| {
+                            allocator.free(t);
+                        }
+                        allocator.free(trans);
+                    }
+                }
+                allocator.free(pkcds);
+            }
+        }
+
+        pub fn cborSettings() Settings {
+            return .{
+                .field_settings = &.{
+                    .{ .name = "rpId", .field_options = .{ .alias = "1", .serialization_type = .Integer } },
+                    .{ .name = "clientDataHash", .field_options = .{ .alias = "2", .serialization_type = .Integer } },
+                    .{ .name = "allowList", .field_options = .{ .alias = "3", .serialization_type = .Integer } },
+                    .{ .name = "options", .field_options = .{ .alias = "5", .serialization_type = .Integer } },
+                    .{ .name = "pinUvAuthParam", .field_options = .{ .alias = "6", .serialization_type = .Integer } },
+                    .{ .name = "pinUvAuthProtocol", .field_options = .{ .alias = "7", .serialization_type = .Integer } },
+                },
+            };
+        }
+    };
+
+    const allocator = std.testing.allocator;
+
+    // {1: "webauthn.io", 2: h'6E0CB5F97CAEB8BF797A6214C7191C808FE5A55021F9FB766E8183CD8A0D550B', 3: [{"id": h'F9FFFFFF95EA72742FA603C3519F9C17C0FF81C45DBB46E23CFF6FC1D0D5B3646D495CB11B80E57888BFBAE3898D6985FC196C43FDFC2E8018AC2D5BB379A1F0', "type": "public-key"}], 5: {"up": false}, 6: h'305B382D1CD9B9714D519830E5B002CB6C3825BC05F87EF1BCDA364D2D4DB910', 7: 2}
+    const payload = "\xa6\x01\x6b\x77\x65\x62\x61\x75\x74\x68\x6e\x2e\x69\x6f\x02\x58\x20\x6e\x0c\xb5\xf9\x7c\xae\xb8\xbf\x79\x7a\x62\x14\xc7\x19\x1c\x80\x8f\xe5\xa5\x50\x21\xf9\xfb\x76\x6e\x81\x83\xcd\x8a\x0d\x55\x0b\x03\x81\xa2\x62\x69\x64\x58\x40\xf9\xff\xff\xff\x95\xea\x72\x74\x2f\xa6\x03\xc3\x51\x9f\x9c\x17\xc0\xff\x81\xc4\x5d\xbb\x46\xe2\x3c\xff\x6f\xc1\xd0\xd5\xb3\x64\x6d\x49\x5c\xb1\x1b\x80\xe5\x78\x88\xbf\xba\xe3\x89\x8d\x69\x85\xfc\x19\x6c\x43\xfd\xfc\x2e\x80\x18\xac\x2d\x5b\xb3\x79\xa1\xf0\x64\x74\x79\x70\x65\x6a\x70\x75\x62\x6c\x69\x63\x2d\x6b\x65\x79\x05\xa1\x62\x75\x70\xf4\x06\x58\x20\x30\x5b\x38\x2d\x1c\xd9\xb9\x71\x4d\x51\x98\x30\xe5\xb0\x02\xcb\x6c\x38\x25\xbc\x05\xf8\x7e\xf1\xbc\xda\x36\x4d\x2d\x4d\xb9\x10\x07\x02";
+
+    var r = std.Io.Reader.fixed(payload);
+    var di = try Self.new(&r);
+
+    const get_assertion_param = try di.decode(
+        GetAssertionParam,
+        .{ .allocator = allocator },
+    );
+    defer get_assertion_param.deinit(allocator);
+
+    try std.testing.expectEqual(false, get_assertion_param.options.?.up);
+    try std.testing.expectEqualSlices(u8, "webauthn.io", get_assertion_param.rpId);
+    try std.testing.expectEqualSlices(u8, "\x6e\x0c\xb5\xf9\x7c\xae\xb8\xbf\x79\x7a\x62\x14\xc7\x19\x1c\x80\x8f\xe5\xa5\x50\x21\xf9\xfb\x76\x6e\x81\x83\xcd\x8a\x0d\x55\x0b", get_assertion_param.clientDataHash);
+    try std.testing.expectEqualSlices(u8, "\xf9\xff\xff\xff\x95\xea\x72\x74\x2f\xa6\x03\xc3\x51\x9f\x9c\x17\xc0\xff\x81\xc4\x5d\xbb\x46\xe2\x3c\xff\x6f\xc1\xd0\xd5\xb3\x64\x6d\x49\x5c\xb1\x1b\x80\xe5\x78\x88\xbf\xba\xe3\x89\x8d\x69\x85\xfc\x19\x6c\x43\xfd\xfc\x2e\x80\x18\xac\x2d\x5b\xb3\x79\xa1\xf0", get_assertion_param.allowList.?[0].id);
+}
+
+test "assign allocator to allocator fields #1" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        a: []u8,
+        b: std.mem.Allocator,
+    };
+
+    var r = std.Io.Reader.fixed("\xa1\x61\x61\x65\x61\x62\x63\x64\x65");
+    var di = try Self.new(&r);
+
+    const x = try di.decode(S, .{ .allocator = allocator });
+    defer allocator.free(x.a);
+
+    try std.testing.expectEqualSlices(u8, "abcde", x.a);
+}
+
+test "parse indefinite-length map {_ 'a': 1, 'b': [_ 2, 3]}" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        a: u16,
+        b: []const u8,
+    };
+
+    var r = std.Io.Reader.fixed("\xbf\x61\x61\x01\x61\x62\x9f\x02\x03\xff\xff");
+    var di = try Self.new(&r);
+
+    const s = try di.decode(S, .{ .allocator = allocator });
+    defer allocator.free(s.b);
+
+    try std.testing.expectEqual(@as(u16, 1), s.a);
+    try std.testing.expectEqualSlices(u8, &.{ 2, 3 }, s.b);
+}
+
+test "parse indefinite-length map {_ 'Fun': true, 'Amt': -2}" {
+    const S = struct {
+        Fun: bool,
+        Amt: i16,
+    };
+
+    var r = std.Io.Reader.fixed("\xbf\x63\x46\x75\x6e\xf5\x63\x41\x6d\x74\x21\xff");
+    var di = try Self.new(&r);
+
+    const s = try di.decode(S, .{});
+
+    try std.testing.expectEqual(true, s.Fun);
+    try std.testing.expectEqual(@as(i16, -2), s.Amt);
+}
+
+test "parse indefinite-length map {_ 'a': 1, 'b': {_ 'c': 2, 'd': 3}, 'e': 'hello'}" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        a: u8,
+        b: struct {
+            c: u8,
+            d: u8,
+        },
+        e: []const u8,
+    };
+
+    const raw = "\xbf\x61\x61\x01\x61\x62\xbf\x61\x63\x02\x61\x64\x03\xff\x61\x65\x65\x68\x65\x6c\x6c\x6f\xff";
+
+    var r = std.Io.Reader.fixed(raw);
+    var di = try Self.new(&r);
+
+    const s = try di.decode(
+        S,
+        .{ .allocator = allocator },
+    );
+    defer allocator.free(s.e);
+
+    try std.testing.expectEqual(@as(u8, 1), s.a);
+    try std.testing.expectEqual(@as(u8, 2), s.b.c);
+    try std.testing.expectEqual(@as(u8, 3), s.b.d);
+    try std.testing.expectEqualSlices(u8, "hello", s.e);
+}
+
+test "parse array indefinite: 3, we want more than is present" {
+    var r = std.Io.Reader.fixed("\x9f\x01\x02\x03\xff");
+    var di = try Self.new(&r);
+
+    // We expect five items, but the indefinite array contains three.
+    try std.testing.expectError(DecodeError.EndOfStream, di.decode([5]u8, .{}));
+}
+
+test "parse array from string: length must match" {
+    var r1 = std.Io.Reader.fixed("\x43\x01\x02\x03");
+    var di1 = try Self.new(&r1);
+    try std.testing.expectEqualSlices(u8, "\x01\x02\x03", &(try di1.decode([3]u8, .{})));
+
+    var r2 = std.Io.Reader.fixed("\x63abc");
+    var di2 = try Self.new(&r2);
+    try std.testing.expectEqualSlices(u8, "abc", &(try di2.decode([3]u8, .{})));
+
+    //try std.testing.expectError(ParseError.Overflow, parse([3]u8, try DataItem.new("\x44\x01\x02\x03\x04"), .{}));
+    //try std.testing.expectError(ParseError.Malformed, parse([3]u8, try DataItem.new("\x42\x01\x02"), .{}));
+    //try std.testing.expectError(ParseError.Malformed, parse([3]u8, try DataItem.new("\x40"), .{}));
+    //try std.testing.expectError(ParseError.Malformed, parse([3]u8, try DataItem.new("\x62ab"), .{}));
+}
+
 test "recursion #1" {}
+
+// ################################################################
+// ###########         Encoding Tests             #################
+// ################################################################
+
+fn testStringify(e: []const u8, v: anytype, o: EncodeOptions) !void {
+    const allocator = std.testing.allocator;
+    var str = std.Io.Writer.Allocating.init(allocator);
+    defer str.deinit();
+
+    try encode(&str.writer, v, o);
+    try std.testing.expectEqualSlices(u8, e, str.written());
+}
+
+test "encode float" {
+    try testStringify("\xf9\x00\x00", @as(f16, @floatCast(0.0)), .{});
+    try testStringify("\xf9\x80\x00", @as(f16, @floatCast(-0.0)), .{});
+    try testStringify("\xf9\x3c\x00", @as(f16, @floatCast(1.0)), .{});
+    try testStringify("\xf9\x3e\x00", @as(f16, @floatCast(1.5)), .{});
+    try testStringify("\xf9\x7b\xff", @as(f16, @floatCast(65504.0)), .{});
+    try testStringify("\xfa\x47\xc3\x50\x00", @as(f32, @floatCast(100000.0)), .{});
+    try testStringify("\xfa\x7f\x7f\xff\xff", @as(f32, @floatCast(3.4028234663852886e+38)), .{});
+    try testStringify("\xfb\x7e\x37\xe4\x3c\x88\x00\x75\x9c", @as(f64, @floatCast(1.0e+300)), .{});
+    try testStringify("\xfb\xc0\x10\x66\x66\x66\x66\x66\x66", @as(f64, @floatCast(-4.1)), .{});
+
+    try testStringify("\xfa\x47\xc3\x50\x00", 100000.0, .{});
+}
+
+test "encode int" {
+    try testStringify("\x00", 0, .{});
+    try testStringify("\x01", 1, .{});
+    try testStringify("\x0a", 10, .{});
+    try testStringify("\x17", 23, .{});
+    try testStringify("\x18\x18", 24, .{});
+    try testStringify("\x18\x19", 25, .{});
+    try testStringify("\x18\x64", 100, .{});
+    try testStringify("\x18\x7b", 123, .{});
+    try testStringify("\x19\x03\xe8", 1000, .{});
+    try testStringify("\x19\x04\xd2", 1234, .{});
+    try testStringify("\x1a\x00\x01\xe2\x40", 123456, .{});
+    try testStringify("\x1a\x00\x0f\x42\x40", 1000000, .{});
+    try testStringify("\x1b\x00\x00\x00\x02\xdf\xdc\x1c\x34", 12345678900, .{});
+    try testStringify("\x1b\x00\x00\x00\xe8\xd4\xa5\x10\x00", 1000000000000, .{});
+    try testStringify("\x1b\xff\xff\xff\xff\xff\xff\xff\xff", 18446744073709551615, .{});
+
+    try testStringify("\x20", -1, .{});
+    try testStringify("\x22", -3, .{});
+    try testStringify("\x38\x63", -100, .{});
+    try testStringify("\x39\x01\xf3", -500, .{});
+    try testStringify("\x39\x03\xe7", -1000, .{});
+    try testStringify("\x3a\x00\x0f\x3d\xdc", -998877, .{});
+    try testStringify("\x3b\x00\x00\x00\x02\x53\x60\xa2\xce", -9988776655, .{});
+    try testStringify("\x3b\xff\xff\xff\xff\xff\xff\xff\xff", -18446744073709551616, .{});
+}
+
+test "encode optional value" {
+    const e1: ?u32 = 1234;
+    const e2: ?u32 = null;
+
+    try testStringify("\xf6", e2, .{});
+    try testStringify("\x19\x04\xd2", e1, .{});
+}
+
+test "encode to fixed writer" {
+    var array: [3]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&array);
+    const value: i16 = -32700;
+    const expected: []const u8 = &.{ 0x39, 0x7f, 0xbb };
+    try encode(&writer, value, .{});
+    try std.testing.expectEqualSlices(u8, expected, writer.buffered());
+}
+
+test "encode simple value" {
+    try testStringify("\xf4", false, .{});
+    try testStringify("\xf5", true, .{});
+    try testStringify("\xf6", null, .{});
+}
+
+test "encode pointer" {
+    const x1: u32 = 1234;
+    const x1p: *const u32 = &x1;
+    const x2: i65 = -18446744073709551616; // this is -2^64
+    const x2p: *const i65 = &x2;
+
+    try testStringify("\x19\x04\xd2", x1p, .{});
+    try testStringify("\x3b\xff\xff\xff\xff\xff\xff\xff\xff", x2p, .{});
+}
+
+test "encode slice" {
+    const s1: []const u8 = "a";
+    try testStringify("\x61\x61", s1, .{ .slice_serialization_type = .TextString });
+
+    const s2: []const u8 = "IETF";
+    try testStringify("\x64\x49\x45\x54\x46", s2, .{ .slice_serialization_type = .TextString });
+
+    const s3: []const u8 = "\"\\";
+    try testStringify("\x62\x22\x5c", s3, .{ .slice_serialization_type = .TextString });
+
+    const b1: []const u8 = &.{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 };
+    try testStringify(&.{ 0x58, 0x19, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19 }, b1, .{ .slice_serialization_type = .ByteString });
+
+    const b2: []const u8 = "\x10\x11\x12\x13\x14";
+    try testStringify("\x45\x10\x11\x12\x13\x14", b2, .{ .slice_serialization_type = .ByteString });
+}
+
+test "encode struct: 1" {
+    const Info = struct {
+        versions: []const []const u8,
+
+        pub fn cborSettings() Settings {
+            return .{
+                .field_settings = &.{
+                    .{
+                        .name = "versions",
+                        .value_options = .{ .slice_serialization_type = .TextString },
+                    },
+                },
+            };
+        }
+    };
+
+    const i = Info{
+        .versions = &.{"FIDO_2_0"},
+    };
+
+    try testStringify("\xa1\x68\x76\x65\x72\x73\x69\x6f\x6e\x73\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30", i, .{});
+}
+
+test "encode struct: 2" {
+    const Info = struct {
+        @"1": []const []const u8,
+
+        pub fn cborSettings() Settings {
+            return .{
+                .field_settings = &.{
+                    .{
+                        .name = "1",
+                        .field_options = .{ .serialization_type = .Integer },
+                        .value_options = .{ .slice_serialization_type = .TextString },
+                    },
+                },
+            };
+        }
+    };
+
+    const i = Info{
+        .@"1" = &.{"FIDO_2_0"},
+    };
+
+    try testStringify("\xa1\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30", i, .{});
+}
+
+test "encode struct: 3" {
+    const Info = struct {
+        @"1": []const []const u8,
+        @"2": []const []const u8,
+        @"3": []const u8,
+
+        pub fn cborSettings() Settings {
+            return .{ .field_settings = &.{
+                .{ .name = "1", .field_options = .{ .serialization_type = .Integer }, .value_options = .{ .slice_serialization_type = .TextString } },
+                .{ .name = "2", .field_options = .{ .serialization_type = .Integer }, .value_options = .{ .slice_serialization_type = .TextString } },
+                .{ .name = "3", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+            } };
+        }
+    };
+
+    const i = Info{
+        .@"1" = &.{"FIDO_2_0"},
+        .@"2" = &.{},
+        .@"3" = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f",
+    };
+
+    try testStringify("\xa3\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f", i, .{});
+}
+
+test "encode struct: 4" {
+    const Info = struct {
+        @"1": []const []const u8,
+        @"2": []const []const u8,
+        @"3": []const u8,
+        @"4": struct {
+            plat: bool,
+            rk: bool,
+            clientPin: ?bool,
+            up: bool,
+            uv: ?bool,
+        },
+        @"5": ?u64,
+        @"6": ?[]const u64,
+
+        pub fn cborSettings() Settings {
+            return .{
+                .field_settings = &.{
+                    .{ .name = "1", .field_options = .{ .serialization_type = .Integer }, .value_options = .{ .slice_serialization_type = .TextString } },
+                    .{ .name = "2", .field_options = .{ .serialization_type = .Integer }, .value_options = .{ .slice_serialization_type = .TextString } },
+                    .{ .name = "3", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+                    .{ .name = "4", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+                    .{ .name = "5", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+                    .{ .name = "6", .field_options = .{ .serialization_type = .Integer }, .value_options = .{} },
+                },
+            };
+        }
+    };
+
+    const i = Info{
+        .@"1" = &.{"FIDO_2_0"},
+        .@"2" = &.{},
+        .@"3" = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f",
+        .@"4" = .{
+            .plat = true,
+            .rk = true,
+            .clientPin = null,
+            .up = true,
+            .uv = false,
+        },
+        .@"5" = null,
+        .@"6" = null,
+    };
+
+    try testStringify("\xa4\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x04\xa4\x64\x70\x6c\x61\x74\xf5\x62\x72\x6b\xf5\x62\x75\x70\xf5\x62\x75\x76\xf4", i, .{});
+}
+
+test "encode struct: 5" {
+    const Level = enum(u8) {
+        high = 7,
+        low = 11,
+    };
+
+    const Info = struct {
+        x: Level,
+        y: Level,
+
+        pub fn cborSettings() Settings {
+            return .{
+                .field_settings = &.{
+                    .{ .name = "y", .value_options = .{ .enum_serialization_type = .Integer } },
+                },
+            };
+        }
+    };
+
+    const x = Info{
+        .x = Level.high,
+        .y = Level.low,
+    };
+
+    try testStringify("\xA2\x61\x78\x64\x68\x69\x67\x68\x61\x79\x0B", x, .{});
+}
+
+test "encode enum: 1" {
+    const Level = enum(u8) {
+        high = 7,
+        low = 11,
+    };
+
+    const high = Level.high;
+    const low = Level.low;
+
+    try testStringify("\x07", high, .{ .enum_serialization_type = .Integer });
+    try testStringify("\x0b", low, .{ .enum_serialization_type = .Integer });
+
+    try testStringify("\x64\x68\x69\x67\x68", Level.high, .{});
+    try testStringify("\x63\x6C\x6F\x77", Level.low, .{});
+}
+
+test "encode enum: 2" {
+    const Level = enum(i8) {
+        high = -7,
+        low = -11,
+    };
+
+    try testStringify("\x26", Level.high, .{ .enum_serialization_type = .Integer });
+    try testStringify("\x2a", Level.low, .{ .enum_serialization_type = .Integer });
+}
+
+test "encode array: definite and indefinite" {
+    const array1 = [_]u16{ 500, 2 };
+    try testStringify("\x82\x19\x01\xf4\x02", array1, .{ .array_serialization_type = .ArrayDefinite });
+    try testStringify("\x9f\x19\x01\xf4\x02\xff", array1, .{ .array_serialization_type = .ArrayIndefinite });
+
+    const array2 = [_]u16{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
+    try testStringify("\x9f\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19\x18\x1a\x18\x1b\x18\x1c\x18\x1d\x18\x1e\x18\x1f\xff", array2, .{ .array_serialization_type = .ArrayIndefinite });
+
+    const slice1: []const u32 = &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25 };
+    try testStringify("\x9f\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19\xff", slice1, .{ .array_serialization_type = .ArrayIndefinite });
+
+    const slice2: []const u32 = &.{};
+    try testStringify("\x9f\xff", slice2, .{ .array_serialization_type = .ArrayIndefinite });
+
+    const nested = [2][2]u16{ .{ 500, 2 }, .{ 500, 7 } };
+    try testStringify("\x82\x82\x19\x01\xf4\x02\x82\x19\x01\xf4\x07", nested, .{ .array_serialization_type = .ArrayDefinite });
+    try testStringify("\x9f\x9f\x19\x01\xf4\x02\xff\x9f\x19\x01\xf4\x07\xff\xff", nested, .{ .array_serialization_type = .ArrayIndefinite });
+}
+
+test "serialize EcdsaP256Key" {
+    const EcdsaP256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
+
+    const EcdsaP256Key = struct {
+        /// kty:
+        kty: u8 = 2,
+        /// alg:
+        alg: i8 = -7,
+        /// crv:
+        crv: u8 = 1,
+        /// x-coordinate
+        x: [32]u8,
+        /// y-coordinate
+        y: [32]u8,
+
+        pub fn cborSettings() Settings {
+            return .{
+                .field_settings = &.{
+                    .{ .name = "kty", .field_options = .{ .alias = "1", .serialization_type = .Integer } },
+                    .{ .name = "alg", .field_options = .{ .alias = "3", .serialization_type = .Integer } },
+                    .{ .name = "crv", .field_options = .{ .alias = "-1", .serialization_type = .Integer } },
+                    .{ .name = "x", .field_options = .{ .alias = "-2", .serialization_type = .Integer } },
+                    .{ .name = "y", .field_options = .{ .alias = "-3", .serialization_type = .Integer } },
+                },
+            };
+        }
+
+        pub fn new(k: EcdsaP256.PublicKey) @This() {
+            const xy = k.toUncompressedSec1();
+            return .{
+                .x = xy[1..33].*,
+                .y = xy[33..65].*,
+            };
+        }
+    };
+
+    const k = EcdsaP256Key.new(try EcdsaP256.PublicKey.fromSec1("\x04\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52"));
+
+    const allocator = std.testing.allocator;
+    var str = std.Io.Writer.Allocating.init(allocator);
+    defer str.deinit();
+
+    try encode(&str.writer, k, .{});
+
+    try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.written());
+}
+
+test "serialize tagged union: 1" {
+    const AttStmtTag = enum { none };
+    const AttStmt = union(AttStmtTag) {
+        none: struct {},
+    };
+
+    const a = AttStmt{ .none = .{} };
+
+    try testStringify("\xa0", a, .{});
+}
+
+test "overload struct 1" {
+    const Foo = struct {
+        x: u32 = 1234,
+        y: struct {
+            a: []const u8 = "public-key",
+            b: u64 = 0x1122334455667788,
+
+            pub fn cborSettings() Settings {
+                return .{
+                    .field_settings = &.{
+                        .{ .name = "a", .value_options = .{ .slice_serialization_type = .TextString } },
+                    },
+                };
+            }
+        },
+
+        pub fn cborEncode(self: *const @This(), out: *std.Io.Writer, options: EncodeOptions) !void {
+            _ = options;
+
+            // First encode the 'y' struct
+            const allocator = std.testing.allocator;
+            var o = std.Io.Writer.Allocating.init(allocator);
+            defer o.deinit();
+            try encode(
+                &o.writer,
+                self.y,
+                .{},
+            );
+
+            try writeMap(out, 2);
+            {
+                try writeTextString(out, "x");
+                try writeInt(out, @intCast(self.x));
+
+                try writeTextString(out, "y");
+                try writeByteString(out, o.written());
+            }
+        }
+    };
+
+    const x = Foo{ .y = .{} };
+    try testStringify("\xa2\x61\x78\x19\x04\xd2\x61\x79\x58\x19\xa2\x61\x61\x6a\x70\x75\x62\x6c\x69\x63\x2d\x6b\x65\x79\x61\x62\x1b\x11\x22\x33\x44\x55\x66\x77\x88", x, .{});
+}
+
+test "skip serializing field #1" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        a: i32,
+        b: bool,
+        c: [5]u8,
+
+        pub fn cborSettings() Settings {
+            return .{
+                .field_settings = &.{
+                    .{ .name = "b", .field_options = .{ .skip = .Skip } },
+                    .{ .name = "c", .value_options = .{ .slice_serialization_type = .TextString } },
+                },
+            };
+        }
+    };
+
+    const s = S{
+        .a = 32,
+        .b = true,
+        .c = "abcde".*,
+    };
+
+    var str = std.Io.Writer.Allocating.init(allocator);
+    defer str.deinit();
+
+    try encode(&str.writer, s, .{});
+
+    try std.testing.expectEqualSlices(u8, "\xa2\x61\x61\x18\x20\x61\x63\x65\x61\x62\x63\x64\x65", str.written());
+}
+
+test "skip serializing field #2" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        a: []u8,
+        b: std.mem.Allocator,
+
+        pub fn cborSettings() Settings {
+            return .{
+                .field_settings = &.{
+                    .{ .name = "a", .value_options = .{ .slice_serialization_type = .TextString } },
+                    .{ .name = "b", .field_options = .{ .skip = .Skip } },
+                },
+            };
+        }
+    };
+
+    const s = S{
+        .a = try allocator.alloc(u8, 5),
+        .b = allocator,
+    };
+    @memcpy(s.a, "abcde");
+    defer allocator.free(s.a);
+
+    var str = std.Io.Writer.Allocating.init(allocator);
+    defer str.deinit();
+
+    try encode(&str.writer, s, .{});
+
+    try std.testing.expectEqualSlices(u8, "\xa1\x61\x61\x65\x61\x62\x63\x64\x65", str.written());
+}
+
+test "serialize indefinite-length map {_ 'a': 1, 'b': [_ 2, 3]}" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        a: u16,
+        b: []const u16,
+    };
+
+    const s = S{
+        .a = 1,
+        .b = &.{ 2, 3 },
+    };
+
+    var arr = std.Io.Writer.Allocating.init(allocator);
+    defer arr.deinit();
+
+    try encode(
+        &arr.writer,
+        s,
+        .{
+            .allocator = allocator,
+            .map_serialization_type = .MapIndefinite,
+            .array_serialization_type = .ArrayIndefinite,
+        },
+    );
+
+    try std.testing.expectEqualSlices(u8, "\xbf\x61\x61\x01\x61\x62\x9f\x02\x03\xff\xff", arr.written());
+}
+
+test "serialize indefinite-length map {_ 'Fun': true, 'Amt': -2}" {
+    const allocator = std.testing.allocator;
+
+    const S = struct {
+        Fun: bool,
+        Amt: i16,
+    };
+
+    const s = S{
+        .Fun = true,
+        .Amt = -2,
+    };
+
+    var arr = std.Io.Writer.Allocating.init(allocator);
+    defer arr.deinit();
+
+    try encode(
+        &arr.writer,
+        s,
+        .{
+            .allocator = allocator,
+            .map_serialization_type = .MapIndefinite,
+        },
+    );
+
+    try std.testing.expectEqualSlices(u8, "\xbf\x63\x46\x75\x6e\xf5\x63\x41\x6d\x74\x21\xff", arr.written());
+}
 
 const tests = @import("tests.zig");
 
