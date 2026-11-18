@@ -2007,6 +2007,26 @@ test "decode array #4" {
     try std.testing.expectError(error.Overflow, di.decode([3]u8, .{}));
 }
 
+test "decode array #5" {
+    const e = [5]u8{ 1, 2, 3, 4, 5 };
+
+    var reader = std.Io.Reader.fixed("\x85\x01\x02\x03\x04\x05");
+    var di = try Self.new(&reader);
+
+    // if (di.getMajorType() != .Array)
+    //     do something...
+
+    var x: [5]u8 = @splat(0);
+
+    var i: usize = 0;
+    while (i < 5) : (i += 1) {
+        const child = try di.next();
+        x[i] = @intCast(try child.getUInt());
+    }
+
+    try std.testing.expectEqualSlices(u8, e[0..], x[0..]);
+}
+
 test "decode array from string #1" {
     var reader = std.Io.Reader.fixed("\x43\x01\x02\x03");
     var di = try Self.new(&reader);

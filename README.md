@@ -139,6 +139,29 @@ var di = try cbor.DataItem.new(&reader);
 const i = try di.getUInt();
 ```
 
+To parse an array, you can use something like the following:
+
+```zig
+var reader = std.Io.Reader.fixed("\x85\x01\x02\x03\x04\x05");
+var di = try Self.new(&reader);
+
+// if (di.getMajorType() != .Array)
+//     do something...
+
+var x: [5]u8 = @splat(0);
+
+var i: usize = 0;
+while (i < 5) : (i += 1) {
+    const child = try di.next();
+    x[i] = @intCast(try child.getUInt());
+}
+```
+
+The approach of using `next()` in a loop also works for parsing maps, with the only
+difference that you have to call `next()` twice during each iteration. Once for the
+key and once for the value. If you're working with indefinite length arrays and maps,
+you can check for a break code using `isBreakCode()`.
+
 There is also a convenience method `decode()` which makes is quite easy
 to deserialize data items into instances of Zig data types. We're going
 to look at `decode()` in the following subsection.
@@ -146,7 +169,7 @@ to look at `decode()` in the following subsection.
 #### `decode()`
 
 The method `decode()` is called on a instance of `DataItem`. It expects a
-Zig data type as an argument and tries to deserialize the data given data item
+Zig data type as an argument and tries to deserialize the given CBOR data item
 into a instance of the specified type.
 
 For example, to decode the number -998877 (CBOR: `\x3a\x00\x0f\x3d\xdc`) into a `i65`, you can use the following code snippet:
@@ -274,9 +297,31 @@ Except for cases like this, you usually don't have to define `cborSettings()`
 for decoding CBOR data using `decode()`.
 
 If you're working with a `struct` and need full control over the deserialization but
-also want to use the `decode()` method, you can overload `decodes()` behavior 
+also want to use the `decode()` method, you can overload `decode()`s behavior 
 by defining a function `pub fn cborDecode(self: DataItem, options: DecodeOptions) T`, replacing `T` with the name of your `struct`. Please be aware that you're not allowed to
 call `decode()` from within `cborDecode()`, otherwise you're going to create a
 infinite loop.
+
+### Serialization
+
+Given a instance `w` of `std.Io.Writer`, you can start serializing Zig objects into 
+CBOR data using the following functions: 
+
+- `writeInt()`: serialize a `i65` integer into CBOR. This function will automatically use the smallest representation possible for the numeric value, serializing it either as major type 0 (unsigned integer) or major type 1 (signed integer).
+- `writeByteString()`: serialize a `u8` slice as byte string (major type 2).
+- `writeTextString()`: serialize a `u8` slice as text string (major type 3).
+- `writeTag()`: serialize a [CBOR tag](https://www.rfc-editor.org/rfc/rfc8949.html#name-tagging-of-items). Calling this method has to be followed by another write call, serializing a additional data item enclosed by the tag.
+- `writeSimple()`: serialize a simple value.
+- `writeTrue()`: serialize `true`.
+- `writeFalse()`: serialize `false`.
+- `writeFloat()`: serialize a `f16`, `f32` or `f64`.
+- `writeArray()`: start creating a CBOR array. After calling `writeArray` you have to serialize exactly `len` data items, where `len` is the length of the array you passed to `writeArray`.
+- `writeArrayIndef()`: start creating a indefinite array. This has to be closed with a call to `writeIndefBreak()`.
+- `writeMap()`: start creating a CBOR map. After calling `writeMap` you have to serialize exactly `2 * len` data items, where `len` is the length of the map you passed to `writeMap`.
+- `writeMapIndef()`: start creating a indefinite map. This has to be closed with a call to `writeIndefBreak()`.
+
+Alternatively, you can use the `encode()` function.
+
+#### `encode()`
 
 
