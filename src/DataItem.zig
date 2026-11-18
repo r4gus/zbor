@@ -93,7 +93,7 @@ pub fn new(reader: *std.Io.Reader) !@This() {
     };
 }
 
-fn next(self: @This()) !@This() {
+pub fn next(self: @This()) !@This() {
     return try @This().new(self.reader);
 }
 
@@ -528,7 +528,7 @@ fn decodeUnion(
 
     const has_parse = comptime std.meta.hasFn(T, "cborDecode");
     if (has_parse) {
-        return T.cborDecode(self);
+        return T.cborDecode(self, options);
     }
 
     if (union_info.tag_type) |_| {
@@ -712,7 +712,7 @@ fn decodeStruct(
     // Custom parse function overrides default behaviour
     const has_parse = comptime std.meta.hasFn(T, "cborDecode");
     if (has_parse) {
-        return T.cborDecode(self);
+        return T.cborDecode(self, options);
     }
 
     // The field settings can influence how a map is translated into a struct, e.g.,
@@ -864,7 +864,7 @@ fn s2n(s: []const u8) ?i65 {
     return if (start == 1) -x else x;
 }
 
-fn skip(self: @This(), writer: ?*std.Io.Writer) !void {
+pub fn skip(self: @This(), writer: ?*std.Io.Writer) !void {
     if (writer) |w| try w.writeAll(self.head[0..self.getHeaderLength()]);
 
     switch (self.head[0]) {
