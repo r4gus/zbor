@@ -528,7 +528,7 @@ fn decodeUnion(
 
     const has_parse = comptime std.meta.hasFn(T, "cborDecode");
     if (has_parse) {
-        return T.cborDecode(self, options);
+        return try T.cborDecode(self, options);
     }
 
     if (union_info.tag_type) |_| {
@@ -712,7 +712,7 @@ fn decodeStruct(
     // Custom parse function overrides default behaviour
     const has_parse = comptime std.meta.hasFn(T, "cborDecode");
     if (has_parse) {
-        return T.cborDecode(self, options);
+        return try T.cborDecode(self, options);
     }
 
     // The field settings can influence how a map is translated into a struct, e.g.,
@@ -1067,7 +1067,7 @@ pub fn encode(
             // Custom encode function overrides default behaviour
             const has_encode = comptime std.meta.hasFn(T, "cborEncode");
             if (has_encode) {
-                return value.cborEncode(out, options);
+                return try value.cborEncode(out, options);
             }
 
             if (options.map_serialization_type == .MapDefinite) {
@@ -1252,7 +1252,7 @@ pub fn encode(
             // Custom encode function overrides default behaviour
             const has_encode = comptime std.meta.hasFn(T, "cborEncode");
             if (has_encode) {
-                return value.cborEncode(out, options);
+                return try value.cborEncode(out, options);
             }
 
             const info = @typeInfo(T).@"union";
