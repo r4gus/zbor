@@ -2928,7 +2928,6 @@ test "serialize indefinite-length map {_ 'Fun': true, 'Amt': -2}" {
         &arr.writer,
         s,
         .{
-            .allocator = allocator,
             .map_serialization_type = .MapIndefinite,
         },
     );

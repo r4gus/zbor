@@ -302,6 +302,8 @@ by defining a function `pub fn cborDecode(self: DataItem, options: DecodeOptions
 call `decode()` from within `cborDecode()`, otherwise you're going to create a
 infinite loop.
 
+Defining `cborDecode()` is for example relevant, if some CBOR map keys are overloaded and you need to decide, e.g., based on other already seen key-value pairs, how to decode the upcoming key-pairs.
+
 ### Serialization
 
 Given a instance `w` of `std.Io.Writer`, you can start serializing Zig objects into 
@@ -324,4 +326,34 @@ Alternatively, you can use the `encode()` function.
 
 #### `encode()`
 
+Encoding a Zig object is straight forward.
+
+```zig
+const S = struct {
+    Fun: bool,
+    Amt: i16,
+};
+
+const s = S{
+    .Fun = true,
+    .Amt = -2,
+};
+
+var arr = std.Io.Writer.Allocating.init(allocator);
+defer arr.deinit();
+
+try encode(
+    &arr.writer,
+    s,
+    .{
+        .map_serialization_type = .MapIndefinite,
+    },
+);
+```
+
+Encoding the object `s` will result in the following raw CBOR data: `\xbf\x63\x46\x75\x6e\xf5\x63\x41\x6d\x74\x21\xff`.
+
+As with `decode()` you can also influence the behavior of `encode()` by defining the `cborSettings()` function.
+
+You can also handle the encoding yourself, by defining `cborEncode()` (see one of the examples, e.g., in `src/cose.zig`). If you define `cborEncode()` for a struct or enum, `encode()` will hand of the encoding to the defined method.
 
