@@ -23,13 +23,13 @@ pub fn main(init: std.process.Init) !void {
     defer di.deinit();
     const writer = &di.writer;
 
-    try zbor.builder.writeMap(writer, 3);
-    try zbor.builder.writeTextString(writer, "id");
-    try zbor.builder.writeByteString(writer, user.id);
-    try zbor.builder.writeTextString(writer, "name");
-    try zbor.builder.writeTextString(writer, user.name);
-    try zbor.builder.writeTextString(writer, "displayName");
-    try zbor.builder.writeTextString(writer, user.displayName);
+    try zbor.DataItem.writeMap(writer, 3);
+    try zbor.DataItem.writeTextString(writer, "id");
+    try zbor.DataItem.writeByteString(writer, user.id);
+    try zbor.DataItem.writeTextString(writer, "name");
+    try zbor.DataItem.writeTextString(writer, user.name);
+    try zbor.DataItem.writeTextString(writer, "displayName");
+    try zbor.DataItem.writeTextString(writer, user.displayName);
 
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buffer);

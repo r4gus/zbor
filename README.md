@@ -1,8 +1,5 @@
 # zbor - Zig CBOR
 
-| <a href="https://liberapay.com/r4gus/donate"><img alt="Donate using Liberapay" src="https://liberapay.com/assets/widgets/donate.svg"></a> | [![](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/r4gus) | [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I72PG94) |
-|:---:|:---:|:---:|
-
 The Concise Binary Object Representation (CBOR) is a data format whose design 
 goals include the possibility of extremely small code size, fairly small 
 message size, and extensibility without the need for version negotiation
@@ -11,12 +8,6 @@ in different protocols like the Client to Authenticator Protocol
 [CTAP2](https://fidoalliance.org/specs/fido-v2.0-ps-20190130/fido-client-to-authenticator-protocol-v2.0-ps-20190130.html#ctap2-canonical-cbor-encoding-form) 
 which is a essential part of FIDO2 authenticators/ Passkeys.
 
-I have utilized this library in several projects throughout the previous year, primarily in conjunction with my [FIDO2 library](https://github.com/r4gus/fido2). I'd consider it stable. 
-With the introduction of [Zig version `0.11.0`](https://ziglang.org/download/), this library will remain aligned with the most recent stable release. If you have any problems or want
-to share some ideas feel free to open an issue or write me a mail, but please be kind.
-
-## Getting started
-
 Versions
 | Zig version | zbor version | fetch command |
 |:-----------:|:------------:|:-------------:|
@@ -24,17 +15,28 @@ Versions
 | 0.14.x      | 0.16.x, 0.17.x, 0.18.x | |
 | 0.15.x      | 0.19.0, 0.20.0 | |
 | 0.16.x      | 0.21.x | `zig fetch --save https://codeberg.org/r4gus/zbor/archive/0.21.0.tar.gz` |
-| 0.17.0      | 0.22.0, 0.23.0 | `zig fetch --save https://codeberg.org/r4gus/zbor/archive/0.23.0.tar.gz` |
+| 0.17.x      | 0.22.0, 0.23.0 | `zig fetch --save https://codeberg.org/r4gus/zbor/archive/0.23.0.tar.gz` |
+| 0.17.x      | 1.0.0-alpha | |
 
-First add this library as a dependency to your `build.zig.zon` file:
+## Getting started
 
+To get started, first add this library as a dependency to your `build.zig.zon` file.
+You can do this using the `zig fetch` command.
+
+To fetch a specific release, use the following command. You can replace the
+version (e.g., `0.23.0`) with the version you'd like to fetch. You can find 
+a list of all available versions on the releases page.
 ```bash
-# Replace <VERSION TAG> with the version you want to use
-zig fetch --save https://codeberg.org/r4gus/zbor/archive/<VERSION TAG>.tar.gz
-# e.g. zig fetch --save https://codeberg.org/r4gus/zbor/archive/0.23.0.tar.gz
+zig fetch --save https://codeberg.org/r4gus/zbor/archive/0.23.0.tar.gz
 ```
 
-then within you `build.zig` add the following code:
+Alternatively, you can also just fetch the current master using the following command.
+
+```bash
+zig fetch --save git+https://codeberg.org/r4gus/zbor
+```
+
+After you have fetched `zbor` as a dependency, add the following to your `build.zig`.
 
 ```zig
 // First fetch the dependency...
@@ -58,112 +60,198 @@ exe.root_module.addImport("zbor", zbor_module);
 
 ## Usage
 
-This library lets you inspect and parse CBOR data without having to allocate
-additional memory.
+This package allows you to de-/serialize CBOR data items. The whole API is centered around Zigs `std.Io.Reader` and `std.Io.Writer`.
 
-### Inspect CBOR data
+### Deserialization
 
-To inspect CBOR data you must first create a new `DataItem`.
+Given a instance `r` of `std.Io.Reader`, you can start deserializing raw CBOR 
+data by first calling `zbor.DataItem.new()` passing `r` as an argument.
 
 ```zig
 const cbor = @import("zbor");
 
-const di = DataItem.new("\x1b\xff\xff\xff\xff\xff\xff\xff\xff") catch {
-    // handle the case that the given data is malformed
-};
+// ...
+// assuming `r` of type `std.Io.Reader`
+
+var di = try cbor.DataItem.new(&r);
 ```
 
-`DataItem.new()` will check if the given data is well-formed before returning a `DataItem`. The data is well formed if it's syntactically correct. 
+This will return a new instance of type `DataItem`. By calling `DataItem.new()`, the
+function will initially only read the head of the data item (up to 9 bytes) from the 
+`Reader`. If not enough bytes are available, the function will return 
+`error.EndOfStream`.
 
-You can also read from a `std.Io.Reader` using the `DataItem.readAlloc` function. The function will read a CBOR data item from a `Reader` and output a `DataItem` object. If you use the `readAlloc` method, don't forget to free the allocated memory using the `deinit()´ method!
+> All methods you call on a instance of `DataItem` will return `error.EndOfStream`
+> if not enough data is available.
 
-To check the type of the given `DataItem` use the `getType()` function.
+After you have created a new instance of `DataItem` by calling `new()`, you can
+invoke a set of methods to inspect the data item. Some of them will advance
+the reader if necessary, meaning read more data.
+
+#### Deserialization Primitives
+
+Overall, the following primitives are available to decode CBOR data items.
+
+- `getMajorType()`: get the `DataItem.MajorType` (unsigned int, int, byte string, text string, array, map, tag, float/ simple value).
+- `getHeaderLength()`: get the length of the header in bytes.
+- `getType()`: get more detailed info (`DataItem.Type`) about the given data item. Types are:
+    - `Int`
+    - `ByteString`
+    - `TextString`
+    - `Array`
+    - `ArrayIndef`
+    - `Map`
+    - `MapIndef`
+    - `False`
+    - `True`
+    - `Null`
+    - `Undefined`
+    - `Simple`
+    - `Tagged`
+    - `Float`
+    - `Break`
+- `getAdditionalInformation()`: get the lower 5 bytes of the first byte of the head.
+- `getArgumentValue()`: get the numeric value (`u64`) that follows the initial byte of the head.
+- `getUInt()`: decode the given data item as `u64` (major type 0)
+- `getInt()`: decode the given data item as `i65` (major type 1)
+- `isF16`, `isF32`, `isF64`: check if the given data item is a IEEE 754 half-, single-, or double-precision float.
+- `getF16()`, `getF32()`, `getF64()`: decode the given data item as half-, single-, or double-precision float.
+- `isFloat()`: returns `true` if the given data item is a half-, single-, or double-precision float, `false` otherwise.
+- `getFloat()`: decode the given data item as float, always returning a `f64`.
+- `getStringSlice()`: decode a CBOR text or byte string into a `u8` slice. Use `getLength()` to obtain the length of the text or byte string.
+- `getStringSliceStrict()`: decode a CBOR text or byte string into a `u8` slice. This method enforces that the buffer is completely filled. Returns `error.EndOfStream` if the actual length of the CBOR string is less than the size of the buffer.
+- `getStringAlloc()`: decode a CBOR text or byte string into a `u8` slice. The caller owns the memory allocated for the returned slice.
+- `isIndef()`: check if the given data item is indefinite.
+- `isBreakCode()`: check if the given data item is a break marker for a indefinite data item.
+- `next()`: read a new data item from the `Reader`
+- `toOwnedSlice()`: write the current data item into a slice. The caller owns the slice returned by this method.
+
+For example, to decode the number 1000 (CBOR: `\x19\x03\xe8`) into a `u64`, you
+can use the following code snippet:
 
 ```zig
-std.debug.assert(di.getType() == .Int);
+const std = @import("std");
+const cbor = @import("zbor");
+
+var reader = std.Io.Reader.fixed("\x19\x03\xe8");
+var di = try cbor.DataItem.new(&reader);
+
+const i = try di.getUInt();
 ```
 
-Possible types include `Int` (major type 0 and 1) `ByteString` (major type 2), `TextString` (major type 3), `Array` (major type 4), `Map` (major type 5), `Tagged` (major type 6) and `Float` (major type 7).
-
-Based on the given type you can the access the underlying value.
+To parse an array, you can use something like the following:
 
 ```zig
-std.debug.assert(di.int().? == 18446744073709551615);
-```
+var reader = std.Io.Reader.fixed("\x85\x01\x02\x03\x04\x05");
+var di = try Self.new(&reader);
 
-All getter functions return either a value or `null`. You can use a pattern like `if (di.int()) |v| v else return error.Oops;` to access the value in a safe way. If you've used `DataItem.new()` and know the type of the data item, you should be safe to just do `di.int().?`.
+// if (di.getMajorType() != .Array)
+//     do something...
 
-The following getter functions are supported:
-* `int` - returns `?i65`
-* `string` - returns `?[]const u8`
-* `array` - returns `?ArrayIterator`
-* `map` - returns `?MapIterator`
-* `simple` - returns `?u8`
-* `float` - returns `?f64`
-* `tagged` - returns `?Tag`
-* `boolean` - returns `?bool`
+var x: [5]u8 = @splat(0);
 
-#### Iterators
-
-The functions `array` and `map` will return an iterator. Every time you
-call `next()` you will either get a `DataItem`/ `Pair` or `null`.
-
-```zig
-const di = DataItem.new("\x98\x19\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x18\x18\x19");
-
-var iter = di.array().?;
-while (iter.next()) |value| {
-  _ = value;
-  // doe something
+var i: usize = 0;
+while (i < 5) : (i += 1) {
+    const child = try di.next();
+    x[i] = @intCast(try child.getUInt());
 }
 ```
 
-### Encoding and decoding
+The approach of using `next()` in a loop also works for parsing maps, with the only
+difference that you have to call `next()` twice during each iteration. Once for the
+key and once for the value. If you're working with indefinite length arrays and maps,
+you can check for a break code using `isBreakCode()`.
 
-#### Serialization
+There is also a convenience method `decode()` which makes is quite easy
+to deserialize data items into instances of Zig data types. We're going
+to look at `decode()` in the following subsection.
 
-You can serialize Zig objects into CBOR using the `stringify()` function.
+#### `decode()`
+
+The method `decode()` is called on a instance of `DataItem`. It expects a
+Zig data type as an argument and tries to deserialize the given CBOR data item
+into a instance of the specified type.
+
+For example, to decode the number -998877 (CBOR: `\x3a\x00\x0f\x3d\xdc`) into a `i65`, you can use the following code snippet:
 
 ```zig
-const allocator = std.testing.allocator;
-var str = std.Io.Writer.Allocating.init(allocator);
-defer str.deinit();
+const std = @import("std");
+const cbor = @import("zbor");
 
-const Info = struct {
-    versions: []const []const u8,
-};
+var reader = std.Io.Reader.fixed("\x3a\x00\x0f\x3d\xdc");
+var di = try cbor.DataItem.new(&reader);
 
-const i = Info{
-    .versions = &.{"FIDO_2_0"},
-};
-
-try stringify(i, .{}, &str.writer);
+const i = try di.decode(i65, .{})
 ```
 
-> Note: Compile time floats are always encoded as single precision floats (f32). Please use `@floatCast`
-> before passing a float to `stringify()`.
+As already said, the first argument to `decode()` is the type you want to decode
+the data item to, which is a `i65` in the example given above. The second argument
+are options of type `DecodeOptions`.
 
-The `stringify()` function is convenient but also adds extra overhead. If you want full control
-over the serialization process you can use the following functions defined in `zbor.build`: `writeInt`,
-`writeByteString`, `writeTextString`, `writeTag`, `writeSimple`, `writeArray`, `writeMap`. For more
-details check out the [manual serialization example](examples/manual_serialization.zig) and the
-corresponding [source code](src/builder.zig).
+Via the options argument, you can pass a `std.mem.Allocator` to `decode()` and also 
+configure the maximum recursion depth (128 by default). The allocator option is 
+for example relevant if you want to decode a data item into a slice, as `decode()`
+needs a way to dynamically allocate memory if necessary.
 
-##### Stringify Options
+The `decode()` method comes in handy, if you need to deserialize more complex
+types but don't want to write out the parsing logic yourself (we get to how to
+configure `decode()` and also overwrite its behavior in a bit).
 
-You can pass options to the `stringify` function to influence its behavior. Without passing any
-options, `stringify` will behave as follows:
-
-* Enums will be serialized to their textual representation
-* `u8` slices will be serialized to byte strings
-* For structs and unions:
-    * `null` fields are skipped by default
-    * fields of type `std.mem.Allocator` are always skipped.
-    * the names of fields are serialized to text strings
-
-You can modify that behavior by changing the default options, e.g.:
+A little bit more complex example would be the following:
 
 ```zig
+const std = @import("std");
+const cbor = @import("zbor");
+const allocator = std.testing.allocator;
+
+const Info = struct {
+    @"1": []const []const u8,
+    @"2": []const []const u8,
+    @"3": []const u8,
+    @"4": struct {
+        plat: bool,
+        rk: bool,
+        clientPin: ?bool,
+        up: bool,
+        uv: ?bool,
+    },
+    @"5": ?u64,
+    @"6": ?[]const u64,
+};
+
+var reader = std.Io.Reader.fixed("\xa4\x01\x81\x68\x46\x49\x44\x4f\x5f\x32\x5f\x30\x02\x80\x03\x50\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x04\xa4\x64\x70\x6c\x61\x74\xf5\x62\x72\x6b\xf5\x62\x75\x70\xf5\x62\x75\x76\xf4");
+var di = try cbor.DataItem.new(&reader);
+
+const i = try di.decode(Info, .{ .allocator = allocator });
+// don't forget to free the allocated memory afterwards!
+```
+
+As you see, this time we pass an allocator to `deocde()` as `Info` contains multiple
+slices which require allocating dynamic memory for decoding.
+
+I encourage you to read through the test cases in `src/DataItem.zig` to get a better
+understanding of how to use `decode()` for more complex scenarios.
+
+##### Configuring the behavior of `decode()`
+
+Sometimes, e.g., when working with the CTAP2 standard, you need more configuration
+options regarding the correct serialization and deserialization of CBOR data. By
+default, zbor supports different paths for deserializing data when using the 
+`decode()` method. 
+
+For example, when deserializing CBOR data into a `enum` value, `decode()` 
+can automatically deserializes the data from either a numeric or string value.
+
+One specific example where `decode()` needs more information to work with is, when
+the field names of a `struct` don't match the keys of CBOR map, which has
+to be decoded into a instance of that struct. For `struct`s you can pass those 
+settings to `deocde()` by adding a function with the following signature to 
+your `struct`: `pub fn cborSettings() Settings`
+
+```zig
+const std = @import("std");
+const cbor = @import("zbor");
+
 const EcdsaP256Key = struct {
     /// kty:
     kty: u8 = 2,
@@ -176,278 +264,71 @@ const EcdsaP256Key = struct {
     /// y-coordinate
     y: [32]u8,
 
-    pub fn new(k: EcdsaP256.PublicKey) @This() {                                                                                                                                         
-        const xy = k.toUncompressedSec1();
+    pub fn cborSettings() Settings {
         return .{
-            .x = xy[1..33].*,
-            .y = xy[33..65].*,
+            .field_settings = &.{
+                .{ .name = "kty", .field_options = .{ .alias = "1", .serialization_type = .Integer } },
+                .{ .name = "alg", .field_options = .{ .alias = "3", .serialization_type = .Integer } },
+                .{ .name = "crv", .field_options = .{ .alias = "-1", .serialization_type = .Integer } },
+                .{ .name = "x", .field_options = .{ .alias = "-2", .serialization_type = .Integer } },
+                .{ .name = "y", .field_options = .{ .alias = "-3", .serialization_type = .Integer } },
+            },
         };
     }
 };
 
-//...
+var r = std.Io.Reader.fixed("\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52");
+var di = try cbor.DataItem.new(&r);
 
-try stringify(k, .{ .field_settings = &.{
-    .{ .name = "kty", .field_options = .{ .alias = "1", .serialization_type = .Integer } },
-    .{ .name = "alg", .field_options = .{ .alias = "3", .serialization_type = .Integer } },
-    .{ .name = "crv", .field_options = .{ .alias = "-1", .serialization_type = .Integer } },
-    .{ .name = "x", .field_options = .{ .alias = "-2", .serialization_type = .Integer } },
-    .{ .name = "y", .field_options = .{ .alias = "-3", .serialization_type = .Integer } },
-} }, &str.writer);
+const x = try di.decode(EcdsaP256Key, .{});
 ```
 
-Here we define a alias for every field of the struct and tell `serialize` that it should treat
-those aliases as integers instead of text strings.
+Via `Settings` you can configure the behavior when de-/serializing instances
+of `structs` from or into raw CBOR data. While this is mostly needed when
+using `encode()`, one exception is, like already mentioned, to use different
+keys (e.g., integers) instead of the default field names.
 
-__See `Options` and `FieldSettings` in `src/parse.zig` for all available options!__
+In the example given above, we assign aliases to field names and also tell 
+`decode()` to de-/serialize those aliases from/ into integers. This way we
+reduce the size of the raw CBOR data. For example, `kty` gets the alias `1`, `alg`
+the alias `3` and so on.
 
-#### Deserialization
+Except for cases like this, you usually don't have to define `cborSettings()`
+for decoding CBOR data using `decode()`.
 
-You can deserialize CBOR data into Zig objects using the `parse()` function.
+If you're working with a `struct` and need full control over the deserialization but
+also want to use the `decode()` method, you can overload `decode()`s behavior 
+by defining a function `pub fn cborDecode(self: DataItem, options: DecodeOptions) T`, replacing `T` with the name of your `struct`. Please be aware that you're not allowed to
+call `decode()` from within `cborDecode()`, otherwise you're going to create a
+infinite loop.
 
-```zig
-const e = [5]u8{ 1, 2, 3, 4, 5 };
-const di = DataItem.new("\x85\x01\x02\x03\x04\x05");
+Defining `cborDecode()` is for example relevant, if some CBOR map keys are overloaded and you need to decide, e.g., based on other already seen key-value pairs, how to decode the upcoming key-pairs.
 
-const x = try parse([5]u8, di, .{});
+### Serialization
 
-try std.testing.expectEqualSlices(u8, e[0..], x[0..]);
-```
+Given a instance `w` of `std.Io.Writer`, you can start serializing Zig objects into 
+CBOR data using the following functions: 
 
-##### Parse Options
+- `writeInt()`: serialize a `i65` integer into CBOR. This function will automatically use the smallest representation possible for the numeric value, serializing it either as major type 0 (unsigned integer) or major type 1 (signed integer).
+- `writeByteString()`: serialize a `u8` slice as byte string (major type 2).
+- `writeTextString()`: serialize a `u8` slice as text string (major type 3).
+- `writeTag()`: serialize a [CBOR tag](https://www.rfc-editor.org/rfc/rfc8949.html#name-tagging-of-items). Calling this method has to be followed by another write call, serializing a additional data item enclosed by the tag.
+- `writeSimple()`: serialize a simple value.
+- `writeTrue()`: serialize `true`.
+- `writeFalse()`: serialize `false`.
+- `writeFloat()`: serialize a `f16`, `f32` or `f64`.
+- `writeArray()`: start creating a CBOR array. After calling `writeArray` you have to serialize exactly `len` data items, where `len` is the length of the array you passed to `writeArray`.
+- `writeArrayIndef()`: start creating a indefinite array. This has to be closed with a call to `writeIndefBreak()`.
+- `writeMap()`: start creating a CBOR map. After calling `writeMap` you have to serialize exactly `2 * len` data items, where `len` is the length of the map you passed to `writeMap`.
+- `writeMapIndef()`: start creating a indefinite map. This has to be closed with a call to `writeIndefBreak()`.
 
-You can pass options to the `parse` function to influence its behaviour.
+Alternatively, you can use the `encode()` function.
 
-This includes:
+#### `encode()`
 
-* `allocator` - The allocator to be used. This is required if your data type has any pointers, slices, etc.
-* `duplicate_field_behavior` - How to handle duplicate fields (`.UseFirst`, `.Error`).
-    * `.UseFirst` - Use the first field.
-    * `.Error` - Return an error if there are multiple fields with the same name.
-* `ignore_unknown_fields` - Ignore unknown fields (default is `true`).
-* `field_settings` - Lets you specify aliases for struct fields. Examples on how to use `field_settings` can be found in the _examples_ directory and within defined tests.
-* `ignore_override` - Flag to break infinity loops. This has to be set to `true` if you override the behavior using `cborParse` or `cborStringify`.
-
-#### Builder
-
-You can also dynamically create CBOR data using the `Builder`.
-
-```zig
-const allocator = std.testing.allocator;
-
-var b = try Builder.withType(allocator, .Map);
-try b.pushTextString("a");
-try b.pushInt(1);
-try b.pushTextString("b");
-try b.enter(.Array);
-try b.pushInt(2);
-try b.pushInt(3);
-//try b.leave();            <-- you can leave out the return at the end
-const x = try b.finish();
-defer allocator.free(x);
-
-// { "a": 1, "b": [2, 3] }
-try std.testing.expectEqualSlices(u8, "\xa2\x61\x61\x01\x61\x62\x82\x02\x03", x);
-```
-
-##### Commands
-
-- The `push*` functions append a data item
-- The `enter` function takes a container type and pushes it on the builder stack
-- The `leave` function leaves the current container. The container is appended to the wrapping container
-- The `finish` function returns the CBOR data as owned slice
-
-#### Overriding stringify
-
-You can override the `stringify` function for structs and tagged unions by implementing `cborStringify`.
+Encoding a Zig object is straight forward.
 
 ```zig
-const Foo = struct {
-    x: u32 = 1234,
-    y: struct {
-        a: []const u8 = "public-key",
-        b: u64 = 0x1122334455667788,
-    },
-
-    pub fn cborStringify(self: *const @This(), options: Options, out: *std.Io.Writer) !void {
-
-        // First stringify the 'y' struct
-        const allocator = std.testing.allocator;
-        var o = std.Io.Writer.Allocating.init(allocator);
-        defer o.deinit();
-        try stringify(self.y, options, &o.writer);
-
-        // Then use the Builder to alter the CBOR output
-        var b = try build.Builder.withType(allocator, .Map);
-        try b.pushTextString("x");
-        try b.pushInt(self.x);
-        try b.pushTextString("y");
-        try b.pushByteString(o.written());
-        const x = try b.finish();
-        defer allocator.free(x);
-
-        try out.writeAll(x);
-    }
-};
-```
-
-The `StringifyOptions` can be used to indirectly pass an `Allocator` to the function.
-
-Please make sure to set `ignore_override` to `true` when calling recursively into `stringify(self)` to prevent infinite loops.
-
-#### Overriding parse
-
-You can override the `parse` function for structs and tagged unions by implementing `cborParse`. This is helpful if you have aliases for your struct members.
-
-```zig
-const EcdsaP256Key = struct {
-    /// kty:
-    kty: u8 = 2,
-    /// alg:
-    alg: i8 = -7,
-    /// crv:
-    crv: u8 = 1,
-    /// x-coordinate
-    x: [32]u8,
-    /// y-coordinate
-    y: [32]u8,
-
-    pub fn cborParse(item: DataItem, options: Options) !@This() {
-        _ = options;
-        return try parse(@This(), item, .{
-            .ignore_override = true, // prevent infinite loops
-            .field_settings = &.{
-                .{ .name = "kty", .field_options = .{ .alias = "1" } },
-                .{ .name = "alg", .field_options = .{ .alias = "3" } },
-                .{ .name = "crv", .field_options = .{ .alias = "-1" } },
-                .{ .name = "x", .field_options = .{ .alias = "-2" } },
-                .{ .name = "y", .field_options = .{ .alias = "-3" } },
-            },
-        });
-    }
-};
-```
-
-The `Options` can be used to indirectly pass an `Allocator` to the function.
-
-Please make sure to set `ignore_override` to `true` when calling recursively into `parse(self)` to prevent infinite loops.
-
-#### Structs with fields of type `std.mem.Allocator`
-
-If you have a struct with a field of type `std.mem.Allocator` you have to override the `stringify` 
-funcation for that struct, e.g.:
-
-```zig
-pub fn cborStringify(self: *const @This(), options: cbor.StringifyOptions, out: *std.Io.Writer) !void {
-    _ = options;
-
-    try cbor.stringify(self, .{
-        .ignore_override = true,
-        .field_settings = &.{
-            .{ .name = "allocator", .options = .{ .skip = true } },
-        },
-    }, out);
-}
-```
-
-When using `parse` make sure you pass a allocator to the function. The passed allocator will be assigned
-to the field of type `std.mem.Allocator`.
-
-#### Map Key Overloading
-
-Sometimes it might be necessary to overload CBOR map keys, e.g., two or more fields of
-a struct serialize to the same integer. Of course this only works if only one of those
-fields is active at a time (e.g., the others are set to `null`). While serialization is
-not an issue, the parser needs to know how to map a CBOR key-value pair to one of 
-the struct fields.
-
-To help the parser with this decision, one can define a function with the following header
-and assign the function to the optional `is_valid_key` field of the `Options`:
-
-```zig
-fn is_valid_key(
-    ctx: *const anyopaque,
-    key: []const u8,
-    fields: []const bool,
-    seen: *const fn ([]const u8, []const bool) bool,
-) bool {
-    //...
-}
-``` 
-
-The context `ctx` is a opaque pointer to an instance of the struct type you passed to
-`parse`. If a CBOR key potentially maps to a struct field and if the `is_valid_key`
-callback is set within the options, `parse` will invoke the callback and pass
-the context and the current field name `key` as the first two arguments.
-
-You can use the `seen` function to "ask" the calling `parse` function if a specific
-field has already been initialized.
-
-The below example is from `src/cose.zig` and shows how this could be used.
-
-```zig
-fn is_valid_key(
-    ctx: *const anyopaque,
-    key: []const u8,
-    fields: []const bool,
-    seen: *const fn ([]const u8, []const bool) bool,
-) bool {
-    if (!seen("kty", fields)) return true;
-
-    const self: *const @This() = @ptrCast(@alignCast(ctx));
-
-    if (std.mem.eql(u8, key, "crv") or std.mem.eql(u8, key, "x") or std.mem.eql(u8, key, "y") or std.mem.eql(u8, key, "d")) {
-        return self.kty == .Ec2;
-    } else if (std.mem.eql(u8, key, "pub") or std.mem.eql(u8, key, "priv")) {
-        return self.kty == .AKP;
-    } else {
-        return true;
-    }
-}
-``` 
-
-To prevent the function from accessing a uninitialized field, we place a guard at
-the beginning. The field we base our decision on is `kty` so we need to make sure
-it has already been initialized.
-
-Depending on the field name `key` we then either return `true` if the given field
-should be considered or `false` otherwise.
-
-> Note that this is experimental and also has performance implications.
-
-#### Indefinite-length Data Items
-
-CBOR supports the serialization of many container types in two formats, definite and indefinite. For definite-length data items, the length is directly encoded into the data-items header. In contrast, indefinite-length data items are terminated by a break-byte `0xff`.
-
-Zbor currently supports indefinite-length encoding for both arrays and maps. The default serialization type for both types remains definite to support backwards compatibility. One can control the serialization type for arrays and maps via the serialization options. The two fields in question are `array_serialization_type` and `map_serialization_type`.
-
-##### Indefinite-length Arrays
-
-This is an example for serializing a array as indefinite-length map:
-```zig
-const array = [_]u16{ 500, 2 };
-
-var arr = std.Io.Writer.Allocating.init(allocator);
-defer arr.deinit();
-
-try stringify(
-    array,
-    .{
-        .allocator = allocator,
-        .array_serialization_type = .ArrayIndefinite,
-    },
-    &arr.writer,
-);
-```
-
-For the de-serialization of indefinite-length arrays you don't have to do anything special. The `parse` function will automatically detect the encoding type for you.
-
-##### Indefinite-length Maps
-
-This is an example for serializing a struct as indefinite-length map:
-```zig
-const allocator = std.testing.allocator;
-
 const S = struct {
     Fun: bool,
     Amt: i16,
@@ -461,106 +342,18 @@ const s = S{
 var arr = std.Io.Writer.Allocating.init(allocator);
 defer arr.deinit();
 
-try stringify(
+try encode(
+    &arr.writer,
     s,
     .{
-        .allocator = allocator,
         .map_serialization_type = .MapIndefinite,
     },
-    &arr.writer,
 );
 ```
 
-For the de-serialization of indefinite-length maps you don't have to do anything special. The `parse` function will automatically detect the encoding type for you.
+Encoding the object `s` will result in the following raw CBOR data: `\xbf\x63\x46\x75\x6e\xf5\x63\x41\x6d\x74\x21\xff`.
 
-### ArrayBackedSlice
+As with `decode()` you can also influence the behavior of `encode()` by defining the `cborSettings()` function.
 
-This library offers a convenient function named ArrayBackedSlice, which enables you to create a wrapper for an array of any size and type. This wrapper implements the cborStringify and cborParse methods, allowing it to seamlessly replace slices (e.g., []const u8) with an array.
+You can also handle the encoding yourself, by defining `cborEncode()` (see one of the examples, e.g., in `src/cose.zig`). If you define `cborEncode()` for a struct or enum, `encode()` will hand of the encoding to the defined method.
 
-```zig
-test "ArrayBackedSlice test" {
-    const allocator = std.testing.allocator;
-
-    const S64B = ArrayBackedSlice(64, u8, .Byte);
-    var x = S64B{};
-    try x.set("\x01\x02\x03\x04");
-
-    var str = std.Io.Writer.Allocating.init(allocator);
-    defer str.deinit();
-
-    try stringify(x, .{}, &str.writer);
-    try std.testing.expectEqualSlices(u8, "\x44\x01\x02\x03\x04", str.written());
-
-    const di = try DataItem.new(str.written());
-    const y = try parse(S64B, di, .{});
-
-    try std.testing.expectEqualSlices(u8, "\x01\x02\x03\x04", y.get());
-}
-```
-
-### COSE
-
-`zbor` also has limited [COSE](https://www.iana.org/assignments/cose/cose.xhtml) support.
-
-#### COSE Key
-
-`zbor` supports the creation of COSE Keys for the following algorithms:
-
-- Es256 (ECDSA w/ SHA-256)
-- ML-DSA-(87|65|44)
-
-> If you'd like to see support for additional algorithms, please open a pull request.
-
-##### Key Generation
-
-Keys can be generated by using the `zbor.cose.Key.generate` function.
-
-The code below assumes a `allocator` instance of type `std.mem.Allocator` as well as
-a `io` instance of type `std.Io`. It generates a new (random) key for the
-[`ML-DSA-87`](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.204.pdf) algorithm.
-
-```zig
-const kp = try Key.generate(
-    .@"ML-DSA-87",
-    std.testing.allocator,
-    std.testing.io,
-);
-defer kp.deinit(std.testing.allocator);
-```
-
-To accommodate for different key sizes, the `cose.Key` struct dynamically  allocates 
-the different key components. This means, you have to call `deinit` on a instance
-of `cose.Key` to free its memory. Furthermore, `deinit` will also zero all fields, i.e.,
-it probably makes sense to call `deinit` even if you're using a arena allocator.
-
-> When using `generate` the `cose.Key` will include both the public and the private
-> part of the key. 
-
-##### Signing
-
-To sign (a sequence of) data, you can call the `sign` method on a `cose.Key`.
-
-```zig
-const sig = try kp.sign(&.{"zig is awesome!"}, allocator);
-defer allocator.free(sig);
-```
-
-The `sign` method takes a slice of `u8` slices and generates a signature over the
-given sequence. The example above creates a signature over the string
-`"zig is awesome!"`. The returned signature is a `u8` slice owned by the caller, i.e.,
-you're responsible for freeing the slice.
-
-> To create a signature, the key must contain the private part of the key.
-
-##### Signature Verification
-
-A signature can be verified by calling the `verify` method on a `cose.Key`.
-
-```zig
-_ = try kp.verify(sig, &.{"zig is awesome!"});
-```
-
-The method will return either `true` or `false` depending on if the signature
-could be verified or not.
-
-> To verify a signature, the key must contain the public key components.

@@ -1,21 +1,5 @@
 const std = @import("std");
-
-const cbor = @import("cbor.zig");
-const Type = cbor.Type;
-const DataItem = cbor.DataItem;
-const Tag = cbor.Tag;
-const Pair = cbor.Pair;
-const MapIterator = cbor.MapIterator;
-const ArrayIterator = cbor.ArrayIterator;
-const parse_ = @import("parse.zig");
-const stringify = parse_.stringify;
-const parse = parse_.parse;
-const Options = parse_.Options;
-
-const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
-
-pub const Headers = @import("cose/Headers.zig");
-pub const Sign1 = @import("cose/Sign1.zig");
+const DataItem = @import("DataItem.zig");
 
 /// COSE algorithm identifiers
 pub const Algorithm = enum(i32) {
@@ -136,6 +120,7 @@ pub const Algorithm = enum(i32) {
 
 /// COSE key types
 pub const KeyType = enum(u8) {
+    Reserved = 0,
     /// Octet Key Pair
     Okp = 1,
     /// Elliptic Curve Keys w/ x- and y-coordinate pair
@@ -181,23 +166,23 @@ pub const Curve = enum(i16) {
 };
 
 pub const Key = struct {
-    kid: ?[]u8 = null,
     /// kty: Identification of the key type
     kty: KeyType,
+    kid: ?[]u8 = null,
     /// alg: Key usage restriction to this algorithm
     alg: Algorithm,
     /// crv: EC identifier -- Taken from the "COSE Elliptic Curves" registry
     crv: ?Curve = null,
+    /// The public key
+    @"pub": ?[]u8 = null,
     /// x: x-coordinate
     x: ?[]u8 = null,
+    /// The seed for expanding the private key
+    priv: ?[]u8 = null,
     /// y: y-coordinate
     y: ?[]u8 = null,
     /// Private key
     d: ?[]u8 = null,
-    /// The public key
-    @"pub": ?[]u8 = null,
-    /// The seed for expanding the private key
-    priv: ?[]u8 = null,
 
     pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
         if (self.kid) |v| {
@@ -230,143 +215,12 @@ pub const Key = struct {
         return self.alg;
     }
 
-    pub fn getPrivKey(self: *const @This()) ?[]const u8 {
+    pub fn getPrivKey(self: *const @This()) !?[]const u8 {
         return switch (self.kty) {
             .Ec2 => self.d,
             .AKP => self.priv,
-            else => null, // TODO
+            else => error.NotYetImplemented, // TODO
         };
-    }
-
-    pub fn generateDeterministic(
-        alg: Algorithm,
-        seed: []const u8,
-        allocator: std.mem.Allocator,
-    ) !@This() {
-        return switch (alg) {
-            .Es256 => blk: {
-                if (seed.len != EcdsaP256Sha256.KeyPair.seed_length) return error.InvalidSeedLength;
-                const kp = try EcdsaP256Sha256.KeyPair.generateDeterministic(seed[0..EcdsaP256Sha256.KeyPair.seed_length].*);
-                const sec1 = kp.public_key.toUncompressedSec1();
-                const pk = kp.secret_key.toBytes();
-                break :blk .{
-                    .kty = .Ec2,
-                    .alg = .Es256,
-                    .crv = .P256,
-                    .x = try allocator.dupe(u8, sec1[1..33]),
-                    .y = try allocator.dupe(u8, sec1[33..65]),
-                    .d = try allocator.dupe(u8, &pk),
-                };
-            },
-            .@"ML-DSA-87" => blk: {
-                const e = std.crypto.sign.mldsa.MLDSA87;
-
-                if (seed.len != e.KeyPair.seed_length) return error.InvalidSeedLength;
-
-                // The generate() function in std calls it the same, i.e.
-                // unreachable is fine.
-                const kp = e.KeyPair.generateDeterministic(seed[0..e.KeyPair.seed_length].*) catch unreachable;
-                break :blk .{
-                    .kty = .AKP,
-                    .alg = alg,
-                    .@"pub" = try allocator.dupe(u8, &kp.public_key.toBytes()),
-                    .priv = try allocator.dupe(u8, seed),
-                };
-            },
-            .@"ML-DSA-65" => blk: {
-                const e = std.crypto.sign.mldsa.MLDSA65;
-
-                if (seed.len != e.KeyPair.seed_length) return error.InvalidSeedLength;
-
-                // The generate() function in std calls it the same, i.e.
-                // unreachable is fine.
-                const kp = e.KeyPair.generateDeterministic(seed[0..e.KeyPair.seed_length].*) catch unreachable;
-
-                break :blk .{
-                    .kty = .AKP,
-                    .alg = alg,
-                    .@"pub" = try allocator.dupe(u8, &kp.public_key.toBytes()),
-                    .priv = try allocator.dupe(u8, seed),
-                };
-            },
-            .@"ML-DSA-44" => blk: {
-                const e = std.crypto.sign.mldsa.MLDSA44;
-
-                if (seed.len != e.KeyPair.seed_length) return error.InvalidSeedLength;
-
-                // The generate() function in std calls it the same, i.e.
-                // unreachable is fine.
-                const kp = e.KeyPair.generateDeterministic(seed[0..e.KeyPair.seed_length].*) catch unreachable;
-
-                break :blk .{
-                    .kty = .AKP,
-                    .alg = alg,
-                    .@"pub" = try allocator.dupe(u8, &kp.public_key.toBytes()),
-                    .priv = try allocator.dupe(u8, seed),
-                };
-            },
-            else => error.UnsupportedAlgorithm,
-        };
-    }
-
-    pub fn generate(
-        alg: Algorithm,
-        allocator: std.mem.Allocator,
-        io: std.Io,
-    ) !@This() {
-        return switch (alg) {
-            .Es256 => blk: {
-                var random_seed: [EcdsaP256Sha256.KeyPair.seed_length]u8 = undefined;
-                while (true) {
-                    io.random(&random_seed);
-                    break :blk generateDeterministic(
-                        alg,
-                        &random_seed,
-                        allocator,
-                    ) catch |e| {
-                        if (e == error.IdentityElement) {
-                            @branchHint(.unlikely);
-                            continue;
-                        } else return e;
-                    };
-                }
-            },
-            .@"ML-DSA-87", .@"ML-DSA-65", .@"ML-DSA-44" => blk: {
-                var seed: [32]u8 = undefined;
-                io.random(&seed);
-                break :blk try generateDeterministic(
-                    alg,
-                    &seed,
-                    allocator,
-                );
-            },
-            else => error.UnsupportedAlgorithm,
-        };
-    }
-
-    pub fn generatePublic(self: *@This(), allocator: std.mem.Allocator) !void {
-        switch (self.alg) {
-            .Es256 => {
-                if (self.d == null or self.d.?.len != EcdsaP256Sha256.SecretKey.encoded_length) return error.MissingD;
-
-                const sec = try EcdsaP256Sha256.SecretKey.fromBytes(self.d.?[0..EcdsaP256Sha256.SecretKey.encoded_length].*);
-                const kp = try EcdsaP256Sha256.KeyPair.fromSecretKey(sec);
-                const sec1 = kp.public_key.toUncompressedSec1();
-                const x = try allocator.dupe(u8, sec1[1..33]);
-                errdefer {
-                    std.crypto.secureZero(u8, x);
-                    allocator.free(x);
-                }
-                const y = try allocator.dupe(u8, sec1[33..65]);
-
-                if (self.x) |x_| allocator.free(x_);
-                if (self.y) |y_| allocator.free(y_);
-
-                self.x = x;
-                self.y = y;
-            },
-            else => return error.UnsupportedAlgorithm,
-        }
     }
 
     pub fn copy(
@@ -390,29 +244,17 @@ pub const Key = struct {
         self: *const @This(),
         allocator: std.mem.Allocator,
     ) !@This() {
-        switch (self.kty) {
-            .Ec2 => {
-                return .{
-                    .kid = if (self.kid) |kid| try allocator.dupe(u8, kid) else null,
-                    .kty = self.kty,
-                    .alg = self.alg,
-                    .crv = self.crv,
-                    .x = if (self.x) |v| try allocator.dupe(u8, v) else null,
-                    .y = if (self.y) |v| try allocator.dupe(u8, v) else null,
-                    .d = null,
-                };
-            },
-            .AKP => {
-                return .{
-                    .kid = if (self.kid) |kid| try allocator.dupe(u8, kid) else null,
-                    .kty = self.kty,
-                    .alg = self.alg,
-                    .@"pub" = if (self.@"pub") |v| try allocator.dupe(u8, v) else null,
-                    .priv = null,
-                };
-            },
-            else => return error.UnsupportedKeyType, // TODO
-        }
+        return .{
+            .kid = if (self.kid) |kid| try allocator.dupe(u8, kid) else null,
+            .kty = self.kty,
+            .alg = self.alg,
+            .crv = self.crv,
+            .x = if (self.x) |v| try allocator.dupe(u8, v) else null,
+            .y = if (self.y) |v| try allocator.dupe(u8, v) else null,
+            .d = null,
+            .@"pub" = if (self.@"pub") |v| try allocator.dupe(u8, v) else null,
+            .priv = null,
+        };
     }
 
     pub fn fromP256Pub(alg: Algorithm, pk: anytype, allocator: std.mem.Allocator) !@This() {
@@ -441,6 +283,166 @@ pub const Key = struct {
             .x = try allocator.dupe(u8, sec1[1..33]),
             .y = try allocator.dupe(u8, sec1[33..65]),
             .d = try allocator.dupe(u8, &pk),
+        };
+    }
+
+    pub fn cborSettings() DataItem.Settings {
+        return .{
+            .field_settings = &.{
+                .{
+                    .name = "kty",
+                    .field_options = .{
+                        .alias = "1",
+                        .serialization_type = .Integer,
+                    },
+                    .value_options = .{ .enum_serialization_type = .Integer },
+                },
+                .{ .name = "kid", .field_options = .{
+                    .alias = "2",
+                    .serialization_type = .Integer,
+                } },
+                .{
+                    .name = "alg",
+                    .field_options = .{
+                        .alias = "3",
+                        .serialization_type = .Integer,
+                    },
+                    .value_options = .{ .enum_serialization_type = .Integer },
+                },
+                .{
+                    .name = "crv",
+                    .field_options = .{
+                        .alias = "-1",
+                        .serialization_type = .Integer,
+                    },
+                    .value_options = .{ .enum_serialization_type = .Integer },
+                },
+                .{ .name = "x", .field_options = .{
+                    .alias = "-2",
+                    .serialization_type = .Integer,
+                } },
+                .{ .name = "y", .field_options = .{
+                    .alias = "-3",
+                    .serialization_type = .Integer,
+                } },
+                .{ .name = "d", .field_options = .{
+                    .alias = "-4",
+                    .serialization_type = .Integer,
+                } },
+                .{ .name = "pub", .field_options = .{
+                    .alias = "-1",
+                    .serialization_type = .Integer,
+                } },
+                .{ .name = "priv", .field_options = .{
+                    .alias = "-2",
+                    .serialization_type = .Integer,
+                } },
+            },
+        };
+    }
+
+    pub fn cborDecode(
+        di: DataItem,
+        options: DataItem.DecodeOptions,
+    ) DataItem.DecodeError!@This() {
+        if (di.getMajorType() != .Map) return error.UnsupportedType;
+        if (options.allocator == null) return error.AllocatorRequired;
+        const a = options.allocator.?;
+
+        var kty: ?KeyType = null;
+        var kid: ?[]u8 = null;
+        errdefer if (kid) |v| a.free(v);
+        var crv: ?Curve = null;
+        var alg: ?Algorithm = null;
+        var x: ?[]u8 = null;
+        errdefer if (x) |v| a.free(v);
+        var y: ?[]u8 = null;
+        errdefer if (y) |v| a.free(v);
+        var d: ?[]u8 = null;
+        errdefer if (d) |v| a.free(v);
+        var @"pub": ?[]u8 = null;
+        errdefer if (@"pub") |v| a.free(v);
+        var priv: ?[]u8 = null;
+        errdefer if (priv) |v| a.free(v);
+
+        const len = if (di.isIndef()) null else try di.getLength();
+
+        var i: usize = 0;
+        while (true) : (i += 1) {
+            if (len != null and i >= len.?) break;
+
+            const key = try di.next();
+            if (len == null and key.getType() == .Break) break;
+
+            if (key.getType() != .Int) return error.InvalidKeyType;
+            //const key_ = try key.getInt();
+            const key__ = try key.getInt();
+            if (key__ > std.math.maxInt(i64)) return error.Overflow;
+            const key_: i64 = @as(i64, @intCast(key__)); // see https://codeberg.org/ziglang/zig/issues/37724
+
+            const value = try di.next();
+
+            switch (key_) {
+                // kty
+                1 => {
+                    kty = try value.decode(KeyType, options);
+                },
+                // kid
+                2 => {
+                    kid = try value.getStringAlloc(a);
+                },
+                // alg
+                3 => {
+                    alg = try value.decode(Algorithm, options);
+                },
+                // crv, pub
+                -1 => {
+                    if (kty == null) return error.FieldParsingDependencyNotSeenYet;
+                    switch (kty.?) {
+                        .Okp, .Ec2 => {
+                            crv = try value.decode(Curve, options);
+                        },
+                        .AKP => {
+                            @"pub" = try value.getStringAlloc(a);
+                        },
+                        else => return error.NotYetImplemented,
+                    }
+                },
+                // x, priv
+                -2 => {
+                    if (kty == null) return error.FieldParsingDependencyNotSeenYet;
+                    switch (kty.?) {
+                        .Okp, .Ec2 => {
+                            x = try value.getStringAlloc(a);
+                        },
+                        .AKP => {
+                            priv = try value.getStringAlloc(a);
+                        },
+                        else => return error.NotYetImplemented,
+                    }
+                },
+                // y
+                -3 => {
+                    y = try value.getStringAlloc(a);
+                },
+                // d
+                -4 => {
+                    d = try value.getStringAlloc(a);
+                },
+                else => return error.UnknownField,
+            }
+        }
+
+        return .{
+            .kty = kty orelse return error.MissingField,
+            .kid = kid,
+            .alg = alg orelse return error.MissingField,
+            .crv = crv,
+            .x = x,
+            .y = y,
+            .d = d,
+            .@"pub" = @"pub",
+            .priv = priv,
         };
     }
 
@@ -485,6 +487,8 @@ pub const Key = struct {
     ) ![]u8 {
         switch (self.alg) {
             .Es256 => {
+                const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
+
                 if (self.d == null or self.d.?.len != EcdsaP256Sha256.SecretKey.encoded_length) return error.MissingPrivateKey;
 
                 var kp = try EcdsaP256Sha256.KeyPair.fromSecretKey(
@@ -583,6 +587,8 @@ pub const Key = struct {
     ) !bool {
         switch (self.alg) {
             .Es256 => {
+                const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
+
                 if (self.x == null or self.x.?.len != 32) return error.MissingX;
                 if (self.y == null or self.y.?.len != 32) return error.MissingY;
 
@@ -667,177 +673,116 @@ pub const Key = struct {
         return true;
     }
 
-    /// TDOO: this is experimental!
-    /// use it with extreme care!!!
-    fn is_valid_key(
-        ctx: *const anyopaque,
-        key: []const u8,
-        fields: []const bool,
-        seen: *const fn ([]const u8, []const bool) bool,
-    ) bool {
-        // TODO: what is a sane default here?
-        // Returning true at this point is probably the only
-        // sane solution we have...
-        if (!seen("kty", fields)) return true;
+    pub fn generateDeterministic(
+        alg: Algorithm,
+        seed: []const u8,
+        allocator: std.mem.Allocator,
+    ) !@This() {
+        return switch (alg) {
+            .Es256 => blk: {
+                const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
 
-        const self: *const @This() = @ptrCast(@alignCast(ctx));
+                if (seed.len != EcdsaP256Sha256.KeyPair.seed_length) return error.InvalidSeedLength;
+                const kp = try EcdsaP256Sha256.KeyPair.generateDeterministic(seed[0..EcdsaP256Sha256.KeyPair.seed_length].*);
+                const sec1 = kp.public_key.toUncompressedSec1();
+                const pk = kp.secret_key.toBytes();
+                break :blk .{
+                    .kty = .Ec2,
+                    .alg = .Es256,
+                    .crv = .P256,
+                    .x = try allocator.dupe(u8, sec1[1..33]),
+                    .y = try allocator.dupe(u8, sec1[33..65]),
+                    .d = try allocator.dupe(u8, &pk),
+                };
+            },
+            .@"ML-DSA-87" => blk: {
+                const e = std.crypto.sign.mldsa.MLDSA87;
 
-        if (std.mem.eql(u8, key, "crv") or std.mem.eql(u8, key, "x") or std.mem.eql(u8, key, "y") or std.mem.eql(u8, key, "d")) {
-            return self.kty == .Ec2;
-        } else if (std.mem.eql(u8, key, "pub") or std.mem.eql(u8, key, "priv")) {
-            return self.kty == .AKP;
-        } else {
-            return true;
-        }
+                if (seed.len != e.KeyPair.seed_length) return error.InvalidSeedLength;
+
+                // The generate() function in std calls it the same, i.e.
+                // unreachable is fine.
+                const kp = e.KeyPair.generateDeterministic(seed[0..e.KeyPair.seed_length].*) catch unreachable;
+                break :blk .{
+                    .kty = .AKP,
+                    .alg = alg,
+                    .@"pub" = try allocator.dupe(u8, &kp.public_key.toBytes()),
+                    .priv = try allocator.dupe(u8, seed),
+                };
+            },
+            .@"ML-DSA-65" => blk: {
+                const e = std.crypto.sign.mldsa.MLDSA65;
+
+                if (seed.len != e.KeyPair.seed_length) return error.InvalidSeedLength;
+
+                // The generate() function in std calls it the same, i.e.
+                // unreachable is fine.
+                const kp = e.KeyPair.generateDeterministic(seed[0..e.KeyPair.seed_length].*) catch unreachable;
+
+                break :blk .{
+                    .kty = .AKP,
+                    .alg = alg,
+                    .@"pub" = try allocator.dupe(u8, &kp.public_key.toBytes()),
+                    .priv = try allocator.dupe(u8, seed),
+                };
+            },
+            .@"ML-DSA-44" => blk: {
+                const e = std.crypto.sign.mldsa.MLDSA44;
+
+                if (seed.len != e.KeyPair.seed_length) return error.InvalidSeedLength;
+
+                // The generate() function in std calls it the same, i.e.
+                // unreachable is fine.
+                const kp = e.KeyPair.generateDeterministic(seed[0..e.KeyPair.seed_length].*) catch unreachable;
+
+                break :blk .{
+                    .kty = .AKP,
+                    .alg = alg,
+                    .@"pub" = try allocator.dupe(u8, &kp.public_key.toBytes()),
+                    .priv = try allocator.dupe(u8, seed),
+                };
+            },
+            else => error.UnsupportedAlgorithm,
+        };
     }
 
-    pub fn cborStringify(self: *const @This(), options: Options, out: anytype) !void {
-        _ = options;
-        return stringify(self, .{
-            .ignore_override = true,
-            .field_settings = &.{
-                .{
-                    .name = "kty",
-                    .field_options = .{
-                        .alias = "1",
-                        .serialization_type = .Integer,
-                    },
-                    .value_options = .{ .enum_serialization_type = .Integer },
-                },
-                .{ .name = "kid", .field_options = .{
-                    .alias = "2",
-                    .serialization_type = .Integer,
-                } },
-                .{
-                    .name = "alg",
-                    .field_options = .{
-                        .alias = "3",
-                        .serialization_type = .Integer,
-                    },
-                    .value_options = .{ .enum_serialization_type = .Integer },
-                },
-                .{
-                    .name = "crv",
-                    .field_options = .{
-                        .alias = "-1",
-                        .serialization_type = .Integer,
-                    },
-                    .value_options = .{ .enum_serialization_type = .Integer },
-                },
-                .{ .name = "x", .field_options = .{
-                    .alias = "-2",
-                    .serialization_type = .Integer,
-                } },
-                .{ .name = "y", .field_options = .{
-                    .alias = "-3",
-                    .serialization_type = .Integer,
-                } },
-                .{ .name = "d", .field_options = .{
-                    .alias = "-4",
-                    .serialization_type = .Integer,
-                } },
-                .{ .name = "pub", .field_options = .{
-                    .alias = "-1",
-                    .serialization_type = .Integer,
-                } },
-                .{ .name = "priv", .field_options = .{
-                    .alias = "-2",
-                    .serialization_type = .Integer,
-                } },
-            },
-        }, out);
-    }
+    pub fn generate(
+        alg: Algorithm,
+        allocator: std.mem.Allocator,
+        io: std.Io,
+    ) !@This() {
+        return switch (alg) {
+            .Es256 => blk: {
+                const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
 
-    pub fn cborParse(item: cbor.DataItem, options: Options) !@This() {
-        return try parse(@This(), item, .{
-            .allocator = options.allocator,
-            .ignore_override = true, // prevent infinite loops
-            .is_valid_key = &is_valid_key,
-            .field_settings = &.{
-                .{
-                    .name = "kty",
-                    .field_options = .{
-                        .alias = "1",
-                        .serialization_type = .Integer,
-                    },
-                    .value_options = .{ .enum_serialization_type = .Integer },
-                },
-                .{ .name = "kid", .field_options = .{
-                    .alias = "2",
-                    .serialization_type = .Integer,
-                } },
-                .{
-                    .name = "alg",
-                    .field_options = .{
-                        .alias = "3",
-                        .serialization_type = .Integer,
-                    },
-                    .value_options = .{ .enum_serialization_type = .Integer },
-                },
-                .{
-                    .name = "crv",
-                    .field_options = .{
-                        .alias = "-1",
-                        .serialization_type = .Integer,
-                    },
-                    .value_options = .{ .enum_serialization_type = .Integer },
-                },
-                .{ .name = "x", .field_options = .{
-                    .alias = "-2",
-                    .serialization_type = .Integer,
-                } },
-                .{ .name = "y", .field_options = .{
-                    .alias = "-3",
-                    .serialization_type = .Integer,
-                } },
-                .{ .name = "d", .field_options = .{
-                    .alias = "-4",
-                    .serialization_type = .Integer,
-                } },
-                .{ .name = "pub", .field_options = .{
-                    .alias = "-1",
-                    .serialization_type = .Integer,
-                } },
-                .{ .name = "priv", .field_options = .{
-                    .alias = "-2",
-                    .serialization_type = .Integer,
-                } },
+                var random_seed: [EcdsaP256Sha256.KeyPair.seed_length]u8 = undefined;
+                while (true) {
+                    io.random(&random_seed);
+                    break :blk generateDeterministic(
+                        alg,
+                        &random_seed,
+                        allocator,
+                    ) catch |e| {
+                        if (e == error.IdentityElement) {
+                            @branchHint(.unlikely);
+                            continue;
+                        } else return e;
+                    };
+                }
             },
-        });
+            .@"ML-DSA-87", .@"ML-DSA-65", .@"ML-DSA-44" => blk: {
+                var seed: [32]u8 = undefined;
+                io.random(&seed);
+                break :blk try generateDeterministic(
+                    alg,
+                    &seed,
+                    allocator,
+                );
+            },
+            else => error.UnsupportedAlgorithm,
+        };
     }
 };
-
-test "cose Key p256 stringify #1" {
-    const x = try EcdsaP256Sha256.PublicKey.fromSec1("\x04\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52");
-
-    const k = try Key.fromP256Pub(.Es256, x, std.testing.allocator);
-    defer k.deinit(std.testing.allocator);
-
-    const allocator = std.testing.allocator;
-    var str = std.Io.Writer.Allocating.init(allocator);
-    defer str.deinit();
-
-    try stringify(k, .{}, &str.writer);
-
-    try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.written());
-}
-
-test "cose Key p256 parse #1" {
-    const payload = "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52";
-
-    const di = try DataItem.new(payload);
-
-    const key = try parse(Key, di, .{
-        .allocator = std.testing.allocator,
-    });
-    defer key.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(Algorithm.Es256, key.alg);
-    try std.testing.expectEqual(KeyType.Ec2, key.kty);
-    try std.testing.expectEqual(Curve.P256, key.crv);
-    try std.testing.expectEqualSlices(u8, "\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e", key.x.?);
-    try std.testing.expectEqualSlices(u8, "\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", key.y.?);
-}
 
 test "alg to raw" {
     const es256 = Algorithm.Es256;
@@ -852,7 +797,54 @@ test "raw to alg" {
     try std.testing.expectEqual(Algorithm.Es256, Algorithm.from_raw(x));
 }
 
+test "cose Key p256 stringify #1" {
+    const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
+
+    const x = try EcdsaP256Sha256.PublicKey.fromSec1("\x04\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52");
+
+    const k = try Key.fromP256Pub(.Es256, x, std.testing.allocator);
+    defer k.deinit(std.testing.allocator);
+
+    const allocator = std.testing.allocator;
+    var str = std.Io.Writer.Allocating.init(allocator);
+    defer str.deinit();
+
+    try DataItem.encode(&str.writer, k, .{});
+
+    try std.testing.expectEqualSlices(u8, "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", str.written());
+}
+
+test "cose Key p256 parse #1" {
+    const payload = "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e\x22\x58\x20\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52";
+
+    var r = std.Io.Reader.fixed(payload);
+    var di = try DataItem.new(&r);
+
+    const key = try di.decode(Key, .{
+        .allocator = std.testing.allocator,
+    });
+    defer key.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Algorithm.Es256, key.alg);
+    try std.testing.expectEqual(KeyType.Ec2, key.kty);
+    try std.testing.expectEqual(Curve.P256, key.crv);
+    try std.testing.expectEqualSlices(u8, "\xd9\xf4\xc2\xa3\x52\x13\x6f\x19\xc9\xa9\x5d\xa8\x82\x4a\xb5\xcd\xc4\xd5\x63\x1e\xbc\xfd\x5b\xdb\xb0\xbf\xff\x25\x36\x09\x12\x9e", key.x.?);
+    try std.testing.expectEqualSlices(u8, "\xef\x40\x4b\x88\x07\x65\x57\x60\x07\x88\x8a\x3e\xd6\xab\xff\xb4\x25\x7b\x71\x23\x55\x33\x25\xd4\x50\x61\x3c\xb5\xbc\x9a\x3a\x52", key.y.?);
+}
+
+test "copy secure #1" {
+    const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
+    const kp1 = EcdsaP256Sha256.KeyPair.generate(std.testing.io);
+    var cosep256 = try Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key, std.testing.allocator);
+    defer cosep256.deinit(std.testing.allocator);
+    const cpy = try cosep256.copySecure(std.testing.allocator);
+    defer cpy.deinit(std.testing.allocator);
+    try std.testing.expectEqual(cpy.d, null);
+}
+
 test "es256 sign verify 1" {
+    const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
+
     const allocator = std.testing.allocator;
     const msg = "Hello, World!";
 
@@ -879,15 +871,6 @@ test "es256 sign verify 1" {
 
     // Trying to verfiy the first signature using the new key-pair should fail
     try std.testing.expectEqual(false, try kp2.verify(sig_der_1, &.{msg}));
-}
-
-test "copy secure #1" {
-    const kp1 = EcdsaP256Sha256.KeyPair.generate(std.testing.io);
-    var cosep256 = try Key.fromP256PrivPub(.Es256, kp1.secret_key, kp1.public_key, std.testing.allocator);
-    defer cosep256.deinit(std.testing.allocator);
-    const cpy = try cosep256.copySecure(std.testing.allocator);
-    defer cpy.deinit(std.testing.allocator);
-    try std.testing.expectEqual(cpy.d, null);
 }
 
 test "ML-DSA-87 #1" {
@@ -926,40 +909,20 @@ test "ML-DSA-87 #2" {
     var str = std.Io.Writer.Allocating.init(allocator);
     defer str.deinit();
 
-    try stringify(kp, .{}, &str.writer);
+    try DataItem.encode(&str.writer, kp, .{});
 
     try std.testing.expectEqualSlices(u8, expected, str.written());
 
     // Now deserialize the data
-    const di = try DataItem.new(str.written());
+    var reader = std.Io.Reader.fixed(str.written());
+    const di = try DataItem.new(&reader);
 
-    const key = try parse(Key, di, .{
+    const key = try di.decode(Key, .{
         .allocator = allocator,
     });
     defer key.deinit(allocator);
 
     try std.testing.expectEqual(true, try key.verify(sig, &.{"zig is awesome!"}));
-}
-
-test "generate public key from private key #1" {
-    const allocator = std.testing.allocator;
-
-    var key = Key{
-        .alg = .Es256,
-        .crv = .P256,
-        .kty = .Ec2,
-        .kid = try allocator.dupe(u8, "11"),
-        .d = try allocator.dupe(u8, "\x57\xc9\x20\x77\x66\x41\x46\xe8\x76\x76\x0c\x95\x20\xd0\x54\xaa\x93\xc3\xaf\xb0\x4e\x30\x67\x05\xdb\x60\x90\x30\x85\x07\xb4\xd3"),
-    };
-    defer key.deinit(allocator);
-
-    try key.generatePublic(allocator);
-
-    try std.testing.expect(key.x != null);
-    try std.testing.expectEqualSlices(u8, "\xba\xc5\xb1\x1c\xad\x8f\x99\xf9\xc7\x2b\x05\xcf\x4b\x9e\x26\xd2\x44\xdc\x18\x9f\x74\x52\x28\x25\x5a\x21\x9a\x86\xd6\xa0\x9e\xff", key.x.?);
-
-    try std.testing.expect(key.y != null);
-    try std.testing.expectEqualSlices(u8, "\x20\x13\x8b\xf8\x2d\xc1\xb6\xd5\x62\xbe\x0f\xa5\x4a\xb7\x80\x4a\x3a\x64\xb6\xd7\x2c\xcf\xed\x6b\x6f\xb6\xed\x28\xbb\xfc\x11\x7e", key.y.?);
 }
 
 test "ML-DSA-65 #1" {
@@ -997,31 +960,38 @@ test "parsed keys with wrongly sized key material are rejected" {
 
     // Es256: {1:2, 3:-7, -1:1, -2:h'00', -3:h'00'}
     {
-        const key = try parse(Key, try DataItem.new("\xa5\x01\x02\x03\x26\x20\x01\x21\x41\x00\x22\x41\x00"), .{ .allocator = allocator });
+        var reader = std.Io.Reader.fixed("\xa5\x01\x02\x03\x26\x20\x01\x21\x41\x00\x22\x41\x00");
+        var di = try DataItem.new(&reader);
+
+        const key = try di.decode(Key, .{ .allocator = allocator });
         defer key.deinit(allocator);
         try std.testing.expectError(error.MissingX, key.verify("", &.{"zig is awesome!"}));
     }
     // Es256: {1:2, 3:-7, -1:1, -2:h'', -3:h''}
     {
-        const key = try parse(Key, try DataItem.new("\xa5\x01\x02\x03\x26\x20\x01\x21\x40\x22\x40"), .{ .allocator = allocator });
+        var reader = std.Io.Reader.fixed("\xa5\x01\x02\x03\x26\x20\x01\x21\x40\x22\x40");
+        var di = try DataItem.new(&reader);
+
+        const key = try di.decode(Key, .{ .allocator = allocator });
         defer key.deinit(allocator);
         try std.testing.expectError(error.MissingX, key.verify("", &.{"zig is awesome!"}));
     }
     // ML-DSA-44/65/87: {1:7, 3:alg, -1:h'00'}
     inline for (.{ "\x38\x2f", "\x38\x30", "\x38\x31" }) |alg| {
-        const key = try parse(Key, try DataItem.new("\xa3\x01\x07\x03" ++ alg ++ "\x20\x41\x00"), .{ .allocator = allocator });
+        var reader = std.Io.Reader.fixed("\xa3\x01\x07\x03" ++ alg ++ "\x20\x41\x00");
+        var di = try DataItem.new(&reader);
+
+        const key = try di.decode(Key, .{ .allocator = allocator });
         defer key.deinit(allocator);
         try std.testing.expectError(error.MissingPub, key.verify("", &.{"zig is awesome!"}));
     }
     // ML-DSA-44/65/87: {1:7, 3:alg, -2:h'00'}
     inline for (.{ "\x38\x2f", "\x38\x30", "\x38\x31" }) |alg| {
-        const key = try parse(Key, try DataItem.new("\xa3\x01\x07\x03" ++ alg ++ "\x21\x41\x00"), .{ .allocator = allocator });
+        var reader = std.Io.Reader.fixed("\xa3\x01\x07\x03" ++ alg ++ "\x21\x41\x00");
+        var di = try DataItem.new(&reader);
+
+        const key = try di.decode(Key, .{ .allocator = allocator });
         defer key.deinit(allocator);
         try std.testing.expectError(error.MissingPrivateKey, key.sign(&.{"zig is awesome!"}, allocator, .{}));
     }
-}
-
-test {
-    _ = Headers;
-    _ = Sign1;
 }
