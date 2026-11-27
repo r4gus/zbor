@@ -312,7 +312,13 @@ pub fn getStringAlloc(self: @This(), allocator: std.mem.Allocator) ![]u8 {
 /// * arrays: the returned length is the number of data items
 /// * maps: the returned length is the number of data item pairs
 pub fn getLength(self: @This()) !usize {
-    return try self.getArgumentValue();
+    if (@sizeOf(usize) < @sizeOf(u64)) {
+        const v = try self.getArgumentValue();
+        if (v > std.math.maxInt(usize)) return error.Overflow;
+        return @as(usize, @intCast(v & std.math.maxInt(usize)));
+    } else {
+        return @as(usize, @intCast(try self.getArgumentValue()));
+    }
 }
 
 /// Check if a data item is indefinite.
