@@ -512,7 +512,7 @@ pub fn burn_(
                 i.* = data.len;
                 return null;
             }
-            i.* += len;
+            i.* += @intCast(len);
         },
         0x80...0x9b => {
             i.* += offset;

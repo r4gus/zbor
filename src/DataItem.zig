@@ -299,7 +299,7 @@ pub fn getStringAlloc(self: @This(), allocator: std.mem.Allocator) ![]u8 {
     const mt = self.getMajorType();
     if (mt != .ByteString and mt != .TextString) return error.WrongMajorType;
 
-    const len = try self.getArgumentValue();
+    const len = try self.getLength();
 
     return try self.reader.readAllocAll(allocator, len);
 }
